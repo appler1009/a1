@@ -254,6 +254,7 @@ fastify.register(async (instance) => {
 
       for await (const chunk of stream) {
         if (chunk.type === 'text') {
+          await new Promise(resolve => setTimeout(resolve, 20));
           reply.raw.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
         }
       }
