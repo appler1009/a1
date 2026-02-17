@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
@@ -58,6 +59,9 @@ const fastify = Fastify({
     level: process.env.LOG_LEVEL || 'info',
   },
 });
+
+// Global LLM router instance
+let llmRouter: ReturnType<typeof createLLMRouter>;
 
 // Register plugins
 fastify.register(cors, {
@@ -231,19 +235,37 @@ fastify.register(async (instance) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
-    
-    const body = request.body as { messages: Array<{ role: string; content: string }>; roleId?: string; groupId?: string };
-    
-    // For now, return a simple response
-    // In a real implementation, this would stream from the LLM
+
+    const body = request.body as { messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>; roleId?: string; groupId?: string };
+
+    if (!llmRouter) {
+      return reply.code(500).send({ success: false, error: { message: 'LLM router not initialized' } });
+    }
+
     reply.raw.setHeader('Content-Type', 'text/event-stream');
     reply.raw.setHeader('Cache-Control', 'no-cache');
     reply.raw.setHeader('Connection', 'keep-alive');
-    
-    const response = 'This is a placeholder response. Configure your OpenAI API key to enable real chat.';
-    reply.raw.write(`data: ${JSON.stringify({ content: response })}\n\n`);
-    reply.raw.write('data: [DONE]\n\n');
-    reply.raw.end();
+
+    try {
+      const stream = llmRouter.stream({
+        messages: body.messages,
+        model: body.roleId ? undefined : config.llm.defaultModel,
+      });
+
+      for await (const chunk of stream) {
+        if (chunk.type === 'text') {
+          reply.raw.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+        }
+      }
+
+      reply.raw.write('data: [DONE]\n\n');
+    } catch (error) {
+      fastify.log.error(error, 'Chat streaming error');
+      reply.raw.write(`data: ${JSON.stringify({ error: 'Failed to stream response' })}\n\n`);
+      reply.raw.write('data: [DONE]\n\n');
+    } finally {
+      reply.raw.end();
+    }
   });
 }, { prefix: '/api' });
 
@@ -318,8 +340,13 @@ const start = async () => {
     });
     await storage.initialize();
 
+    // Initialize auth service
+    await authService.initialize();
+    fastify.log.info('Auth service initialized');
+
     // Initialize LLM router
-    const llmRouter = createLLMRouter(config.llm);
+    llmRouter = createLLMRouter(config.llm);
+    fastify.log.info({ provider: config.llm.provider, hasGrokKey: !!config.llm.grokKey }, 'LLM router initialized');
 
     // Start listening
     await fastify.listen({

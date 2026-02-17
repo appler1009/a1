@@ -1,11 +1,13 @@
 import type { User, Session, Group, GroupMember, Invitation } from '@local-agent/shared';
 import { v4 as uuidv4 } from 'uuid';
+import { createStorage } from '../storage/index.js';
 
 export interface AuthConfig {
-  storage: 'memory' | 'sqlite';
+  storage: 'fs' | 'sqlite' | 's3';
 }
 
 export class AuthService {
+  private storage: ReturnType<typeof createStorage>;
   private users: Map<string, User> = new Map();
   private sessions: Map<string, Session> = new Map();
   private groups: Map<string, Group> = new Map();
@@ -13,7 +15,88 @@ export class AuthService {
   private invitations: Invitation[] = [];
 
   constructor(config: AuthConfig) {
-    // Initialize with in-memory storage for development
+    this.storage = createStorage({
+      type: config.storage,
+      root: './data',
+      bucket: '',
+    });
+  }
+
+  async initialize() {
+    await this.storage.initialize();
+    await this.loadFromStorage();
+  }
+
+  private async loadFromStorage() {
+    // Load users
+    try {
+      const usersData = await this.storage.read('auth_users.json');
+      if (usersData) {
+        const users = JSON.parse(usersData);
+        this.users = new Map(Object.entries(users));
+      }
+    } catch (e) {
+      // File doesn't exist yet, start empty
+    }
+
+    // Load sessions
+    try {
+      const sessionsData = await this.storage.read('auth_sessions.json');
+      if (sessionsData) {
+        const sessions = JSON.parse(sessionsData);
+        this.sessions = new Map(Object.entries(sessions));
+      }
+    } catch (e) {
+      // File doesn't exist yet, start empty
+    }
+
+    // Load groups
+    try {
+      const groupsData = await this.storage.read('auth_groups.json');
+      if (groupsData) {
+        const groups = JSON.parse(groupsData);
+        this.groups = new Map(Object.entries(groups));
+      }
+    } catch (e) {
+      // File doesn't exist yet, start empty
+    }
+
+    // Load memberships
+    try {
+      const membershipsData = await this.storage.read('auth_memberships.json');
+      if (membershipsData) {
+        this.memberships = JSON.parse(membershipsData);
+      }
+    } catch (e) {
+      // File doesn't exist yet, start empty
+    }
+
+    // Load invitations
+    try {
+      const invitationsData = await this.storage.read('auth_invitations.json');
+      if (invitationsData) {
+        this.invitations = JSON.parse(invitationsData);
+      }
+    } catch (e) {
+      // File doesn't exist yet, start empty
+    }
+  }
+
+  private async saveToStorage() {
+    // Save users
+    await this.storage.write('auth_users.json', JSON.stringify(Object.fromEntries(this.users)));
+
+    // Save sessions
+    await this.storage.write('auth_sessions.json', JSON.stringify(Object.fromEntries(this.sessions)));
+
+    // Save groups
+    await this.storage.write('auth_groups.json', JSON.stringify(Object.fromEntries(this.groups)));
+
+    // Save memberships
+    await this.storage.write('auth_memberships.json', JSON.stringify(this.memberships));
+
+    // Save invitations
+    await this.storage.write('auth_invitations.json', JSON.stringify(this.invitations));
   }
 
   // User methods
@@ -28,6 +111,7 @@ export class AuthService {
       updatedAt: new Date(),
     };
     this.users.set(id, user);
+    await this.saveToStorage();
     return user;
   }
 
@@ -49,6 +133,7 @@ export class AuthService {
     if (!user) return null;
     Object.assign(user, updates, { updatedAt: new Date() });
     this.users.set(id, user);
+    await this.saveToStorage();
     return user;
   }
 
@@ -63,6 +148,7 @@ export class AuthService {
       createdAt: new Date(),
     };
     this.sessions.set(id, session);
+    await this.saveToStorage();
     return session;
   }
 
@@ -78,6 +164,7 @@ export class AuthService {
 
   async deleteSession(id: string): Promise<void> {
     this.sessions.delete(id);
+    await this.saveToStorage();
   }
 
   // Group methods (formerly Organization)
@@ -90,6 +177,7 @@ export class AuthService {
       createdAt: new Date(),
     };
     this.groups.set(id, group);
+    await this.saveToStorage();
     return group;
   }
 
@@ -132,6 +220,7 @@ export class AuthService {
       createdAt: new Date(),
     };
     this.memberships.push(membership);
+    await this.saveToStorage();
     return membership;
   }
 
@@ -151,6 +240,7 @@ export class AuthService {
     );
     if (!membership) return null;
     membership.role = role;
+    await this.saveToStorage();
     return membership;
   }
 
@@ -160,6 +250,7 @@ export class AuthService {
     );
     if (index === -1) return false;
     this.memberships.splice(index, 1);
+    await this.saveToStorage();
     return true;
   }
 
@@ -184,6 +275,7 @@ export class AuthService {
       createdAt: new Date(),
     };
     this.invitations.push(invitation);
+    await this.saveToStorage();
     return invitation;
   }
 
@@ -216,6 +308,7 @@ export class AuthService {
 
     const membership = await this.addMember(invitation.groupId, userId, invitation.role || 'member');
     await this.updateUser(userId, { accountType: 'group' });
+    await this.saveToStorage();
 
     return membership;
   }
@@ -224,6 +317,7 @@ export class AuthService {
     const index = this.invitations.findIndex((inv) => inv.id === invitationId);
     if (index === -1) return false;
     this.invitations.splice(index, 1);
+    await this.saveToStorage();
     return true;
   }
 
@@ -285,4 +379,4 @@ export class AuthService {
 }
 
 // Export singleton instance
-export const authService = new AuthService({ storage: 'memory' });
+export const authService = new AuthService({ storage: 'sqlite' });

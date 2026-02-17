@@ -23,6 +23,7 @@ export function Sidebar() {
       const response = await fetch('/api/roles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           groupId: currentGroup.id,
           name,

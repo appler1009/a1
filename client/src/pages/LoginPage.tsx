@@ -19,6 +19,7 @@ export function LoginPage() {
       const response = await fetch('/api/auth/check-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email }),
       });
       const data = await response.json();
@@ -47,6 +48,7 @@ export function LoginPage() {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email }),
       });
       

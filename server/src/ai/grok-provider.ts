@@ -20,6 +20,7 @@ export class GrokProvider implements LLMProvider {
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
     const model = request.model || this.defaultModel;
+    console.log(`[GrokProvider] Making completion request with model: ${model}`);
 
     const response = await this.client.chat.completions.create({
       model,
@@ -33,6 +34,7 @@ export class GrokProvider implements LLMProvider {
     });
 
     const choice = response.choices[0];
+    console.log(`[GrokProvider] Received response: ${choice.message.content?.substring(0, 100)}...`);
 
     return {
       content: choice.message.content || '',

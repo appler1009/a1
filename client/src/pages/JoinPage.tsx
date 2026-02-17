@@ -20,6 +20,7 @@ export function JoinPage() {
       const response = await fetch('/api/auth/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email, name: name || undefined, inviteCode }),
       });
       

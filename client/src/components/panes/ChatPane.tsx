@@ -1,18 +1,33 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useAuthStore, useRolesStore, useChatStore } from '../../store';
 
 export function ChatPane() {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  
+
   const { user, currentGroup } = useAuthStore();
   const { currentRole } = useRolesStore();
   const { messages, streaming, currentContent, addMessage, setStreaming, setCurrentContent, clearMessages } = useChatStore();
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    requestAnimationFrame(() => {
+      if (messagesContainerRef.current) {
+        const container = messagesContainerRef.current;
+        container.scrollTop = container.scrollHeight;
+      }
+    });
+    // Fallback with setTimeout
+    setTimeout(() => {
+      if (messagesContainerRef.current) {
+        const container = messagesContainerRef.current;
+        container.scrollTop = container.scrollHeight;
+      }
+    }, 100);
   };
 
   useEffect(() => {
@@ -42,6 +57,7 @@ export function ChatPane() {
       const response = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           messages: [...messages, userMessage].map((m) => ({
             role: m.role,
@@ -141,7 +157,7 @@ export function ChatPane() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
         {roleMessages.length === 0 && !streaming && (
           <div className="text-center text-muted-foreground py-8">
             <p>Start a conversation</p>
@@ -165,7 +181,11 @@ export function ChatPane() {
                   : 'bg-muted'
               }`}
             >
-              <p className="whitespace-pre-wrap">{message.content}</p>
+              <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {message.content}
+                </ReactMarkdown>
+              </div>
               <p className="text-xs opacity-70 mt-1">
                 {new Date(message.createdAt).toLocaleTimeString()}
               </p>

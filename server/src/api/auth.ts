@@ -31,7 +31,15 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
 
     const session = await authService.createSession(user.id);
-    
+
+    reply.setCookie('session_id', session.id, {
+      path: '/',
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    });
+
     return reply.send({
       success: true,
       data: {
@@ -55,7 +63,15 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     const user = await authService.createUser(body.email, body.name, 'individual');
     const session = await authService.createSession(user.id);
-    
+
+    reply.setCookie('session_id', session.id, {
+      path: '/',
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    });
+
     return reply.send({
       success: true,
       data: {
@@ -96,7 +112,15 @@ export async function authRoutes(fastify: FastifyInstance) {
     );
     
     const session = await authService.createSession(result.user.id);
-    
+
+    reply.setCookie('session_id', session.id, {
+      path: '/',
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    });
+
     return reply.send({
       success: true,
       data: {
@@ -162,10 +186,18 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     // Accept invitation
     await authService.acceptInvitation(body.inviteCode, user.id);
-    
+
     const group = await authService.getGroup(invitation.groupId);
     const session = await authService.createSession(user.id);
-    
+
+    reply.setCookie('session_id', session.id, {
+      path: '/',
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    });
+
     return reply.send({
       success: true,
       data: {

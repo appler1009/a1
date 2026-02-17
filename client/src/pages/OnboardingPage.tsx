@@ -30,6 +30,7 @@ export function OnboardingPage() {
       const response = await fetch('/api/auth/signup/individual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email, name: name || undefined }),
       });
       
@@ -57,11 +58,12 @@ export function OnboardingPage() {
       const response = await fetch('/api/auth/signup/group', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          email, 
+        credentials: 'include',
+        body: JSON.stringify({
+          email,
           name: name || undefined,
           groupName,
-          groupUrl: groupUrl || undefined 
+          groupUrl: groupUrl || undefined
         }),
       });
       
@@ -91,6 +93,7 @@ export function OnboardingPage() {
       const response = await fetch('/api/auth/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email, name: name || undefined, inviteCode }),
       });
       
