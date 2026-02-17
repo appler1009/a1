@@ -7,9 +7,9 @@ export function ViewerPane() {
   const { viewerTab, setViewerTab } = useUIStore();
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex flex-col h-full w-full overflow-hidden bg-background">
       {/* Tabs */}
-      <Tabs value={viewerTab} onValueChange={(v) => setViewerTab(v as typeof viewerTab)}>
+      <Tabs value={viewerTab} onValueChange={(v) => setViewerTab(v as typeof viewerTab)} className="flex flex-col flex-1 min-h-0">
         <TabsList className="flex items-center gap-1 p-2 border-b border-border">
           <TabsTrigger
             value="gmail"
@@ -53,19 +53,19 @@ export function ViewerPane() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="gmail" className="flex-1 overflow-y-auto p-4">
+        <TabsContent value="gmail" className="flex-1 min-h-0 overflow-y-auto p-4">
           <GmailView />
         </TabsContent>
 
-        <TabsContent value="docs" className="flex-1 overflow-y-auto p-4">
+        <TabsContent value="docs" className="flex-1 min-h-0 overflow-y-auto p-4">
           <DocsView />
         </TabsContent>
 
-        <TabsContent value="files" className="flex-1 overflow-y-auto p-4">
+        <TabsContent value="files" className="flex-1 min-h-0 overflow-y-auto p-4">
           <FilesView />
         </TabsContent>
 
-        <TabsContent value="mcp" className="flex-1 overflow-y-auto p-4">
+        <TabsContent value="mcp" className="flex-1 min-h-0 overflow-y-auto p-4">
           <MCPView />
         </TabsContent>
       </Tabs>

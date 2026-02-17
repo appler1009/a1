@@ -135,7 +135,7 @@ export function ChatPane() {
   );
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full w-full overflow-hidden">
       {/* Header */}
       <div className="h-12 border-b border-border flex items-center justify-between px-4">
         <div className="flex items-center gap-2">
@@ -157,7 +157,7 @@ export function ChatPane() {
       </div>
 
       {/* Messages */}
-      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
         {roleMessages.length === 0 && !streaming && (
           <div className="text-center text-muted-foreground py-8">
             <p>Start a conversation</p>

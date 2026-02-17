@@ -36,15 +36,15 @@ function MainApp() {
         </header>
 
         {/* Main content with resizable panels */}
-        <div className="flex-1">
+        <div className="flex-1 h-full overflow-hidden">
           <PanelGroup direction="horizontal">
-            <Panel defaultSize={50} minSize={30}>
+            <Panel defaultSize={50} minSize={30} className="h-full overflow-hidden">
               <ChatPane />
             </Panel>
-            
+
             <PanelResizeHandle className="w-1 bg-border hover:bg-primary/50 transition-colors" />
-            
-            <Panel defaultSize={50} minSize={30}>
+
+            <Panel defaultSize={50} minSize={30} className="h-full overflow-hidden">
               <ViewerPane />
             </Panel>
           </PanelGroup>
