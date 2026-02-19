@@ -178,6 +178,15 @@ const fastify = Fastify({
 // Global LLM router instance
 let llmRouter: ReturnType<typeof createLLMRouter>;
 
+// Global storage instance - initialized before routes
+const storage = createStorage({
+  type: (process.env.STORAGE_TYPE as 'fs' | 'sqlite' | 's3') || 'fs',
+  root: process.env.STORAGE_ROOT || './data',
+  bucket: process.env.STORAGE_BUCKET || '',
+  endpoint: process.env.STORAGE_ENDPOINT,
+  region: process.env.STORAGE_REGION,
+});
+
 // Google OAuth handler for token refresh
 let googleOAuthHandler: GoogleOAuthHandler | null = null;
 
@@ -589,6 +598,112 @@ fastify.register(async (instance) => {
 
 // Chat routes
 fastify.register(async (instance) => {
+  // Get messages for a role with pagination
+  instance.get('/messages', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const query = request.query as { roleId?: string; limit?: number; before?: string };
+    const roleId = query.roleId || 'default';
+    const limit = query.limit || 50;
+
+    const messageStorage = storage.getMessageStorage();
+    if (!messageStorage) {
+      return reply.code(500).send({ success: false, error: { message: 'Message storage not available' } });
+    }
+
+    const messages = await messageStorage.listMessages(roleId, { limit, before: query.before });
+    return reply.send({ success: true, data: messages });
+  });
+
+  // Save a message
+  instance.post('/messages', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const body = request.body as { 
+      id?: string;
+      roleId: string; 
+      groupId?: string;
+      role: 'user' | 'assistant' | 'system';
+      content: string;
+    };
+
+    const messageStorage = storage.getMessageStorage();
+    if (!messageStorage) {
+      return reply.code(500).send({ success: false, error: { message: 'Message storage not available' } });
+    }
+
+    const message = {
+      id: body.id || uuidv4(),
+      roleId: body.roleId,
+      groupId: body.groupId || null,
+      userId: request.user.id,
+      role: body.role,
+      content: body.content,
+      createdAt: new Date().toISOString(),
+    };
+
+    await messageStorage.saveMessage(message);
+    return reply.send({ success: true, data: message });
+  });
+
+  // Clear messages for a role
+  instance.delete('/messages', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const query = request.query as { roleId?: string };
+    const roleId = query.roleId || 'default';
+
+    const messageStorage = storage.getMessageStorage();
+    if (!messageStorage) {
+      return reply.code(500).send({ success: false, error: { message: 'Message storage not available' } });
+    }
+
+    await messageStorage.clearMessages(roleId);
+    return reply.send({ success: true });
+  });
+
+  // Migrate messages from localStorage (client sends all messages)
+  instance.post('/messages/migrate', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const body = request.body as { 
+      messages: Array<{
+        id: string;
+        roleId: string;
+        groupId?: string | null;
+        userId?: string;
+        role: 'user' | 'assistant' | 'system';
+        content: string;
+        createdAt: string;
+      }> 
+    };
+
+    const messageStorage = storage.getMessageStorage();
+    if (!messageStorage) {
+      return reply.code(500).send({ success: false, error: { message: 'Message storage not available' } });
+    }
+
+    let migrated = 0;
+    for (const msg of body.messages) {
+      await messageStorage.saveMessage({
+        ...msg,
+        userId: msg.userId || request.user.id,
+        groupId: msg.groupId || null,
+      });
+      migrated++;
+    }
+
+    return reply.send({ success: true, data: { migrated } });
+  });
+
   instance.post('/chat/stream', async (request, reply) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
@@ -651,6 +766,14 @@ fastify.register(async (instance) => {
         content: `You are a helpful assistant with access to Google Drive and file management tools.
 
 IMPORTANT: When users ask about files or want to access/download them, you MUST use the available MCP tools (search, listFolder, etc.) rather than just describing them. Use the tools proactively to interact with Google Drive and the file system.
+
+When presenting search results or file lists to users:
+- DO NOT show internal IDs (like Google Drive file IDs) - these are not useful to humans
+- Show only the file name and a clickable link
+- Format file lists cleanly with bullet points
+- Example good format:
+  📄 **Report.pdf** - [Open](https://drive.google.com/file/d/xxx/view)
+  📄 **Budget.xlsx** - [Open](https://drive.google.com/file/d/yyy/view)
 
 When you find or reference a file (PDF, image, document) that can be displayed, you MUST use the preview-file tag format to automatically display it in the preview pane:
 
@@ -1381,14 +1504,7 @@ fastify.register(async (instance) => {
 // Start server
 const start = async () => {
   try {
-    // Initialize storage
-    const storage = createStorage({
-      type: config.storage.type,
-      root: config.storage.root,
-      bucket: config.storage.bucket || '',
-      endpoint: config.storage.endpoint,
-      region: config.storage.region,
-    });
+    // Initialize storage (already created globally)
     await storage.initialize();
 
     // Initialize auth service

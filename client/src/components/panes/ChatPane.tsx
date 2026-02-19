@@ -1,8 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Loader2, ChevronUp } from 'lucide-react';
 import { useAuthStore, useRolesStore, useChatStore, useUIStore, type ViewerFile } from '../../store';
+import { MessageItem } from '../MessageItem';
 
 /**
  * Parse Google Drive search result to extract PDF files
@@ -144,34 +143,60 @@ async function downloadFileForPreview(url: string, filename: string, mimeType: s
 
 export function ChatPane() {
   const [input, setInput] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const { user, currentGroup } = useAuthStore();
   const { currentRole } = useRolesStore();
-  const { messages, streaming, currentContent, addMessage, setStreaming, setCurrentContent, clearMessages } = useChatStore();
+  const { 
+    messages, 
+    streaming, 
+    currentContent, 
+    hasMore,
+    loading,
+    migrated,
+    addMessage, 
+    setStreaming, 
+    setCurrentContent, 
+    fetchMessages,
+    migrateFromLocalStorage,
+    clearServerMessages,
+  } = useChatStore();
   const { setViewerFile, setViewerTab } = useUIStore();
 
-  const scrollToBottom = () => {
-    requestAnimationFrame(() => {
-      if (messagesContainerRef.current) {
-        const container = messagesContainerRef.current;
-        container.scrollTop = container.scrollHeight;
-      }
-    });
-    // Fallback with setTimeout
-    setTimeout(() => {
-      if (messagesContainerRef.current) {
-        const container = messagesContainerRef.current;
-        container.scrollTop = container.scrollHeight;
-      }
-    }, 100);
-  };
+  const currentRoleId = currentRole?.id || 'default';
 
+  // Migrate localStorage messages on first load
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, currentContent]);
+    if (!migrated) {
+      migrateFromLocalStorage();
+    }
+  }, [migrated, migrateFromLocalStorage]);
+
+  // Fetch messages when role changes
+  useEffect(() => {
+    fetchMessages(currentRoleId, { limit: 50 });
+  }, [currentRoleId, fetchMessages]);
+
+  // Filter messages for current role
+  const roleMessages = messages.filter(
+    (m) => m.roleId === currentRoleId
+  );
+
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  }, [roleMessages.length, currentContent]);
+
+  // Load older messages when scrolling to top
+  const handleLoadMore = useCallback(() => {
+    if (hasMore && !loading && roleMessages.length > 0) {
+      const oldestMessage = roleMessages[0];
+      fetchMessages(currentRoleId, { before: oldestMessage.id, limit: 50 });
+    }
+  }, [hasMore, loading, roleMessages, currentRoleId, fetchMessages]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -179,7 +204,7 @@ export function ChatPane() {
 
     const userMessage = {
       id: crypto.randomUUID(),
-      roleId: currentRole?.id || 'default',
+      roleId: currentRoleId,
       groupId: currentGroup?.id || null,
       userId: user.id,
       role: 'user' as const,
@@ -198,7 +223,7 @@ export function ChatPane() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          messages: [...messages, userMessage].map((m) => ({
+          messages: [...roleMessages, userMessage].map((m) => ({
             role: m.role,
             content: m.content,
           })),
@@ -273,7 +298,7 @@ export function ChatPane() {
 
         const assistantMessage = {
           id: crypto.randomUUID(),
-          roleId: currentRole?.id || 'default',
+          roleId: currentRoleId,
           groupId: currentGroup?.id || null,
           userId: user.id,
           role: 'assistant' as const,
@@ -319,9 +344,9 @@ export function ChatPane() {
     }
   };
 
-  const roleMessages = messages.filter(
-    (m) => m.roleId === (currentRole?.id || 'default')
-  );
+  const handleClear = async () => {
+    await clearServerMessages(currentRoleId);
+  };
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
@@ -338,15 +363,33 @@ export function ChatPane() {
           )}
         </div>
         <button
-          onClick={clearMessages}
+          onClick={handleClear}
           className="text-xs text-muted-foreground hover:text-foreground"
         >
           Clear
         </button>
       </div>
 
+      {/* Load More Button */}
+      {hasMore && roleMessages.length > 0 && (
+        <div className="flex justify-center py-2 border-b border-border">
+          <button
+            onClick={handleLoadMore}
+            disabled={loading}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            {loading ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <ChevronUp className="w-3 h-3" />
+            )}
+            Load older messages
+          </button>
+        </div>
+      )}
+
       {/* Messages */}
-      <div ref={messagesContainerRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+      <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
         {roleMessages.length === 0 && !streaming && (
           <div className="text-center text-muted-foreground py-8">
             <p>Start a conversation</p>
@@ -357,29 +400,7 @@ export function ChatPane() {
         )}
 
         {roleMessages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${
-              message.role === 'user' ? 'justify-end' : 'justify-start'
-            }`}
-          >
-            <div
-              className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                message.role === 'user'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted'
-              }`}
-            >
-              <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {message.content}
-                </ReactMarkdown>
-              </div>
-              <p className="text-xs opacity-70 mt-1">
-                {new Date(message.createdAt).toLocaleTimeString()}
-              </p>
-            </div>
-          </div>
+          <MessageItem key={message.id} message={message} />
         ))}
 
         {streaming && currentContent && (
@@ -397,8 +418,6 @@ export function ChatPane() {
             </div>
           </div>
         )}
-
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}

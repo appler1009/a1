@@ -1,10 +1,10 @@
 import type { StorageAdapterConfig, MemoryEntry } from '@local-agent/shared';
-import { FSStorageAdapter, FSStorageConfig } from './fs-adapter.js';
-import { SQLiteStorageAdapter, SQLiteStorageConfig } from './sqlite-adapter.js';
-import { S3StorageAdapter, S3StorageConfig } from './s3-adapter.js';
-import type { IStorage } from './interface.js';
+import { FSStorageAdapter } from './fs-adapter.js';
+import { SQLiteStorageAdapter } from './sqlite-adapter.js';
+import { S3StorageAdapter } from './s3-adapter.js';
+import type { IStorage, IMessageStorage, ChatMessageEntry } from './interface.js';
 
-export type { IStorage };
+export type { IStorage, IMessageStorage, ChatMessageEntry };
 export { BaseStorage } from './interface.js';
 export { FSStorageAdapter } from './fs-adapter.js';
 export { SQLiteStorageAdapter } from './sqlite-adapter.js';
@@ -13,17 +13,31 @@ export { S3StorageAdapter } from './s3-adapter.js';
 /**
  * Storage service factory
  * Creates the appropriate storage adapter based on configuration
+ * Always uses SQLite for message storage regardless of main storage type
  */
 export class StorageService implements IStorage {
   private adapter: IStorage;
+  private messageStorage: IMessageStorage;
+  private messageStorageAdapter: SQLiteStorageAdapter;
 
   constructor(config: StorageAdapterConfig) {
+    // Always create SQLite adapter for message storage
+    // Use a default path for the messages database
+    const messageDbRoot = 'root' in config ? config.root : './data';
+    const sqliteAdapter = new SQLiteStorageAdapter({
+      type: 'sqlite',
+      root: messageDbRoot,
+    });
+    this.messageStorage = sqliteAdapter;
+    this.messageStorageAdapter = sqliteAdapter;
+
     switch (config.type) {
       case 'fs':
         this.adapter = new FSStorageAdapter(config);
         break;
       case 'sqlite':
-        this.adapter = new SQLiteStorageAdapter(config);
+        // Reuse the same SQLite adapter for both storage and messages
+        this.adapter = sqliteAdapter;
         break;
       case 's3':
         this.adapter = new S3StorageAdapter(config);
@@ -34,9 +48,25 @@ export class StorageService implements IStorage {
   }
 
   async initialize(): Promise<void> {
+    // Always initialize SQLite for message storage
+    // Only initialize separately if not using SQLite as main adapter
+    const adapterIsSqlite = this.adapter === this.messageStorageAdapter;
+    
+    if (!adapterIsSqlite) {
+      // Initialize the message storage SQLite adapter separately
+      await this.messageStorageAdapter.initialize();
+    }
+    
     if ('initialize' in this.adapter && typeof this.adapter.initialize === 'function') {
       await (this.adapter as FSStorageAdapter | SQLiteStorageAdapter | S3StorageAdapter).initialize();
     }
+  }
+
+  /**
+   * Get message storage (always SQLite)
+   */
+  getMessageStorage(): IMessageStorage | null {
+    return this.messageStorage;
   }
 
   // ============================================

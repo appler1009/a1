@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import Fuse from 'fuse.js';
 import type { MemoryEntry } from '@local-agent/shared';
-import { BaseStorage } from './interface.js';
+import { BaseStorage, type ChatMessageEntry, type IMessageStorage } from './interface.js';
 
 export interface SQLiteStorageConfig {
   type: 'sqlite';
@@ -12,8 +12,9 @@ export interface SQLiteStorageConfig {
 /**
  * SQLite storage adapter
  * Stores metadata in SQLite and files on the filesystem
+ * Also implements IMessageStorage for chat messages
  */
-export class SQLiteStorageAdapter extends BaseStorage {
+export class SQLiteStorageAdapter extends BaseStorage implements IMessageStorage {
   private db: Database.Database;
   private root: string;
   private memoryIndex: Map<string, MemoryEntry> = new Map();
@@ -42,6 +43,19 @@ export class SQLiteStorageAdapter extends BaseStorage {
       CREATE INDEX IF NOT EXISTS idx_memory_role ON memory(roleId);
       CREATE INDEX IF NOT EXISTS idx_memory_org ON memory(orgId);
       CREATE INDEX IF NOT EXISTS idx_memory_user ON memory(userId);
+      
+      CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY,
+        roleId TEXT NOT NULL,
+        groupId TEXT,
+        userId TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(roleId);
+      CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(createdAt);
       
       CREATE TABLE IF NOT EXISTS metadata (
         table_name TEXT NOT NULL,
@@ -199,6 +213,100 @@ export class SQLiteStorageAdapter extends BaseStorage {
   async deleteMemory(id: string): Promise<void> {
     this.db.prepare('DELETE FROM memory WHERE id = ?').run(id);
     this.memoryIndex.delete(id);
+  }
+
+  // ============================================
+  // Chat Message Operations
+  // ============================================
+
+  async saveMessage(entry: ChatMessageEntry): Promise<void> {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO messages 
+      (id, roleId, groupId, userId, role, content, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      entry.id,
+      entry.roleId,
+      entry.groupId,
+      entry.userId,
+      entry.role,
+      entry.content,
+      typeof entry.createdAt === 'string' ? entry.createdAt : entry.createdAt.toISOString()
+    );
+  }
+
+  async getMessage(id: string): Promise<ChatMessageEntry | null> {
+    const row = this.db.prepare(
+      'SELECT * FROM messages WHERE id = ?'
+    ).get(id) as {
+      id: string;
+      roleId: string;
+      groupId: string | null;
+      userId: string;
+      role: 'user' | 'assistant' | 'system';
+      content: string;
+      createdAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      roleId: row.roleId,
+      groupId: row.groupId,
+      userId: row.userId,
+      role: row.role,
+      content: row.content,
+      createdAt: row.createdAt,
+    };
+  }
+
+  async listMessages(roleId: string, options?: { limit?: number; before?: string }): Promise<ChatMessageEntry[]> {
+    let query = 'SELECT * FROM messages WHERE roleId = ?';
+    const params: (string | number)[] = [roleId];
+
+    if (options?.before) {
+      query += ' AND createdAt < (SELECT createdAt FROM messages WHERE id = ?)';
+      params.push(options.before);
+    }
+
+    query += ' ORDER BY createdAt DESC';
+
+    if (options?.limit) {
+      query += ' LIMIT ?';
+      params.push(options.limit);
+    }
+
+    const rows = this.db.prepare(query).all(...params) as Array<{
+      id: string;
+      roleId: string;
+      groupId: string | null;
+      userId: string;
+      role: 'user' | 'assistant' | 'system';
+      content: string;
+      createdAt: string;
+    }>;
+
+    // Return in chronological order (oldest first)
+    return rows.reverse().map(row => ({
+      id: row.id,
+      roleId: row.roleId,
+      groupId: row.groupId,
+      userId: row.userId,
+      role: row.role,
+      content: row.content,
+      createdAt: row.createdAt,
+    }));
+  }
+
+  async deleteMessage(id: string): Promise<void> {
+    this.db.prepare('DELETE FROM messages WHERE id = ?').run(id);
+  }
+
+  async clearMessages(roleId: string): Promise<void> {
+    this.db.prepare('DELETE FROM messages WHERE roleId = ?').run(roleId);
   }
 
   // ============================================

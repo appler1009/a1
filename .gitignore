@@ -75,6 +75,7 @@ vite.config.ts.timestamp-*
 secrets/
 credentials.json
 token.json
+tokens.json
 
 # Docker
 .docker/

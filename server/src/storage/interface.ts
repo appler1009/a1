@@ -1,6 +1,31 @@
 import type { MemoryEntry } from '@local-agent/shared';
 
 /**
+ * Chat message entry for storage
+ */
+export interface ChatMessageEntry {
+  id: string;
+  roleId: string;
+  groupId: string | null;
+  userId: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  createdAt: Date | string;
+}
+
+/**
+ * Message storage interface
+ * Only SQLite adapter implements this - storing messages to filesystem/S3 doesn't make sense
+ */
+export interface IMessageStorage {
+  saveMessage(entry: ChatMessageEntry): Promise<void>;
+  getMessage(id: string): Promise<ChatMessageEntry | null>;
+  listMessages(roleId: string, options?: { limit?: number; before?: string }): Promise<ChatMessageEntry[]>;
+  deleteMessage(id: string): Promise<void>;
+  clearMessages(roleId: string): Promise<void>;
+}
+
+/**
  * Storage interface
  * All storage adapters must implement this interface
  */

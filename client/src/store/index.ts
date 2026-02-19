@@ -118,35 +118,152 @@ export const useRolesStore = create<RolesState>()(
   )
 );
 
-// Chat Store
+// Chat Store - No longer persists to localStorage, uses server-side storage
 interface ChatState {
   messages: Message[];
   streaming: boolean;
   currentContent: string;
-  addMessage: (message: Message) => void;
+  hasMore: boolean;
+  loading: boolean;
+  migrated: boolean;
+  addMessage: (message: Message) => Promise<void>;
+  prependMessages: (messages: Message[]) => void;
   setMessages: (messages: Message[]) => void;
   setStreaming: (streaming: boolean) => void;
   setCurrentContent: (content: string) => void;
+  setHasMore: (hasMore: boolean) => void;
+  setLoading: (loading: boolean) => void;
+  setMigrated: (migrated: boolean) => void;
   clearMessages: () => void;
+  fetchMessages: (roleId: string, options?: { before?: string; limit?: number }) => Promise<void>;
+  migrateFromLocalStorage: () => Promise<void>;
+  clearServerMessages: (roleId: string) => Promise<void>;
 }
 
-export const useChatStore = create<ChatState>()(
-  persist(
-    (set) => ({
-      messages: [],
-      streaming: false,
-      currentContent: '',
-      addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
-      setMessages: (messages) => set({ messages }),
-      setStreaming: (streaming) => set({ streaming }),
-      setCurrentContent: (content) => set({ currentContent: content }),
-      clearMessages: () => set({ messages: [], currentContent: '' }),
-    }),
-    {
-      name: 'chat-storage',
+export const useChatStore = create<ChatState>()((set, get) => ({
+  messages: [],
+  streaming: false,
+  currentContent: '',
+  hasMore: true,
+  loading: false,
+  migrated: false,
+  
+  addMessage: async (message) => {
+    // Add to local state immediately for UI responsiveness
+    set((state) => ({ messages: [...state.messages, message] }));
+    
+    // Persist to server
+    try {
+      const response = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          id: message.id,
+          roleId: message.roleId,
+          role: message.role,
+          content: message.content,
+        }),
+      });
+      
+      if (!response.ok) {
+        console.error('Failed to save message to server');
+      }
+    } catch (error) {
+      console.error('Failed to save message:', error);
     }
-  )
-);
+  },
+  
+  prependMessages: (olderMessages) => set((state) => ({ messages: [...olderMessages, ...state.messages] })),
+  setMessages: (messages) => set({ messages }),
+  setStreaming: (streaming) => set({ streaming }),
+  setCurrentContent: (content) => set({ currentContent: content }),
+  setHasMore: (hasMore) => set({ hasMore }),
+  setLoading: (loading) => set({ loading }),
+  setMigrated: (migrated) => set({ migrated }),
+  clearMessages: () => set({ messages: [], currentContent: '', hasMore: true }),
+  
+  fetchMessages: async (roleId, options = {}) => {
+    const { loading, messages } = get();
+    if (loading) return;
+    
+    set({ loading: true });
+    try {
+      const params = new URLSearchParams({ roleId });
+      if (options.limit) params.append('limit', String(options.limit));
+      if (options.before) params.append('before', options.before);
+      
+      const response = await fetch(`/api/messages?${params}`, { credentials: 'include' });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          const fetchedMessages = data.data as Message[];
+          if (options.before) {
+            // Prepend older messages
+            set({ messages: [...fetchedMessages, ...messages], hasMore: fetchedMessages.length === (options.limit || 50) });
+          } else {
+            // Initial load
+            set({ messages: fetchedMessages, hasMore: fetchedMessages.length === (options.limit || 50) });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch messages:', error);
+    } finally {
+      set({ loading: false });
+    }
+  },
+  
+  migrateFromLocalStorage: async () => {
+    const { migrated } = get();
+    if (migrated) return;
+    
+    // Get messages from localStorage
+    const stored = localStorage.getItem('chat-storage');
+    if (!stored) {
+      set({ migrated: true });
+      return;
+    }
+    
+    try {
+      const parsed = JSON.parse(stored);
+      const localMessages = parsed?.state?.messages as Message[] | undefined;
+      if (!localMessages || localMessages.length === 0) {
+        set({ migrated: true });
+        return;
+      }
+      
+      // Send to server
+      const response = await fetch('/api/messages/migrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ messages: localMessages }),
+      });
+      
+      if (response.ok) {
+        console.log('Migrated messages from localStorage to server');
+        // Clear localStorage
+        localStorage.removeItem('chat-storage');
+        set({ migrated: true });
+      }
+    } catch (error) {
+      console.error('Failed to migrate messages:', error);
+    }
+  },
+  
+  clearServerMessages: async (roleId) => {
+    try {
+      await fetch(`/api/messages?roleId=${roleId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      set({ messages: [], hasMore: true });
+    } catch (error) {
+      console.error('Failed to clear messages:', error);
+    }
+  },
+}));
 
 // Memory Store
 interface MemoryState {
