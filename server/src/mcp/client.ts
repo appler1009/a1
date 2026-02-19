@@ -36,7 +36,8 @@ export class MCPStdioClient implements MCPClientInterface {
       throw new Error('Command is required for stdio transport');
     }
 
-    this.process = spawn(this.config.command, [], {
+    this.process = spawn(this.config.command!, this.config.args || [], {
+      cwd: this.config.cwd ?? undefined,
       env: { ...process.env, ...this.config.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -64,6 +65,12 @@ export class MCPStdioClient implements MCPClientInterface {
     });
 
     this.serverInfo = initResponse.result as MCPServerInfo;
+
+    // Send initialized notification as required by MCP protocol
+    this.process.stdin?.write(JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+    }) + '\n');
   }
 
   async disconnect(): Promise<void> {
@@ -188,6 +195,13 @@ export class MCPWebSocketClient implements MCPClientInterface {
             },
           });
           this.serverInfo = initResponse.result as MCPServerInfo;
+          
+          // Send initialized notification as required by MCP protocol
+          this.ws?.send(JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'notifications/initialized',
+          }));
+          
           resolve();
         } catch (error) {
           reject(error);

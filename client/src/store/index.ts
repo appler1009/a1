@@ -173,19 +173,67 @@ export const useMemoryStore = create<MemoryState>()(
   )
 );
 
+// Environment Store
+export interface EnvironmentInfo {
+  env: 'development' | 'test' | 'production';
+  isDevelopment: boolean;
+  isTest: boolean;
+  isProduction: boolean;
+  port: number;
+  host: string;
+}
+
+interface EnvironmentState {
+  environment: EnvironmentInfo | null;
+  setEnvironment: (env: EnvironmentInfo) => void;
+  fetchEnvironment: () => Promise<void>;
+}
+
+export const useEnvironmentStore = create<EnvironmentState>()((set) => ({
+  environment: null,
+  setEnvironment: (environment) => set({ environment }),
+  fetchEnvironment: async () => {
+    try {
+      const response = await fetch('/api/env');
+      if (response.ok) {
+        const data = await response.json();
+        set({ environment: data.data });
+      }
+    } catch (error) {
+      console.error('Failed to fetch environment info:', error);
+    }
+  },
+}));
+
 // UI Store
+export interface ViewerFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  previewUrl: string;
+  serverId?: string;
+}
+
 interface UIState {
   sidebarOpen: boolean;
-  viewerTab: 'gmail' | 'docs' | 'files' | 'mcp';
+  viewerTab: string;
+  viewerFile: ViewerFile | null;
+  showMcpManager: boolean;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
-  setViewerTab: (tab: 'gmail' | 'docs' | 'files' | 'mcp') => void;
+  setViewerTab: (tab: string) => void;
+  setViewerFile: (file: ViewerFile | null) => void;
+  setShowMcpManager: (show: boolean) => void;
 }
 
 export const useUIStore = create<UIState>()((set) => ({
   sidebarOpen: true,
   viewerTab: 'docs',
+  viewerFile: null,
+  showMcpManager: false,
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setViewerTab: (tab) => set({ viewerTab: tab }),
+  setViewerFile: (file) => set({ viewerFile: file }),
+  setShowMcpManager: (show) => set({ showMcpManager: show }),
 }));

@@ -1,15 +1,18 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
-import { useAuthStore } from './store';
+import { useAuthStore, useEnvironmentStore, useUIStore } from './store';
 import { LoginPage } from './pages/LoginPage';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { JoinPage } from './pages/JoinPage';
+import { OAuthCallbackPage } from './pages/OAuthCallbackPage';
 import { Sidebar } from './components/Sidebar';
 import { ChatPane } from './components/panes/ChatPane';
-import { ViewerPane } from './components/panes/ViewerPane';
+import { ViewerPane, MCPManagerDialog } from './components/panes/ViewerPane';
 
 function MainApp() {
-  const { user, currentGroup } = useAuthStore();
+  const { user } = useAuthStore();
+  const { showMcpManager, setShowMcpManager } = useUIStore();
 
   if (!user) {
     return <Navigate to="/login" replace />;
@@ -18,22 +21,8 @@ function MainApp() {
   return (
     <div className="flex h-screen bg-background text-foreground">
       <Sidebar />
-      
+
       <main className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className="h-14 border-b border-border flex items-center justify-between px-4">
-          <div>
-            <h1 className="text-lg font-semibold">a1</h1>
-            <p className="text-xs text-muted-foreground">
-              {currentGroup ? currentGroup.name : 'Personal workspace'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">
-              {user.email}
-            </span>
-          </div>
-        </header>
 
         {/* Main content with resizable panels */}
         <div className="flex-1 h-full overflow-hidden">
@@ -50,17 +39,35 @@ function MainApp() {
           </PanelGroup>
         </div>
       </main>
+
+      {/* MCP Manager Modal */}
+      {showMcpManager && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <MCPManagerDialog
+            onClose={() => setShowMcpManager(false)}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
 function App() {
+  const fetchEnvironment = useEnvironmentStore((state) => state.fetchEnvironment);
+
+  useEffect(() => {
+    // Fetch environment info on app startup
+    fetchEnvironment();
+  }, [fetchEnvironment]);
+
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/join" element={<JoinPage />} />
+        <Route path="/auth/google/callback" element={<OAuthCallbackPage />} />
+        <Route path="/oauth/callback" element={<OAuthCallbackPage />} />
         <Route path="/*" element={<MainApp />} />
       </Routes>
     </BrowserRouter>

@@ -2,11 +2,13 @@ import type { LLMRequest, LLMResponse, LLMStreamChunk, MCPToolDefinition } from 
 import type { LLMProvider } from './provider.js';
 import { GrokProvider } from './grok-provider.js';
 import { OpenAIProvider } from './openai-provider.js';
+import { AnthropicProvider } from './anthropic-provider.js';
 
 export interface LLMRouterConfig {
-  provider?: 'grok' | 'openai';
+  provider?: 'grok' | 'openai' | 'anthropic';
   grokKey?: string;
   openaiKey?: string;
+  anthropicKey?: string;
   defaultModel?: string;
   routerEnabled?: boolean;
   rules?: Array<{
@@ -47,6 +49,15 @@ export class LLMRouter {
         defaultModel: config.defaultModel || 'gpt-4',
       });
       this.defaultModel = config.defaultModel || 'gpt-4';
+    } else if (providerType === 'anthropic') {
+      if (!config.anthropicKey) {
+        throw new Error('ANTHROPIC_API_KEY is required for Anthropic provider');
+      }
+      this.provider = new AnthropicProvider({
+        apiKey: config.anthropicKey,
+        defaultModel: config.defaultModel || 'claude-sonnet-4-20250514',
+      });
+      this.defaultModel = config.defaultModel || 'claude-sonnet-4-20250514';
     } else {
       throw new Error(`Unknown provider: ${providerType}`);
     }

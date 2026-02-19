@@ -6,6 +6,16 @@ export interface AuthConfig {
   storage: 'fs' | 'sqlite' | 's3';
 }
 
+export interface OAuthToken {
+  provider: string;
+  accessToken: string;
+  refreshToken?: string;
+  expiryDate?: number;
+  userId: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export class AuthService {
   private storage: ReturnType<typeof createStorage>;
   private users: Map<string, User> = new Map();
@@ -13,6 +23,7 @@ export class AuthService {
   private groups: Map<string, Group> = new Map();
   private memberships: GroupMember[] = [];
   private invitations: Invitation[] = [];
+  private oauthTokens: Map<string, OAuthToken[]> = new Map();
 
   constructor(config: AuthConfig) {
     this.storage = createStorage({
@@ -80,6 +91,19 @@ export class AuthService {
     } catch (e) {
       // File doesn't exist yet, start empty
     }
+
+    // Load OAuth tokens
+    try {
+      const tokensData = await this.storage.read('oauth_tokens.json');
+      if (tokensData) {
+        const tokens = JSON.parse(tokensData);
+        for (const [userId, userTokens] of Object.entries(tokens)) {
+          this.oauthTokens.set(userId, userTokens as OAuthToken[]);
+        }
+      }
+    } catch (e) {
+      // File doesn't exist yet, start empty
+    }
   }
 
   private async saveToStorage() {
@@ -97,6 +121,9 @@ export class AuthService {
 
     // Save invitations
     await this.storage.write('auth_invitations.json', JSON.stringify(this.invitations));
+
+    // Save OAuth tokens
+    await this.storage.write('oauth_tokens.json', JSON.stringify(Object.fromEntries(this.oauthTokens)));
   }
 
   // User methods
@@ -375,6 +402,50 @@ export class AuthService {
     const user = await this.createUser(email, name, 'group');
     await this.addMember(groupId, user.id, role);
     return user;
+  }
+
+  // OAuth token methods
+  async storeOAuthToken(userId: string, token: Omit<OAuthToken, 'createdAt' | 'updatedAt'>): Promise<OAuthToken> {
+    const oauthToken: OAuthToken = {
+      ...token,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const tokens = this.oauthTokens.get(userId) || [];
+    const existingIndex = tokens.findIndex(t => t.provider === token.provider);
+
+    if (existingIndex >= 0) {
+      tokens[existingIndex] = oauthToken;
+    } else {
+      tokens.push(oauthToken);
+    }
+
+    this.oauthTokens.set(userId, tokens);
+    await this.saveToStorage();
+    return oauthToken;
+  }
+
+  async getOAuthToken(userId: string, provider: string): Promise<OAuthToken | null> {
+    const tokens = this.oauthTokens.get(userId) || [];
+    return tokens.find(t => t.provider === provider) || null;
+  }
+
+  async revokeOAuthToken(userId: string, provider: string): Promise<boolean> {
+    const tokens = this.oauthTokens.get(userId) || [];
+    const index = tokens.findIndex(t => t.provider === provider);
+
+    if (index === -1) return false;
+
+    tokens.splice(index, 1);
+    if (tokens.length === 0) {
+      this.oauthTokens.delete(userId);
+    } else {
+      this.oauthTokens.set(userId, tokens);
+    }
+
+    await this.saveToStorage();
+    return true;
   }
 }
 

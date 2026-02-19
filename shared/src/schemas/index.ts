@@ -137,12 +137,20 @@ export const MCPConfigSchema = z.object({
 export const MCPServerConfigSchema = z.object({
   id: z.string().optional(),
   name: z.string(),
-  transport: z.enum(['stdio', 'websocket', 'http']),
+  transport: z.enum(['stdio', 'websocket', 'http', 'ws']),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
+  cwd: z.string().nullable().optional(),
   url: z.string().optional(),
   env: z.record(z.string()).optional(),
+  autoStart: z.boolean().default(false),
+  restartOnExit: z.boolean().default(false),
   enabled: z.boolean().optional().default(true),
+  auth: z.object({
+    provider: z.string().optional(),
+    tokenFilename: z.string().optional(),
+    credentialsFilename: z.string().optional(),
+  }).optional(),
 });
 
 // MCP Tool info

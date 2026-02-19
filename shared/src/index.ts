@@ -19,3 +19,13 @@ export type {
   PaginatedResponse,
   AppConfig
 } from './types/storage.js';
+
+export type {
+  McpAdapter,
+  CallToolResult,
+  MCPTransportConfig,
+  StdioTransportConfig,
+  WebSocketTransportConfig,
+  HttpTransportConfig,
+  AnyMCPTransportConfig,
+} from './types/mcp-adapter.js';

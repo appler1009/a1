@@ -6,11 +6,20 @@ import type { MCPServerConfig } from '@local-agent/shared';
 
 const AddMCPServerSchema = z.object({
   name: z.string().min(1),
-  transport: z.enum(['stdio', 'websocket', 'http']),
+  transport: z.enum(['stdio', 'websocket', 'http', 'ws']),
   command: z.string().optional(),
+  args: z.array(z.string()).optional().default([]),
+  cwd: z.string().nullable().optional(),
   url: z.string().url().optional(),
   env: z.record(z.string()).optional(),
+  autoStart: z.boolean().default(false),
+  restartOnExit: z.boolean().default(false),
   enabled: z.boolean().default(true),
+  auth: z.object({
+    provider: z.string().optional(),
+    tokenFilename: z.string().optional(),
+    credentialsFilename: z.string().optional(),
+  }).optional(),
 });
 
 const CallToolSchema = z.object({
@@ -20,6 +29,19 @@ const CallToolSchema = z.object({
 });
 
 export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void> {
+  // Debug endpoint to see raw database contents
+  fastify.get('/api/mcp/debug/storage', async (request, reply) => {
+    if (!request.user) {
+      return reply.status(401).send({ success: false, error: 'Not authenticated' });
+    }
+    try {
+      const rawMetadata = await mcpManager['storage'].queryMetadata('mcp_servers', {});
+      return { success: true, data: { rawMetadata } };
+    } catch (error) {
+      return { success: true, data: { error: String(error) } };
+    }
+  });
+
   // List MCP servers
   fastify.get('/api/mcp/servers', async (request, reply) => {
     if (!request.user) {
@@ -30,6 +52,14 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
     }
 
     const servers = mcpManager.getServers();
+    console.log('[MCP] getServers() type:', typeof servers);
+    console.log('[MCP] getServers() is array:', Array.isArray(servers));
+    console.log('[MCP] getServers() length:', servers?.length);
+    if (servers && servers.length > 0) {
+      console.log('[MCP] First server type:', typeof servers[0]);
+      console.log('[MCP] First server:', JSON.stringify(servers[0], null, 2));
+    }
+    console.log('[MCP] Full getServers() returned:', JSON.stringify(servers, null, 2));
     return { success: true, data: servers };
   });
 
@@ -43,25 +73,83 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
     }
 
     try {
-      const body = AddMCPServerSchema.parse(request.body);
-      
+      const body = request.body as any;
+      const addServerBody = AddMCPServerSchema.parse(body);
+
       const config: MCPServerConfig = {
         id: crypto.randomUUID(),
-        name: body.name,
-        transport: body.transport,
-        command: body.command,
-        url: body.url,
-        env: body.env,
-        enabled: body.enabled,
+        name: addServerBody.name,
+        transport: addServerBody.transport,
+        command: addServerBody.command,
+        args: addServerBody.args,
+        cwd: addServerBody.cwd,
+        url: addServerBody.url,
+        env: addServerBody.env,
+        autoStart: addServerBody.autoStart,
+        restartOnExit: addServerBody.restartOnExit,
+        enabled: addServerBody.enabled,
+        auth: body.auth, // Include auth config if provided
       };
 
-      await mcpManager.addServer(config);
+      // If auth config includes Google OAuth, fetch the stored token
+      let userToken: any;
+      if (config.auth?.provider === 'google') {
+        const oauthToken = await authService.getOAuthToken(request.user.id, 'google');
+        if (!oauthToken) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'NO_AUTH_TOKEN', message: 'No Google OAuth token found. Please authenticate with Google first.' },
+          });
+        }
+
+        userToken = {
+          access_token: oauthToken.accessToken,
+          refresh_token: oauthToken.refreshToken,
+          expiry_date: oauthToken.expiryDate,
+          token_type: 'Bearer',
+        };
+
+        console.log(`[MCP] Using stored Google OAuth token for server ${config.name}`);
+      }
+
+      await mcpManager.addServer(config, userToken);
 
       return { success: true, data: config };
     } catch (error) {
+      console.error('[MCP] Failed to add server:', error);
       return reply.status(400).send({
         success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'Invalid input', details: error },
+        error: { code: 'VALIDATION_ERROR', message: 'Invalid input', details: String(error) },
+      });
+    }
+  });
+
+  // Update MCP server status
+  fastify.patch('/api/mcp/servers/:serverId', async (request, reply) => {
+    if (!request.user) {
+      return reply.status(401).send({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Not authenticated' },
+      });
+    }
+
+    const { serverId } = request.params as { serverId: string };
+    const { enabled } = request.body as { enabled?: boolean };
+
+    if (typeof enabled !== 'boolean') {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'INVALID_INPUT', message: 'enabled must be a boolean' },
+      });
+    }
+
+    try {
+      await mcpManager.updateServerStatus(serverId, enabled);
+      return { success: true };
+    } catch (error) {
+      return reply.status(400).send({
+        success: false,
+        error: { code: 'UPDATE_ERROR', message: 'Failed to update server status' },
       });
     }
   });

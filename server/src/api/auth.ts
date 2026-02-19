@@ -1,6 +1,9 @@
 import { FastifyInstance } from 'fastify';
+import { v4 as uuidv4 } from 'uuid';
 import type { IndividualSignup, CreateOrgSignup, JoinOrg } from '@local-agent/shared';
 import { authService } from '../auth/index.js';
+import { GoogleOAuthHandler } from '../auth/google-oauth.js';
+import { GitHubOAuthHandler } from '../auth/github-oauth.js';
 
 export async function authRoutes(fastify: FastifyInstance) {
   // Check if email exists
@@ -257,7 +260,7 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     const user = await authService.getUser(request.user.id);
     const groups = await authService.getUserGroups(request.user.id);
-    
+
     return reply.send({
       success: true,
       data: {
@@ -265,5 +268,242 @@ export async function authRoutes(fastify: FastifyInstance) {
         groups,
       },
     });
+  });
+
+  // Google OAuth flow
+  const googleOAuth = new GoogleOAuthHandler({
+    clientId: process.env.GOOGLE_CLIENT_ID || '',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+    redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
+  });
+
+  // Start Google OAuth flow
+  fastify.get('/google/start', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({
+        success: false,
+        error: { message: 'Not authenticated' },
+      });
+    }
+
+    const state = uuidv4();
+    const redirectTo = (request.query as any).redirectTo as string | undefined;
+    const authUrl = googleOAuth.getAuthorizationUrl(state, redirectTo);
+
+    return reply.send({
+      success: true,
+      data: {
+        authUrl,
+      },
+    });
+  });
+
+  // Google OAuth callback
+  fastify.get('/google/callback', async (request, reply) => {
+    const { code, state } = request.query as { code?: string; state?: string };
+
+    if (!code || !state) {
+      return reply.code(400).send({
+        success: false,
+        error: { message: 'Missing authorization code or state' },
+      });
+    }
+
+    // Verify state
+    const stateVerification = googleOAuth.verifyState(state);
+    if (!stateVerification.valid) {
+      return reply.code(400).send({
+        success: false,
+        error: { message: 'Invalid or expired state parameter' },
+      });
+    }
+
+    try {
+      // Exchange code for tokens
+      const tokenResponse = await googleOAuth.exchangeCodeForTokens(code);
+
+      // Store the token if user is authenticated
+      if (request.user) {
+        const expiryDate = tokenResponse.expires_in ? Date.now() + tokenResponse.expires_in * 1000 : undefined;
+
+        await authService.storeOAuthToken(request.user.id, {
+          provider: 'google',
+          accessToken: tokenResponse.access_token,
+          refreshToken: tokenResponse.refresh_token,
+          expiryDate,
+          userId: request.user.id,
+        });
+
+        console.log(`[GoogleOAuth] Stored token for user ${request.user.id}`);
+      }
+
+      // Redirect to the frontend callback page with provider info
+      // This page will show success message and close the popup
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const callbackUrl = new URL('/auth/google/callback', frontendUrl);
+      callbackUrl.searchParams.set('code', code);
+      callbackUrl.searchParams.set('state', state);
+      callbackUrl.searchParams.set('provider', 'google');
+
+      return reply.redirect(callbackUrl.toString());
+    } catch (error) {
+      console.error('[GoogleOAuth] Token exchange failed:', error);
+      // Redirect to error page instead of sending JSON
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const errorUrl = new URL('/auth/google/callback', frontendUrl);
+      errorUrl.searchParams.set('error', 'token_exchange_failed');
+      errorUrl.searchParams.set('state', state);
+
+      return reply.redirect(errorUrl.toString());
+    }
+  });
+
+  // Get stored OAuth token
+  fastify.get('/oauth/token/:provider', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({
+        success: false,
+        error: { message: 'Not authenticated' },
+      });
+    }
+
+    const { provider } = request.params as { provider: string };
+    const token = await authService.getOAuthToken(request.user.id, provider);
+
+    if (!token) {
+      return reply.code(404).send({
+        success: false,
+        error: { message: `No ${provider} token found` },
+      });
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        provider: token.provider,
+        accessToken: token.accessToken,
+        refreshToken: token.refreshToken,
+        expiryDate: token.expiryDate,
+      },
+    });
+  });
+
+  // Revoke OAuth token
+  fastify.post('/oauth/revoke/:provider', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({
+        success: false,
+        error: { message: 'Not authenticated' },
+      });
+    }
+
+    const { provider } = request.params as { provider: string };
+    const token = await authService.getOAuthToken(request.user.id, provider);
+
+    if (token) {
+      try {
+        // Attempt to revoke with Google
+        if (provider === 'google') {
+          await googleOAuth.revokeToken(token.accessToken);
+        } else if (provider === 'github') {
+          await githubOAuth.revokeToken(token.accessToken);
+        }
+      } catch (error) {
+        console.error(`[OAuth] Failed to revoke token:`, error);
+      }
+    }
+
+    // Remove from storage regardless
+    await authService.revokeOAuthToken(request.user.id, provider);
+
+    return reply.send({
+      success: true,
+    });
+  });
+
+  // GitHub OAuth flow
+  const githubOAuth = new GitHubOAuthHandler({
+    clientId: process.env.GITHUB_CLIENT_ID || '',
+    clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
+    redirectUri: process.env.GITHUB_REDIRECT_URI || 'http://localhost:3000/api/auth/github/callback',
+  });
+
+  // Start GitHub OAuth flow
+  fastify.get('/github/start', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({
+        success: false,
+        error: { message: 'Not authenticated' },
+      });
+    }
+
+    const state = uuidv4();
+    const redirectTo = (request.query as any).redirectTo as string | undefined;
+    const authUrl = githubOAuth.getAuthorizationUrl(state, redirectTo);
+
+    return reply.send({
+      success: true,
+      data: {
+        authUrl,
+      },
+    });
+  });
+
+  // GitHub OAuth callback
+  fastify.get('/github/callback', async (request, reply) => {
+    const { code, state } = request.query as { code?: string; state?: string };
+
+    if (!code || !state) {
+      return reply.code(400).send({
+        success: false,
+        error: { message: 'Missing authorization code or state' },
+      });
+    }
+
+    // Verify state
+    const stateVerification = githubOAuth.verifyState(state);
+    if (!stateVerification.valid) {
+      return reply.code(400).send({
+        success: false,
+        error: { message: 'Invalid or expired state parameter' },
+      });
+    }
+
+    try {
+      // Exchange code for tokens
+      const tokenResponse = await githubOAuth.exchangeCodeForTokens(code);
+
+      // Store the token if user is authenticated
+      if (request.user) {
+        // GitHub tokens don't have expiry by default
+        await authService.storeOAuthToken(request.user.id, {
+          provider: 'github',
+          accessToken: tokenResponse.access_token,
+          refreshToken: undefined,
+          expiryDate: undefined,
+          userId: request.user.id,
+        });
+
+        console.log(`[GitHubOAuth] Stored token for user ${request.user.id}`);
+      }
+
+      // Redirect to the frontend callback page with provider info
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const callbackUrl = new URL('/auth/github/callback', frontendUrl);
+      callbackUrl.searchParams.set('code', code);
+      callbackUrl.searchParams.set('state', state);
+      callbackUrl.searchParams.set('provider', 'github');
+
+      return reply.redirect(callbackUrl.toString());
+    } catch (error) {
+      console.error('[GitHubOAuth] Token exchange failed:', error);
+      // Redirect to error page
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const errorUrl = new URL('/auth/github/callback', frontendUrl);
+      errorUrl.searchParams.set('error', 'token_exchange_failed');
+      errorUrl.searchParams.set('state', state);
+
+      return reply.redirect(errorUrl.toString());
+    }
   });
 }

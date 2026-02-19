@@ -5,15 +5,19 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "NODE_ENV=development tsx watch src/index.ts",
     "build": "tsc -b",
-    "start": "node dist/index.js",
+    "start": "NODE_ENV=production node dist/index.js",
+    "start:dev": "NODE_ENV=development node dist/index.js",
+    "start:test": "NODE_ENV=test node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@aws-sdk/client-s3": "^3.515.0",
     "@fastify/cookie": "^9.2.0",
     "@fastify/cors": "^9.0.1",
+    "@fastify/static": "^6.12.0",
     "@fastify/websocket": "^10.0.1",
     "@googleapis/gmail": "^8.0.0",
     "@local-agent/shared": "*",

@@ -6,12 +6,26 @@ import {
   ChevronDown,
   Users
 } from 'lucide-react';
-import { useAuthStore, useRolesStore, useUIStore } from '../store';
+import { useAuthStore, useRolesStore, useUIStore, useEnvironmentStore } from '../store';
 
 export function Sidebar() {
   const { user, currentGroup, groups, setCurrentGroup, logout } = useAuthStore();
   const { roles, currentRole, setCurrentRole, addRole } = useRolesStore();
-  const { sidebarOpen, toggleSidebar } = useUIStore();
+  const { sidebarOpen, toggleSidebar, setShowMcpManager } = useUIStore();
+  const environment = useEnvironmentStore((state) => state.environment);
+
+  const getEnvironmentBadgeClass = (env?: string) => {
+    switch (env) {
+      case 'production':
+        return 'bg-red-500/20 text-red-500';
+      case 'test':
+        return 'bg-yellow-500/20 text-yellow-500';
+      case 'development':
+        return 'bg-blue-500/20 text-blue-500';
+      default:
+        return 'bg-gray-500/20 text-gray-500';
+    }
+  };
 
   const handleCreateRole = async () => {
     if (!currentGroup) return;
@@ -119,25 +133,35 @@ export function Sidebar() {
       {/* User */}
       <div className="p-4 border-t border-border">
         {sidebarOpen && (
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
-              <span className="text-sm font-medium">
-                {user?.name?.[0] || user?.email?.[0] || '?'}
-              </span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium truncate">
-                {user?.name || 'User'}
+          <>
+            {environment && (
+              <div className="mb-2">
+                <span className={`px-2 py-1 rounded text-xs font-medium ${getEnvironmentBadgeClass(environment.env)}`}>
+                  {environment.env.toUpperCase()}
+                </span>
               </div>
-              <div className="text-xs text-muted-foreground truncate">
-                {user?.email}
+            )}
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
+                <span className="text-sm font-medium">
+                  {user?.name?.[0] || user?.email?.[0] || '?'}
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">
+                  {user?.name || 'User'}
+                </div>
+                <div className="text-xs text-muted-foreground truncate">
+                  {user?.email}
+                </div>
               </div>
             </div>
-          </div>
+          </>
         )}
 
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setShowMcpManager(true)}
             className="p-2 hover:bg-muted rounded-lg flex items-center gap-2 text-sm"
             title="Settings"
           >

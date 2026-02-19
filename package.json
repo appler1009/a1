@@ -13,7 +13,11 @@
     "dev:server": "npm run dev -w server",
     "dev:client": "npm run dev -w client",
     "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
+    "build:dev": "NODE_ENV=development npm run build",
+    "build:prod": "NODE_ENV=production npm run build",
     "start": "npm run start -w server",
+    "start:dev": "npm run start:dev -w server",
+    "start:test": "npm run start:test -w server",
     "lint": "npm run lint -ws",
     "typecheck": "npm run typecheck -ws",
     "docker:build": "docker build -t local-agent-ui .",
@@ -25,5 +29,9 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.76.0",
+    "@modelcontextprotocol/sdk": "^1.26.0"
   }
 }
