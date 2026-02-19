@@ -143,9 +143,10 @@ export const MCPServerConfigSchema = z.object({
   cwd: z.string().nullable().optional(),
   url: z.string().optional(),
   env: z.record(z.string()).optional(),
-  autoStart: z.boolean().default(false),
-  restartOnExit: z.boolean().default(false),
+  autoStart: z.boolean().optional().default(false),
+  restartOnExit: z.boolean().optional().default(false),
   enabled: z.boolean().optional().default(true),
+  hidden: z.boolean().optional(), // If true, won't show in UI but can still be used
   auth: z.object({
     provider: z.string().optional(),
     tokenFilename: z.string().optional(),

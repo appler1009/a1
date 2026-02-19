@@ -18,7 +18,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { User, Session } from '@local-agent/shared';
 import { createStorage } from './storage/index.js';
 import { createLLMRouter } from './ai/router.js';
-import { mcpManager, getMcpAdapter, closeUserAdapters, listPredefinedServers, getPredefinedServer, requiresAuth } from './mcp/index.js';
+import { mcpManager, getMcpAdapter, closeUserAdapters, listPredefinedServers, getPredefinedServer, requiresAuth, PREDEFINED_MCP_SERVERS } from './mcp/index.js';
 import { authRoutes } from './api/auth.js';
 import { authService } from './auth/index.js';
 import { GoogleOAuthHandler } from './auth/google-oauth.js';
@@ -1265,8 +1265,16 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
-    // Return full server objects with { id, config, info }
-    const servers = mcpManager.getServers();
+    // Get IDs of hidden predefined servers
+    const hiddenServerIds = new Set(
+      PREDEFINED_MCP_SERVERS.filter(s => s.hidden).map(s => s.id)
+    );
+
+    // Return full server objects with { id, config, info }, filtering out hidden servers
+    // Check both the config.hidden flag AND if the server ID matches a hidden predefined server
+    const servers = mcpManager.getServers().filter(s =>
+      !s.config.hidden && !hiddenServerIds.has(s.id)
+    );
     return reply.send({ success: true, data: servers });
   });
 

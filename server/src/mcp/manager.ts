@@ -53,6 +53,7 @@ export class MCPManager {
           enabled: true,
           autoStart: true,
           restartOnExit: false,
+          hidden: true, // Mark as hidden so it won't show in UI
           auth: server.auth,
         };
 
