@@ -343,14 +343,21 @@ interface UIState {
   setShowMcpManager: (show: boolean) => void;
 }
 
-export const useUIStore = create<UIState>()((set) => ({
-  sidebarOpen: true,
-  viewerTab: 'docs',
-  viewerFile: null,
-  showMcpManager: false,
-  toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
-  setSidebarOpen: (open) => set({ sidebarOpen: open }),
-  setViewerTab: (tab) => set({ viewerTab: tab }),
-  setViewerFile: (file) => set({ viewerFile: file }),
-  setShowMcpManager: (show) => set({ showMcpManager: show }),
-}));
+export const useUIStore = create<UIState>()(
+  persist(
+    (set) => ({
+      sidebarOpen: true,
+      viewerTab: 'docs',
+      viewerFile: null,
+      showMcpManager: false,
+      toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+      setSidebarOpen: (open) => set({ sidebarOpen: open }),
+      setViewerTab: (tab) => set({ viewerTab: tab }),
+      setViewerFile: (file) => set({ viewerFile: file }),
+      setShowMcpManager: (show) => set({ showMcpManager: show }),
+    }),
+    {
+      name: 'ui-storage',
+    }
+  )
+);

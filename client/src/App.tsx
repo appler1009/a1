@@ -26,7 +26,7 @@ function MainApp() {
 
         {/* Main content with resizable panels */}
         <div className="flex-1 h-full overflow-hidden">
-          <PanelGroup direction="horizontal">
+          <PanelGroup direction="horizontal" autoSaveId="main-panels">
             <Panel defaultSize={50} minSize={30} className="h-full overflow-hidden">
               <ChatPane />
             </Panel>
