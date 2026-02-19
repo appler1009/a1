@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, ChevronUp } from 'lucide-react';
+import { Send, Loader2, ChevronUp, Trash2 } from 'lucide-react';
 import { useAuthStore, useRolesStore, useChatStore, useUIStore, type ViewerFile } from '../../store';
 import { MessageItem } from '../MessageItem';
 
@@ -345,30 +345,24 @@ export function ChatPane() {
   };
 
   const handleClear = async () => {
+    const confirmed = window.confirm('Are you sure you want to delete all chat messages for this role? This action cannot be undone.');
+    if (!confirmed) return;
+    
     await clearServerMessages(currentRoleId);
   };
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden">
-      {/* Header */}
-      <div className="h-12 border-b border-border flex items-center justify-between px-4">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">
-            {currentRole?.name || 'Default Chat'}
-          </span>
-          {currentRole?.model && (
-            <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
-              {currentRole.model}
-            </span>
-          )}
-        </div>
-        <button
-          onClick={handleClear}
-          className="text-xs text-muted-foreground hover:text-foreground"
-        >
-          Clear
-        </button>
-      </div>
+    <div className="flex flex-col h-full w-full overflow-hidden relative">
+      {/* Floating Clear Button */}
+      <button
+        onClick={handleClear}
+        className="absolute top-2 right-2 z-10 flex items-center gap-2 p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all duration-200 group overflow-hidden"
+      >
+        <Trash2 className="w-4 h-4 flex-shrink-0" />
+        <span className="text-xs whitespace-nowrap max-w-0 group-hover:max-w-24 transition-all duration-200 overflow-hidden">
+          Clear Chat History
+        </span>
+      </button>
 
       {/* Load More Button */}
       {hasMore && roleMessages.length > 0 && (

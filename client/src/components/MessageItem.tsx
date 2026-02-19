@@ -25,7 +25,7 @@ export const MessageItem = memo(function MessageItem({ message }: MessageItemPro
             : 'bg-muted'
         }`}
       >
-        <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap">
+        <div className="prose prose-sm dark:prose-invert max-w-none leading-[2]">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {message.content}
           </ReactMarkdown>
