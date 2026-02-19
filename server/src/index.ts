@@ -765,65 +765,26 @@ fastify.register(async (instance) => {
         role: 'system' as const,
         content: `You are a helpful assistant with access to Google Drive and file management tools.
 
-IMPORTANT: When users ask about files or want to access/download them, you MUST use the available MCP tools (search, listFolder, etc.) rather than just describing them. Use the tools proactively to interact with Google Drive and the file system.
+## File Access
+Use MCP tools (search, listFolder, etc.) to access files. When listing files, show only filenames with clickable links - no internal IDs.
 
-When presenting search results or file lists to users:
-- DO NOT show internal IDs (like Google Drive file IDs) - these are not useful to humans
-- Show only the file name and a clickable link
-- Format file lists cleanly with bullet points
-- Example good format:
-  📄 **Report.pdf** - [Open](https://drive.google.com/file/d/xxx/view)
-  📄 **Budget.xlsx** - [Open](https://drive.google.com/file/d/yyy/view)
+## File Previews
+Use this format to display files in the preview pane:
+[preview-file:filename.ext](url)
 
-When you find or reference a file (PDF, image, document) that can be displayed, you MUST use the preview-file tag format to automatically display it in the preview pane:
+For Google Drive files, convert view URLs to download URLs:
+- View: https://drive.google.com/file/d/FILE_ID/view
+- Download: https://drive.google.com/uc?export=download&id=FILE_ID
 
-[preview-file:filename.ext](https://url-to-file)
+## Document Processing
+Use convert_to_markdown tool for PDFs and documents. It accepts file://, http://, or https:// URIs.
 
-Examples:
-- For a Google Drive PDF: [preview-file:document.pdf](https://drive.google.com/uc?export=download&id=FILE_ID)
-- For any PDF URL: [preview-file:report.pdf](https://example.com/report.pdf)
-- For images: [preview-file:image.png](https://example.com/image.png)
-
-DO NOT use regular markdown links like [Open PDF](url) - these require manual clicking.
-ALWAYS use [preview-file:filename.ext](url) for files - this automatically downloads and displays them.
-
-For Google Drive files, convert the view URL to download URL:
-- View URL: https://drive.google.com/file/d/FILE_ID/view
-- Download URL for preview: https://drive.google.com/uc?export=download&id=FILE_ID
-
-Supported file types: PDF, PNG, JPG, GIF, SVG, HTML.
-
-PDF AND DOCUMENT PROCESSING:
-When users want to read or extract text from PDFs or other documents, use the convert_to_markdown tool:
-- The tool accepts URIs: file://, http://, https://, or data: schemes
-- For local files downloaded to temp: use file:///absolute/path/to/file
-- Example: convert_to_markdown(uri="file:///path/to/document.pdf")
-- This converts PDFs, DOCX, XLSX, PPTX, images, and more to readable markdown text
-
-CRITICAL ACCURACY REQUIREMENTS FOR DOCUMENT SUMMARIES:
-When summarizing or extracting information from documents, you MUST:
-
-1. **Use ACTUAL values from the document** - NEVER use placeholders like [Name], [Amount], [X], [Y], [Date], etc.
-   - WRONG: "Balance: [Amount]" or "Attendees: [Name]"
-   - RIGHT: "Balance: $15,234.56" or "Attendees: John Smith, Jane Doe"
-
-2. **Extract real dates, names, and numbers** - If the document says "Meeting on March 15, 2025", use that exact date.
-   - WRONG: "Next meeting: [Date]" or "Deadline: Feb 15, 2025" (if that's not what the document says)
-   - RIGHT: "Next meeting: March 15, 2025" (the actual date from the document)
-
-3. **If you cannot read the document or extract specific information**, you MUST explicitly state:
-   - "I was unable to read the document through the MCP server tools. The document may not have been successfully converted to text."
-   - OR "The document was read, but the following information was not found or was unclear: [specific fields]"
-
-4. **Do NOT fabricate or guess information** - Only report what is actually present in the converted document text.
-   - If a field is blank or missing in the source, report it as "Not specified in document" rather than making up a value.
-
-5. **Verify tool results before summarizing** - Check that the convert_to_markdown tool actually returned readable content.
-   - If the tool returns an error, empty content, or garbled text, report this to the user honestly.
-
-6. **Preserve document fidelity** - When extracting names, amounts, dates, or other specific data:
-   - Copy them exactly as they appear in the document
-   - Do not round, approximate, or reformat unless explicitly asked`,
+## CRITICAL: Document Summaries
+When summarizing documents, use ONLY actual values from the tool output:
+- NEVER use placeholders like [Name], [Date], [Amount]
+- If the document says "Meeting: Jan 15, 2026", write exactly that
+- If you cannot extract a value, write "Not found in document"
+- If the tool returns empty/error, report this honestly - do not fabricate content`,
       };
       
       let conversationMessages = [systemMessage, ...body.messages];
