@@ -1,7 +1,6 @@
 import type { MCPServerConfig } from '@local-agent/shared';
 import { BaseStdioAdapter } from './BaseStdioAdapter.js';
 import { GoogleDriveFullAdapter, type GoogleToken } from './GoogleDriveFullAdapter.js';
-import { AppleDocsAdapter, type AppleToken } from './AppleDocsAdapter.js';
 
 /**
  * Simple concrete implementation of BaseStdioAdapter for generic MCP servers
@@ -19,7 +18,6 @@ class AdapterRegistry {
   private adapters = new Map<
     string,
     | typeof GoogleDriveFullAdapter
-    | typeof AppleDocsAdapter
     | typeof StdioAdapter
   >();
 
@@ -29,8 +27,6 @@ class AdapterRegistry {
     this.register('Google Drive', GoogleDriveFullAdapter); // Also register by display name
     this.register('google-docs-mcp', GoogleDriveFullAdapter); // google-docs also uses Google OAuth
     this.register('Google Docs', GoogleDriveFullAdapter); // Also register by display name
-    this.register('apple-docs', AppleDocsAdapter);
-    this.register('Apple Documentation', AppleDocsAdapter); // Also register by display name
     // markitdown uses StdioAdapter (no special auth required)
     this.register('markitdown', StdioAdapter);
     this.register('MarkItDown', StdioAdapter); // Also register by display name
@@ -43,7 +39,7 @@ class AdapterRegistry {
    */
   register(
     serverKey: string,
-    adapterClass: typeof GoogleDriveFullAdapter | typeof AppleDocsAdapter | typeof StdioAdapter
+    adapterClass: typeof GoogleDriveFullAdapter | typeof StdioAdapter
   ): void {
     this.adapters.set(serverKey, adapterClass);
     console.log(`[AdapterRegistry] Registered adapter for ${serverKey}`);
@@ -66,7 +62,7 @@ class AdapterRegistry {
     console.log(`[AdapterRegistry] Creating adapter for ${serverKey} using ${(AdapterClass as any).name}`);
 
     // Handle adapters that require token data
-    if ((AdapterClass === GoogleDriveFullAdapter || AdapterClass === AppleDocsAdapter) && tokenData) {
+    if (AdapterClass === GoogleDriveFullAdapter && tokenData) {
       return new (AdapterClass as any)(
         id,
         userId,

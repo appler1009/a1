@@ -798,7 +798,32 @@ When users want to read or extract text from PDFs or other documents, use the co
 - The tool accepts URIs: file://, http://, https://, or data: schemes
 - For local files downloaded to temp: use file:///absolute/path/to/file
 - Example: convert_to_markdown(uri="file:///path/to/document.pdf")
-- This converts PDFs, DOCX, XLSX, PPTX, images, and more to readable markdown text`,
+- This converts PDFs, DOCX, XLSX, PPTX, images, and more to readable markdown text
+
+CRITICAL ACCURACY REQUIREMENTS FOR DOCUMENT SUMMARIES:
+When summarizing or extracting information from documents, you MUST:
+
+1. **Use ACTUAL values from the document** - NEVER use placeholders like [Name], [Amount], [X], [Y], [Date], etc.
+   - WRONG: "Balance: [Amount]" or "Attendees: [Name]"
+   - RIGHT: "Balance: $15,234.56" or "Attendees: John Smith, Jane Doe"
+
+2. **Extract real dates, names, and numbers** - If the document says "Meeting on March 15, 2025", use that exact date.
+   - WRONG: "Next meeting: [Date]" or "Deadline: Feb 15, 2025" (if that's not what the document says)
+   - RIGHT: "Next meeting: March 15, 2025" (the actual date from the document)
+
+3. **If you cannot read the document or extract specific information**, you MUST explicitly state:
+   - "I was unable to read the document through the MCP server tools. The document may not have been successfully converted to text."
+   - OR "The document was read, but the following information was not found or was unclear: [specific fields]"
+
+4. **Do NOT fabricate or guess information** - Only report what is actually present in the converted document text.
+   - If a field is blank or missing in the source, report it as "Not specified in document" rather than making up a value.
+
+5. **Verify tool results before summarizing** - Check that the convert_to_markdown tool actually returned readable content.
+   - If the tool returns an error, empty content, or garbled text, report this to the user honestly.
+
+6. **Preserve document fidelity** - When extracting names, amounts, dates, or other specific data:
+   - Copy them exactly as they appear in the document
+   - Do not round, approximate, or reformat unless explicitly asked`,
       };
       
       let conversationMessages = [systemMessage, ...body.messages];

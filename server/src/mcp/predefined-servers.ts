@@ -5,14 +5,14 @@
  */
 
 export interface PredefinedMCPServer {
-  id: string; // Internal ID: 'google-drive-full', 'apple-docs', etc.
+  id: string; // Internal ID: 'google-drive-full', 'markitdown', etc.
   name: string; // Display name
   description: string;
   command: string;
   args: string[];
   env?: Record<string, string>;
   auth?: {
-    provider: 'google' | 'apple' | 'github' | 'none';
+    provider: 'google' | 'github' | 'none';
     credentialsFilename?: string;
     tokenFilename?: string;
   };
@@ -47,18 +47,6 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
       tokenFilename: 'token.json',
     },
     icon: 'docs',
-  },
-
-  {
-    id: 'apple-docs',
-    name: 'Apple Documentation',
-    description: 'Search and read Apple documentation. Supports iOS, macOS, and other Apple platforms.',
-    command: 'npx',
-    args: ['-y', '@kimsungwhee/apple-docs-mcp'],
-    auth: {
-      provider: 'none',
-    },
-    icon: 'apple',
   },
 
   {
