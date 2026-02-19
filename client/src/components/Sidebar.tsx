@@ -135,7 +135,7 @@ export function Sidebar() {
         {sidebarOpen && (
           <>
             {environment && (
-              <div className="mb-2">
+              <div className="mb-4">
                 <span className={`px-2 py-1 rounded text-xs font-medium ${getEnvironmentBadgeClass(environment.env)}`}>
                   {environment.env.toUpperCase()}
                 </span>
@@ -159,7 +159,7 @@ export function Sidebar() {
           </>
         )}
 
-        <div className="flex items-center gap-2">
+        <div className={`flex ${sidebarOpen ? 'items-center gap-2' : 'flex-col gap-2'}`}>
           <button
             onClick={() => setShowMcpManager(true)}
             className="p-2 hover:bg-muted rounded-lg flex items-center gap-2 text-sm"
