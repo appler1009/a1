@@ -1141,9 +1141,11 @@ This document is immediately available for the user to ask questions about or re
 - Suggesting edits or improvements
 - Converting it to other formats
 
-**IMPORTANT**: When using MCP tools like convert_to_markdown to process this document, use the Cache ID: \`${cacheId}\`
-
-The system will automatically resolve the Cache ID to the correct local file path. Always use the Cache ID in your tool calls for this document.
+**IMPORTANT**: 
+- When using MCP tools like convert_to_markdown to process this document, use the Cache ID: \`${cacheId}\`
+- The system will automatically resolve the Cache ID to the correct local file path
+- **NEVER mention the Cache ID in your responses to the user** - only use it internally for MCP tool calls
+- Refer to the document by its filename ("${body.viewerFile.name}") when talking to the user
 
 If the user asks about "this document" or "the file" without specifying, they are referring to this previewed document.`;
       }
