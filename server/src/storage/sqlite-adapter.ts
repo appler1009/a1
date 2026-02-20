@@ -301,6 +301,37 @@ export class SQLiteStorageAdapter extends BaseStorage implements IMessageStorage
     }));
   }
 
+  async searchMessages(keyword: string, roleId: string, options?: { limit?: number }): Promise<ChatMessageEntry[]> {
+    const limit = options?.limit || 100;
+    const searchPattern = `%${keyword}%`;
+    
+    const rows = this.db.prepare(`
+      SELECT * FROM messages 
+      WHERE roleId = ? AND content LIKE ?
+      ORDER BY createdAt DESC
+      LIMIT ?
+    `).all(roleId, searchPattern, limit) as Array<{
+      id: string;
+      roleId: string;
+      groupId: string | null;
+      userId: string;
+      role: 'user' | 'assistant' | 'system';
+      content: string;
+      createdAt: string;
+    }>;
+
+    // Return in chronological order (oldest first)
+    return rows.reverse().map(row => ({
+      id: row.id,
+      roleId: row.roleId,
+      groupId: row.groupId,
+      userId: row.userId,
+      role: row.role,
+      content: row.content,
+      createdAt: row.createdAt,
+    }));
+  }
+
   async deleteMessage(id: string): Promise<void> {
     this.db.prepare('DELETE FROM messages WHERE id = ?').run(id);
   }

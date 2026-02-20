@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, ChevronUp, Trash2 } from 'lucide-react';
-import { useAuthStore, useRolesStore, useChatStore, useUIStore, type ViewerFile } from '../../store';
+import { Send, Loader2 } from 'lucide-react';
+import { useAuthStore, useRolesStore, useChatStore, useUIStore, type ViewerFile, type Message } from '../../store';
 import { MessageItem } from '../MessageItem';
+import { TopBanner } from '../TopBanner';
 
 /**
  * Parse Google Drive search result to extract PDF files
@@ -125,12 +126,16 @@ async function downloadFileForPreview(url: string, filename: string, mimeType: s
       console.log(`[PreviewFile]   ID: ${data.data.id}`);
       console.log(`[PreviewFile]   Name: ${data.data.name}`);
       console.log(`[PreviewFile]   Preview URL: ${data.data.previewUrl}`);
+      console.log(`[PreviewFile]   File URI: ${data.data.fileUri}`);
       console.log(`[PreviewFile]   Size: ${data.data.size} bytes`);
       return {
         id: data.data.id,
         name: data.data.name,
         mimeType: data.data.mimeType,
         previewUrl: data.data.previewUrl,
+        sourceUrl: url,  // Store original URL for "open in new window"
+        fileUri: data.data.fileUri,  // Local file:// URI for MCP tools
+        absolutePath: data.data.absolutePath,  // Absolute path for MCP tools
       };
     }
     console.error('[PreviewFile] Download response was not successful:', data);
@@ -143,8 +148,16 @@ async function downloadFileForPreview(url: string, filename: string, mimeType: s
 
 export function ChatPane() {
   const [input, setInput] = useState('');
+  const [isSearchMode, setIsSearchMode] = useState(false);
+  const [searchResults, setSearchResults] = useState<Message[]>([]);
+  const [searchKeyword, setSearchKeyword] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const isLoadingOlderRef = useRef(false);
+  const loadMoreTriggeredRef = useRef(false);
+  const prevScrollHeightRef = useRef(0);
+  const trimTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const MESSAGE_LIMIT = 10; // Keep only this many messages when trimming
 
   const { user, currentGroup } = useAuthStore();
   const { currentRole } = useRolesStore();
@@ -161,10 +174,25 @@ export function ChatPane() {
     fetchMessages,
     migrateFromLocalStorage,
     clearServerMessages,
+    trimMessages,
   } = useChatStore();
-  const { setViewerFile, setViewerTab } = useUIStore();
+  const { setViewerFile, setViewerTab, viewerFile } = useUIStore();
 
   const currentRoleId = currentRole?.id || 'default';
+
+  // Handle search results
+  const handleSearchResults = useCallback((results: Message[], keyword: string) => {
+    setSearchResults(results);
+    setSearchKeyword(keyword);
+    setIsSearchMode(true);
+  }, []);
+
+  // Clear search and return to normal chat view
+  const handleClearSearch = useCallback(() => {
+    setIsSearchMode(false);
+    setSearchResults([]);
+    setSearchKeyword('');
+  }, []);
 
   // Migrate localStorage messages on first load
   useEffect(() => {
@@ -175,7 +203,7 @@ export function ChatPane() {
 
   // Fetch messages when role changes
   useEffect(() => {
-    fetchMessages(currentRoleId, { limit: 50 });
+    fetchMessages(currentRoleId, { limit: 10 });
   }, [currentRoleId, fetchMessages]);
 
   // Filter messages for current role
@@ -183,20 +211,114 @@ export function ChatPane() {
     (m) => m.roleId === currentRoleId
   );
 
-  // Scroll to bottom when new messages arrive
+  // Maintain scroll position when older messages are prepended
   useEffect(() => {
-    if (containerRef.current) {
+    if (containerRef.current && isLoadingOlderRef.current) {
+      // Wait for the scroll bounce to settle (scrollTop >= 0) before restoring position
+      const checkAndRestore = () => {
+        if (!containerRef.current) return;
+        
+        const { scrollTop } = containerRef.current;
+        
+        // If still in bounce (negative scrollTop), wait and check again
+        if (scrollTop < 0) {
+          requestAnimationFrame(checkAndRestore);
+          return;
+        }
+        
+        // Bounce has settled, now restore scroll position
+        const newScrollHeight = containerRef.current.scrollHeight;
+        const scrollDiff = newScrollHeight - prevScrollHeightRef.current;
+        containerRef.current.scrollTop = scrollDiff;
+        isLoadingOlderRef.current = false;
+      };
+      
+      // Start checking after a small delay to let the bounce start
+      const timeoutId = setTimeout(() => {
+        requestAnimationFrame(checkAndRestore);
+      }, 50);
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [roleMessages.length]);
+
+  // Scroll to bottom when new messages arrive (not when loading older)
+  useEffect(() => {
+    if (containerRef.current && !isLoadingOlderRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [roleMessages.length, currentContent]);
+  }, [currentContent]);
 
-  // Load older messages when scrolling to top
-  const handleLoadMore = useCallback(() => {
-    if (hasMore && !loading && roleMessages.length > 0) {
-      const oldestMessage = roleMessages[0];
-      fetchMessages(currentRoleId, { before: oldestMessage.id, limit: 50 });
+  // Scroll to bottom when any new message is added (user, assistant, or system/MCP)
+  useEffect(() => {
+    if (containerRef.current && !isLoadingOlderRef.current && roleMessages.length > 0) {
+      // Small delay to ensure DOM is updated with the new message
+      requestAnimationFrame(() => {
+        if (containerRef.current) {
+          containerRef.current.scrollTop = containerRef.current.scrollHeight;
+        }
+      });
     }
-  }, [hasMore, loading, roleMessages, currentRoleId, fetchMessages]);
+  }, [roleMessages.length]);
+
+  // Scroll to bottom when search mode changes or search results update
+  useEffect(() => {
+    if (containerRef.current) {
+      // Small delay to ensure DOM is updated
+      const timer = setTimeout(() => {
+        if (containerRef.current) {
+          containerRef.current.scrollTop = containerRef.current.scrollHeight;
+        }
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [searchResults, isSearchMode]);
+
+  // Handle scroll to detect when user scrolls to top and auto-load more messages
+  // Also detect when user is at bottom to trigger message trimming
+  const handleScroll = useCallback(() => {
+    if (containerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+      // Consider "scrolled to top" when within 50px of the top
+      const atTop = scrollTop < 50;
+      // Consider "at bottom" when within 100px of the bottom
+      const atBottom = scrollTop + clientHeight >= scrollHeight - 100;
+      
+      // Auto-load older messages when hitting the top
+      // Use loadMoreTriggeredRef to prevent multiple calls during the same scroll-to-top event
+      if (atTop && hasMore && !loading && roleMessages.length > 0 && !isLoadingOlderRef.current && !loadMoreTriggeredRef.current) {
+        loadMoreTriggeredRef.current = true;
+        isLoadingOlderRef.current = true;
+        // Save current scroll height before loading
+        prevScrollHeightRef.current = scrollHeight;
+        const oldestMessage = roleMessages[0];
+        fetchMessages(currentRoleId, { before: oldestMessage.id, limit: 10 });
+      }
+      
+      // Reset the trigger when user scrolls away from top
+      if (!atTop) {
+        loadMoreTriggeredRef.current = false;
+      }
+      
+      // Trim messages when user is at the bottom and has extra messages loaded
+      // Only trim in-memory, not from database
+      if (atBottom && roleMessages.length > MESSAGE_LIMIT * 2) {
+        // Clear any existing timeout
+        if (trimTimeoutRef.current) {
+          clearTimeout(trimTimeoutRef.current);
+        }
+        // Set a new timeout to trim after 10 seconds of being at bottom
+        trimTimeoutRef.current = setTimeout(() => {
+          trimMessages(currentRoleId, MESSAGE_LIMIT);
+          trimTimeoutRef.current = null;
+        }, 10000);
+      } else if (!atBottom && trimTimeoutRef.current) {
+        // Cancel trim if user scrolls away from bottom
+        clearTimeout(trimTimeoutRef.current);
+        trimTimeoutRef.current = null;
+      }
+    }
+  }, [hasMore, loading, roleMessages, currentRoleId, fetchMessages, trimMessages]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -229,6 +351,14 @@ export function ChatPane() {
           })),
           roleId: currentRole?.id,
           groupId: currentGroup?.id,
+          viewerFile: viewerFile ? {
+            id: viewerFile.id,
+            name: viewerFile.name,
+            mimeType: viewerFile.mimeType,
+            previewUrl: viewerFile.previewUrl,
+            fileUri: viewerFile.fileUri,
+            absolutePath: viewerFile.absolutePath,
+          } : null,
         }),
       });
 
@@ -260,7 +390,7 @@ export function ChatPane() {
                 // Handle error messages
                 if (parsed.type === 'error' || parsed.error) {
                   const errorMessage = parsed.message || parsed.error;
-                  fullContent = `❌ **Error**: ${errorMessage}`;
+                  fullContent = `**Error**: ${errorMessage}`;
                   setCurrentContent(fullContent);
                   break;
                 }
@@ -271,23 +401,64 @@ export function ChatPane() {
                   setCurrentContent(fullContent);
                 }
 
-                // Handle info messages
-                if (parsed.type === 'info' && parsed.message) {
-                  fullContent += `\n\n*${parsed.message}*`;
-                  setCurrentContent(fullContent);
+                // Handle tool call - save current content as a message and prepare for next response
+                if (parsed.type === 'tool_call' && parsed.toolCall) {
+                  // If we have content before the tool call, save it as a message
+                  if (fullContent.trim()) {
+                    const partialMessage = {
+                      id: crypto.randomUUID(),
+                      roleId: currentRoleId,
+                      groupId: currentGroup?.id || null,
+                      userId: user.id,
+                      role: 'assistant' as const,
+                      content: fullContent.trim(),
+                      createdAt: new Date().toISOString(),
+                    };
+                    addMessage(partialMessage);
+                    fullContent = '';
+                    setCurrentContent('');
+                  }
                 }
 
-                // Handle tool results - check for PDFs from Google Drive
+                // Handle tool results - display as system message and prepare for next response
                 if (parsed.type === 'tool_result' && parsed.result) {
+                  // Check for PDFs from Google Drive
                   const pdfFile = parseGoogleDriveSearchResult(parsed.result);
                   if (pdfFile) {
                     // PDF found - update viewer
-                    setViewerFile({ ...pdfFile, serverId: parsed.serverId });
+                    setViewerFile({ 
+                      ...pdfFile, 
+                      serverId: parsed.serverId,
+                      sourceUrl: pdfFile.previewUrl,  // Store original URL for "open in new window"
+                    });
                     // Switch to the MCP server tab that found the PDF
                     if (parsed.serverId) {
                       setViewerTab(`mcp-${parsed.serverId}`);
                     }
                   }
+                  
+                  // Add tool call as a compact system message
+                  const serverName = parsed.serverId ? parsed.serverId.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : 'MCP';
+                  const toolMessage = {
+                    id: crypto.randomUUID(),
+                    roleId: currentRoleId,
+                    groupId: currentGroup?.id || null,
+                    userId: user.id,
+                    role: 'system' as const,
+                    content: `**${serverName}**: \`${parsed.toolName || 'tool'}\``,
+                    createdAt: new Date().toISOString(),
+                  };
+                  addMessage(toolMessage);
+                  
+                  // Reset for next assistant response
+                  fullContent = '';
+                  setCurrentContent('');
+                }
+
+                // Handle info messages
+                if (parsed.type === 'info' && parsed.message) {
+                  fullContent += `\n\n*${parsed.message}*`;
+                  setCurrentContent(fullContent);
                 }
               } catch {
                 // Skip invalid JSON
@@ -296,17 +467,20 @@ export function ChatPane() {
           }
         }
 
-        const assistantMessage = {
-          id: crypto.randomUUID(),
-          roleId: currentRoleId,
-          groupId: currentGroup?.id || null,
-          userId: user.id,
-          role: 'assistant' as const,
-          content: fullContent,
-          createdAt: new Date().toISOString(),
-        };
+        // Save final assistant message if there's content
+        if (fullContent.trim()) {
+          const assistantMessage = {
+            id: crypto.randomUUID(),
+            roleId: currentRoleId,
+            groupId: currentGroup?.id || null,
+            userId: user.id,
+            role: 'assistant' as const,
+            content: fullContent,
+            createdAt: new Date().toISOString(),
+          };
 
-        addMessage(assistantMessage);
+          addMessage(assistantMessage);
+        }
 
         // Check for preview file tags in the response and download them
         console.log('[PreviewFile] Checking response for preview file tags...');
@@ -344,6 +518,20 @@ export function ChatPane() {
     }
   };
 
+  // Auto-resize textarea up to 5 lines
+  useEffect(() => {
+    const textarea = inputRef.current;
+    if (textarea) {
+      // Reset height to auto to get the correct scrollHeight
+      textarea.style.height = 'auto';
+      // Calculate line height (approximately 24px per line with py-2 and text)
+      const lineHeight = 24;
+      const maxHeight = lineHeight * 5;
+      // Set height to scrollHeight, capped at maxHeight
+      textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+    }
+  }, [input]);
+
   const handleClear = async () => {
     const confirmed = window.confirm('Are you sure you want to delete all chat messages for this role? This action cannot be undone.');
     if (!confirmed) return;
@@ -351,66 +539,80 @@ export function ChatPane() {
     await clearServerMessages(currentRoleId);
   };
 
-  return (
-    <div className="flex flex-col h-full w-full overflow-hidden relative">
-      {/* Floating Clear Button */}
-      <button
-        onClick={handleClear}
-        className="absolute top-2 right-2 z-10 flex items-center gap-2 p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all duration-200 group overflow-hidden"
-      >
-        <Trash2 className="w-4 h-4 flex-shrink-0" />
-        <span className="text-xs whitespace-nowrap max-w-0 group-hover:max-w-24 transition-all duration-200 overflow-hidden">
-          Clear Chat History
-        </span>
-      </button>
+  // Cleanup trim timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (trimTimeoutRef.current) {
+        clearTimeout(trimTimeoutRef.current);
+      }
+    };
+  }, []);
 
-      {/* Load More Button */}
-      {hasMore && roleMessages.length > 0 && (
-        <div className="flex justify-center py-2 border-b border-border">
-          <button
-            onClick={handleLoadMore}
-            disabled={loading}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-          >
-            {loading ? (
-              <Loader2 className="w-3 h-3 animate-spin" />
-            ) : (
-              <ChevronUp className="w-3 h-3" />
-            )}
-            Load older messages
-          </button>
-        </div>
-      )}
+  return (
+    <div className="flex flex-col h-full w-full overflow-hidden">
+      {/* Top Banner */}
+      <TopBanner
+        roleId={currentRoleId}
+        onSearchResults={handleSearchResults}
+        onClearSearch={handleClearSearch}
+        isSearchMode={isSearchMode}
+        onClearHistory={handleClear}
+        clearHistoryLabel="Clear History"
+      />
 
       {/* Messages */}
-      <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
-        {roleMessages.length === 0 && !streaming && (
-          <div className="text-center text-muted-foreground py-8">
-            <p>Start a conversation</p>
-            {currentRole?.jobDesc && (
-              <p className="text-sm mt-2">{currentRole.jobDesc}</p>
+      <div ref={containerRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+        {/* Search Mode - Show search results */}
+        {isSearchMode && (
+          <>
+            {searchResults.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">
+                <p>No messages found for "{searchKeyword}"</p>
+              </div>
+            ) : (
+              searchResults.map((message) => (
+                <MessageItem 
+                  key={message.id} 
+                  message={message} 
+                  highlightKeyword={searchKeyword}
+                />
+              ))
             )}
-          </div>
+          </>
         )}
 
-        {roleMessages.map((message) => (
-          <MessageItem key={message.id} message={message} />
-        ))}
+        {/* Normal Mode - Show regular messages */}
+        {!isSearchMode && (
+          <>
+            {roleMessages.length === 0 && !streaming && (
+              <div className="text-center text-muted-foreground py-8">
+                <p>Start a conversation</p>
+                {currentRole?.jobDesc && (
+                  <p className="text-sm mt-2">{currentRole.jobDesc}</p>
+                )}
+              </div>
+            )}
 
-        {streaming && currentContent && (
-          <div className="flex justify-start">
-            <div className="max-w-[80%] rounded-lg px-4 py-2 bg-muted">
-              <p className="whitespace-pre-wrap">{currentContent}</p>
-            </div>
-          </div>
-        )}
+            {roleMessages.map((message) => (
+              <MessageItem key={message.id} message={message} />
+            ))}
 
-        {streaming && !currentContent && (
-          <div className="flex justify-start">
-            <div className="max-w-[80%] rounded-lg px-4 py-2 bg-muted">
-              <Loader2 className="w-4 h-4 animate-spin" />
-            </div>
-          </div>
+            {streaming && currentContent && (
+              <div className="flex justify-start">
+                <div className="max-w-[80%] rounded-lg px-4 py-2 bg-muted">
+                  <p className="whitespace-pre-wrap">{currentContent}</p>
+                </div>
+              </div>
+            )}
+
+            {streaming && !currentContent && (
+              <div className="flex justify-start">
+                <div className="max-w-[80%] rounded-lg px-4 py-2 bg-muted">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -423,7 +625,7 @@ export function ChatPane() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Type a message..."
-            className="flex-1 bg-muted rounded-lg px-4 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+            className="flex-1 bg-muted rounded-lg px-4 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-primary overflow-y-auto"
             rows={1}
             disabled={streaming}
           />

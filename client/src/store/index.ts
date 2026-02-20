@@ -135,6 +135,7 @@ interface ChatState {
   setLoading: (loading: boolean) => void;
   setMigrated: (migrated: boolean) => void;
   clearMessages: () => void;
+  trimMessages: (roleId: string, keepCount: number) => void;
   fetchMessages: (roleId: string, options?: { before?: string; limit?: number }) => Promise<void>;
   migrateFromLocalStorage: () => Promise<void>;
   clearServerMessages: (roleId: string) => Promise<void>;
@@ -182,6 +183,19 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   setLoading: (loading) => set({ loading }),
   setMigrated: (migrated) => set({ migrated }),
   clearMessages: () => set({ messages: [], currentContent: '', hasMore: true }),
+  
+  trimMessages: (roleId, keepCount) => {
+    const { messages } = get();
+    const roleMessages = messages.filter((m) => m.roleId === roleId);
+    
+    // Only trim if we have more messages than we want to keep
+    if (roleMessages.length > keepCount) {
+      // Keep only the most recent messages for this role
+      const messagesToKeep = roleMessages.slice(-keepCount);
+      const otherRoleMessages = messages.filter((m) => m.roleId !== roleId);
+      set({ messages: [...otherRoleMessages, ...messagesToKeep], hasMore: true });
+    }
+  },
   
   fetchMessages: async (roleId, options = {}) => {
     const { loading, messages } = get();
@@ -328,7 +342,10 @@ export interface ViewerFile {
   name: string;
   mimeType: string;
   previewUrl: string;
+  sourceUrl?: string;  // Original URL for opening in new window
   serverId?: string;
+  fileUri?: string;    // Local file:// URI for MCP tools
+  absolutePath?: string; // Absolute path for MCP tools
 }
 
 interface UIState {

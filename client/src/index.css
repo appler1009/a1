@@ -144,3 +144,87 @@
 .markdown-content th {
   @apply bg-muted font-bold;
 }
+
+/* Prose markdown styling for MessageItem component */
+.prose h1 {
+  @apply text-2xl font-bold mb-4 mt-6;
+  font-size: 1.75em;
+}
+
+.prose h2 {
+  @apply text-xl font-bold mb-3 mt-5;
+  font-size: 1.5em;
+}
+
+.prose h3 {
+  @apply text-lg font-bold mb-2 mt-4;
+  font-size: 1.25em;
+}
+
+.prose h4 {
+  @apply text-base font-bold mb-2 mt-3;
+  font-size: 1.1em;
+}
+
+.prose h5 {
+  @apply text-sm font-bold mb-1 mt-2;
+  font-size: 1em;
+}
+
+.prose h6 {
+  @apply text-sm font-bold mb-1 mt-2;
+  font-size: 0.9em;
+}
+
+/* Inline code styling with rounded border */
+.prose code:not(pre code) {
+  @apply bg-muted px-1.5 py-0.5 rounded-md border-2;
+  border-color: hsl(var(--muted-foreground) / 0.4);
+  font-size: 0.9em;
+}
+
+/* Code block styling - full width with same background */
+.prose pre {
+  @apply bg-muted p-4 rounded-lg overflow-x-auto mb-4;
+  width: 100%;
+}
+
+.prose pre code {
+  @apply bg-transparent p-0 border-0;
+  font-size: 0.9em;
+}
+
+/* User message code styling - light background for dark text */
+.bg-primary .prose code:not(pre code) {
+  @apply bg-primary-foreground/20;
+  border-color: hsl(var(--primary) / 0.3);
+  color: inherit;
+}
+
+.bg-primary .prose pre {
+  @apply bg-primary-foreground/20;
+  border: 1px solid hsl(var(--primary) / 0.3);
+}
+
+.bg-primary .prose pre code {
+  color: inherit;
+}
+
+/* Table styling with visible borders */
+.prose table {
+  @apply w-full border-collapse mb-4;
+}
+
+.prose th,
+.prose td {
+  @apply px-2 py-1;
+  border: 2px solid hsl(var(--muted-foreground) / 0.4);
+}
+
+.prose th {
+  @apply bg-muted font-bold;
+}
+
+.prose thead {
+  border-bottom: 2px solid hsl(var(--muted-foreground) / 0.5);
+}

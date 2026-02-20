@@ -1,5 +1,6 @@
 import { useUIStore } from '../../store';
 import React from 'react';
+import { TopBanner } from '../TopBanner';
 
 interface MCPServer {
   id?: string;
@@ -26,6 +27,13 @@ export function ViewerPane() {
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden bg-background">
+      {/* Top Banner */}
+      <TopBanner
+        fileName={viewerFile?.name}
+        sourceUrl={viewerFile?.sourceUrl}
+        openInNewWindowLabel="Open in New Window"
+      />
+      
       <div className="flex-1 overflow-hidden">
         {viewerFile ? (
           <iframe
@@ -37,9 +45,9 @@ export function ViewerPane() {
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground">
             <div className="text-center">
-              <p className="text-sm">No document to preview</p>
+              <p className="text-sm">Document Preview</p>
               <p className="text-xs text-muted-foreground mt-1">
-                Documents will appear here when shared by the AI
+                Documents shared from the chat will appear here
               </p>
             </div>
           </div>

@@ -21,6 +21,7 @@ export interface IMessageStorage {
   saveMessage(entry: ChatMessageEntry): Promise<void>;
   getMessage(id: string): Promise<ChatMessageEntry | null>;
   listMessages(roleId: string, options?: { limit?: number; before?: string }): Promise<ChatMessageEntry[]>;
+  searchMessages(keyword: string, roleId: string, options?: { limit?: number }): Promise<ChatMessageEntry[]>;
   deleteMessage(id: string): Promise<void>;
   clearMessages(roleId: string): Promise<void>;
 }

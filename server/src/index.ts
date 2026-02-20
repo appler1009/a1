@@ -106,6 +106,13 @@ function getExtensionForLanguage(language: string): string {
   return extensions[language.toLowerCase()] || 'txt';
 }
 
+// Helper function to strip emojis from text
+function stripEmojis(text: string): string {
+  // Remove emojis using Unicode ranges
+  // This covers most common emoji ranges
+  return text.replace(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{FE00}-\u{FE0F}]|[\u{1F900}-\u{1F9FF}]|[\u{1FA00}-\u{1FA6F}]|[\u{1FA70}-\u{1FAFF}]|[\u{231A}-\u{231B}]|[\u{23E9}-\u{23F3}]|[\u{23F8}-\u{23FA}]|[\u{25AA}-\u{25AB}]|[\u{25B6}]|[\u{25C0}]|[\u{25FB}-\u{25FE}]|[\u{2614}-\u{2615}]|[\u{2648}-\u{2653}]|[\u{267F}]|[\u{2693}]|[\u{26A1}]|[\u{26AA}-\u{26AB}]|[\u{26BD}-\u{26BE}]|[\u{26C4}-\u{26C5}]|[\u{26CE}]|[\u{26D4}]|[\u{26EA}]|[\u{26F2}-\u{26F3}]|[\u{26F5}]|[\u{26FA}]|[\u{26FD}]|[\u{2702}]|[\u{2705}]|[\u{2708}-\u{270D}]|[\u{270F}]|[\u{2712}]|[\u{2714}]|[\u{2716}]|[\u{271D}]|[\u{2721}]|[\u{2728}]|[\u{2733}-\u{2734}]|[\u{2744}]|[\u{2747}]|[\u{274C}]|[\u{274E}]|[\u{2753}-\u{2755}]|[\u{2757}]|[\u{2763}-\u{2764}]|[\u{2795}-\u{2797}]|[\u{27A1}]|[\u{27B0}]|[\u{27BF}]|[\u{2934}-\u{2935}]|[\u{2B05}-\u{2B07}]|[\u{2B1B}-\u{2B1C}]|[\u{2B50}]|[\u{2B55}]|[\u{3030}]|[\u{303D}]|[\u{3297}]|[\u{3299}]|[\u{200D}]|[\u{20E3}]|[\u{E0020}-\u{E007F}]/gu, '');
+}
+
 // Helper function to extract long code blocks from text and save to files
 // Returns { processedText, extractedFiles }
 async function extractLongCodeBlocks(
@@ -142,7 +149,7 @@ async function extractLongCodeBlocks(
     if (lines > 10) {
       blockIndex++;
       const ext = getExtensionForLanguage(language);
-      const codeFilename = `${baseName}-${blockIndex}.${ext}`;
+      const codeFilename = sanitizeFilename(`${baseName}-${blockIndex}.${ext}`);
       const codeFilePath = path.join(tempDir, codeFilename);
       
       await fs.writeFile(codeFilePath, code);
@@ -189,6 +196,307 @@ const storage = createStorage({
 
 // Google OAuth handler for token refresh
 let googleOAuthHandler: GoogleOAuthHandler | null = null;
+
+// Helper function to validate a cache ID is safe (no path traversal)
+function isValidCacheId(cacheId: string): boolean {
+  // Cache IDs should only contain alphanumeric characters, underscores, hyphens, and dots
+  // This prevents path traversal attacks
+  if (!cacheId || cacheId.length === 0) return false;
+  if (cacheId.includes('/') || cacheId.includes('\\')) return false;
+  if (cacheId.includes('..')) return false;
+  // Only allow safe characters: alphanumeric, underscore, hyphen
+  return /^[a-zA-Z0-9_-]+$/.test(cacheId);
+}
+
+// Helper function to sanitize a filename for safe file system operations
+// Removes path separators and other dangerous characters
+function sanitizeFilename(filename: string): string {
+  if (!filename) return 'file';
+  
+  // Remove any path separators
+  let sanitized = filename.replace(/[/\\]/g, '_');
+  
+  // Remove parent directory references
+  sanitized = sanitized.replace(/\.\./g, '');
+  
+  // Remove null bytes and other control characters
+  sanitized = sanitized.replace(/[\x00-\x1f\x7f]/g, '');
+  
+  // Limit length to prevent DoS
+  if (sanitized.length > 255) {
+    const ext = sanitized.split('.').pop() || '';
+    const baseName = sanitized.substring(0, sanitized.length - ext.length - 1);
+    sanitized = baseName.substring(0, 250 - ext.length) + '.' + ext;
+  }
+  
+  return sanitized || 'file';
+}
+
+// Helper function to download a Google Drive file and cache it locally
+async function downloadGoogleDriveFile(
+  userId: string,
+  fileId: string,
+  filename?: string
+): Promise<{ fileUri: string; absolutePath: string; cacheId: string } | null> {
+  console.log(`[GDriveDownload] Downloading file ${fileId} for user ${userId}`);
+  
+  try {
+    // Get user's Google OAuth token
+    let oauthToken = await authService.getOAuthToken(userId, 'google');
+    
+    if (!oauthToken) {
+      console.log('[GDriveDownload] No Google OAuth token found for user');
+      return null;
+    }
+    
+    // Check if token is expired and refresh if needed
+    const now = Date.now();
+    if (oauthToken.expiryDate && oauthToken.expiryDate < now) {
+      if (!oauthToken.refreshToken) {
+        console.log('[GDriveDownload] Token expired and no refresh token available');
+        return null;
+      }
+      
+      try {
+        const googleOAuth = new GoogleOAuthHandler({
+          clientId: process.env.GOOGLE_CLIENT_ID || '',
+          clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+          redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
+        });
+        
+        const newTokens = await googleOAuth.refreshAccessToken(oauthToken.refreshToken);
+        oauthToken = await authService.storeOAuthToken(userId, {
+          provider: 'google',
+          accessToken: newTokens.access_token,
+          refreshToken: newTokens.refresh_token || oauthToken.refreshToken,
+          expiryDate: Date.now() + (newTokens.expires_in * 1000),
+        } as any);
+        
+        console.log(`[GDriveDownload] Token refreshed successfully`);
+      } catch (refreshError) {
+        console.error('[GDriveDownload] Failed to refresh token:', refreshError);
+        return null;
+      }
+    }
+    
+    // Download the file from Google Drive
+    const driveApiUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
+    console.log(`[GDriveDownload] Fetching from Drive API: ${driveApiUrl}`);
+    
+    const response = await fetch(driveApiUrl, {
+      headers: {
+        'Authorization': `Bearer ${oauthToken.accessToken}`,
+      },
+    });
+    
+    if (!response.ok) {
+      console.log(`[GDriveDownload] Drive API failed: ${response.status} ${response.statusText}`);
+      return null;
+    }
+    
+    // Get filename from Content-Disposition header if available
+    let actualFilename = filename || `document-${fileId.substring(0, 8)}`;
+    const contentDisposition = response.headers.get('content-disposition');
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename\*?=["']?(?:UTF-\d['"]*)?([^"';\r\n]+)/);
+      if (filenameMatch) {
+        actualFilename = decodeURIComponent(filenameMatch[1]);
+      }
+    }
+    
+    // Get content type
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    
+    // Determine file extension
+    let extension = actualFilename.includes('.') ? `.${actualFilename.split('.').pop()}` : '';
+    if (!extension) {
+      // Try to get extension from content type
+      const mimeToExt: Record<string, string> = {
+        'application/pdf': '.pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+        'text/plain': '.txt',
+        'text/html': '.html',
+      };
+      extension = mimeToExt[contentType] || '';
+    }
+    
+    // Download the file
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    console.log(`[GDriveDownload] Downloaded ${buffer.length} bytes`);
+    
+    // Save to temp directory
+    const fs = await import('fs/promises');
+    const tempDir = path.join(config.storage.root, 'temp');
+    await fs.mkdir(tempDir, { recursive: true });
+    
+    // Use Google Drive file ID as cache key
+    const cacheId = fileId;
+    const tempFilename = sanitizeFilename(`${cacheId}${extension}`);
+    const tempFilePath = path.join(tempDir, tempFilename);
+    
+    await fs.writeFile(tempFilePath, buffer);
+    console.log(`[GDriveDownload] Saved to: ${tempFilePath}`);
+    
+    const absolutePath = path.resolve(tempFilePath);
+    const fileUri = `file://${absolutePath}`;
+    
+    return { fileUri, absolutePath, cacheId };
+  } catch (error) {
+    console.error('[GDriveDownload] Error downloading file:', error);
+    return null;
+  }
+}
+
+// Helper function to resolve URIs/cache IDs for MCP tools
+// If the URI is a cache ID (or file://cacheId), find the temp file and return the full file:// URI
+// If the URI is a Google Drive URL, download the file first and cache it
+async function resolveUriForMcp(uri: string, userId?: string): Promise<string> {
+  if (!uri) return uri;
+  
+  // Check if this is a Google Drive URL that needs to be downloaded first
+  if (uri.startsWith('https://drive.google.com/') || uri.startsWith('http://drive.google.com/')) {
+    // Extract Google Drive file ID from various URL formats
+    const gdriveMatch = uri.match(/drive\.google\.com\/.*(?:file\/d\/|id=)([a-zA-Z0-9_-]+)/);
+    const gdriveDownloadMatch = uri.match(/drive\.google\.com\/uc\?export=download&id=([a-zA-Z0-9_-]+)/);
+    const gdriveFileId = gdriveMatch?.[1] || gdriveDownloadMatch?.[1];
+    
+    if (gdriveFileId && userId) {
+      console.log(`[UriResolver] Detected Google Drive URL, file ID: ${gdriveFileId}`);
+      
+      // Check if file is already cached
+      const fs = await import('fs/promises');
+      const tempDir = path.join(config.storage.root, 'temp');
+      const tempFiles = await fs.readdir(tempDir).catch(() => []);
+      const cachedFile = tempFiles.find(f => {
+        const dotIndex = f.lastIndexOf('.');
+        const fileCacheId = dotIndex > 0 ? f.substring(0, dotIndex) : f;
+        return fileCacheId === gdriveFileId;
+      });
+      
+      if (cachedFile) {
+        const absolutePath = path.resolve(tempDir, cachedFile);
+        const fileUri = `file://${absolutePath}`;
+        console.log(`[UriResolver] Using cached Google Drive file: ${fileUri}`);
+        return fileUri;
+      }
+      
+      // Download the file
+      console.log(`[UriResolver] Google Drive file not cached, downloading...`);
+      const result = await downloadGoogleDriveFile(userId, gdriveFileId);
+      if (result) {
+        console.log(`[UriResolver] Downloaded Google Drive file to: ${result.fileUri}`);
+        return result.fileUri;
+      }
+      
+      console.log(`[UriResolver] Failed to download Google Drive file, using original URL`);
+    }
+    
+    // Return original URL if we can't download
+    return uri;
+  }
+  
+  // Check if this is an http/https URL (non-Google Drive) - don't modify
+  if (uri.startsWith('http://') || uri.startsWith('https://')) {
+    return uri;
+  }
+  
+  // Extract cache ID from the URI
+  let cacheId = uri;
+  
+  // If it's a file:// URI, extract the path part
+  if (uri.startsWith('file://')) {
+    const filePath = uri.replace('file://', '');
+    // If it's a full path with slashes, return as-is (already resolved)
+    if (filePath.includes('/')) {
+      return uri;
+    }
+    // Otherwise, use the path as the cache ID
+    cacheId = filePath;
+  }
+  
+  // Check if this is a preview URL (starts with /api/viewer/temp/)
+  if (uri.startsWith('/api/viewer/temp/')) {
+    // Extract the temp filename - the format is now {cacheId}.{ext}
+    const tempFilename = uri.replace('/api/viewer/temp/', '');
+    // Extract the cache ID (everything before the extension)
+    const dotIndex = tempFilename.lastIndexOf('.');
+    if (dotIndex > 0) {
+      cacheId = tempFilename.substring(0, dotIndex);
+    } else {
+      cacheId = tempFilename;
+    }
+  }
+  
+  // Security: Validate the cache ID to prevent path traversal
+  if (!isValidCacheId(cacheId)) {
+    console.log(`[UriResolver] SECURITY: Invalid cache ID rejected: ${cacheId}`);
+    return uri;
+  }
+  
+  // Now we have a cache ID - look for the temp file in the temp directory
+  try {
+    const fs = await import('fs/promises');
+    const tempDir = path.join(config.storage.root, 'temp');
+    const tempFiles = await fs.readdir(tempDir).catch(() => []);
+    
+    // Find a file that starts with the cache ID (regardless of extension)
+    // The format is {cacheId}.{ext}
+    const matchingFile = tempFiles.find(f => {
+      const dotIndex = f.lastIndexOf('.');
+      const fileCacheId = dotIndex > 0 ? f.substring(0, dotIndex) : f;
+      return fileCacheId === cacheId;
+    });
+    
+    if (matchingFile) {
+      // Security: Verify the resolved path is within temp directory
+      const absolutePath = path.resolve(tempDir, matchingFile);
+      const resolvedTempDir = path.resolve(tempDir);
+      if (!absolutePath.startsWith(resolvedTempDir + path.sep) && absolutePath !== resolvedTempDir) {
+        console.log(`[UriResolver] SECURITY: Path escape attempt - resolved to: ${absolutePath}`);
+        return uri;
+      }
+      
+      const fileUri = `file://${absolutePath}`;
+      console.log(`[UriResolver] Resolved cache ID "${cacheId}" to local file: ${fileUri}`);
+      return fileUri;
+    }
+    
+    console.log(`[UriResolver] No temp file found for cache ID: ${cacheId}`);
+  } catch (error) {
+    console.error(`[UriResolver] Error looking up temp file:`, error);
+  }
+  
+  return uri;
+}
+
+// Helper function to recursively resolve URIs in an arguments object
+async function resolveUrisInArgs(args: Record<string, unknown>, userId?: string): Promise<Record<string, unknown>> {
+  const resolved: Record<string, unknown> = {};
+  
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === 'string') {
+      // Resolve string values that might be URIs or cache IDs
+      resolved[key] = await resolveUriForMcp(value, userId);
+    } else if (Array.isArray(value)) {
+      // Recursively resolve URIs in arrays
+      resolved[key] = await Promise.all(
+        value.map(item => 
+          typeof item === 'string' ? resolveUriForMcp(item, userId) : Promise.resolve(item)
+        )
+      );
+    } else if (typeof value === 'object' && value !== null) {
+      // Recursively resolve URIs in nested objects
+      resolved[key] = await resolveUrisInArgs(value as Record<string, unknown>, userId);
+    } else {
+      resolved[key] = value;
+    }
+  }
+  
+  return resolved;
+}
 
 // Register plugins
 fastify.register(cors, {
@@ -311,7 +619,11 @@ async function executeToolWithAdapters(
           console.log(`[ToolExecution] Tool description: ${tool.description}`);
           console.log(`[ToolExecution] Executing tool...`);
 
-          const result = await adapter.callTool(toolName, args);
+          // Resolve any URIs/filenames in the arguments to local file URIs
+          const resolvedArgs = await resolveUrisInArgs(args, userId);
+          console.log(`[ToolExecution] Resolved arguments: ${JSON.stringify(resolvedArgs, null, 2)}`);
+
+          const result = await adapter.callTool(toolName, resolvedArgs);
 
           console.log(`[ToolExecution] Raw response type: ${result.type}`);
           console.log(`[ToolExecution] Raw response:`, JSON.stringify(result, null, 2));
@@ -393,7 +705,7 @@ async function executeToolWithAdapters(
                 if (lines > 10) {
                   blockIndex++;
                   const ext = getExtensionForLanguage(language);
-                  const codeFilename = `${baseName}-code-${blockIndex}.${ext}`;
+                  const codeFilename = sanitizeFilename(`${baseName}-code-${blockIndex}.${ext}`);
                   const codeFilePath = path.join(tempDir, codeFilename);
                   
                   await fs.writeFile(codeFilePath, codeContent);
@@ -409,7 +721,7 @@ async function executeToolWithAdapters(
               }
               
               // Save the processed markdown file
-              const mdFilename = `${baseName}-markdown-${Date.now()}.md`;
+              const mdFilename = sanitizeFilename(`${baseName}-markdown-${Date.now()}.md`);
               const mdFilePath = path.join(tempDir, mdFilename);
               await fs.writeFile(mdFilePath, processedContent);
               
@@ -668,6 +980,30 @@ fastify.register(async (instance) => {
     return reply.send({ success: true });
   });
 
+  // Search messages by keyword
+  instance.get('/messages/search', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const query = request.query as { keyword?: string; roleId?: string; limit?: number };
+    const keyword = query.keyword || '';
+    const roleId = query.roleId || 'default';
+    const limit = query.limit || 100;
+
+    if (!keyword.trim()) {
+      return reply.send({ success: true, data: [] });
+    }
+
+    const messageStorage = storage.getMessageStorage();
+    if (!messageStorage) {
+      return reply.code(500).send({ success: false, error: { message: 'Message storage not available' } });
+    }
+
+    const messages = await messageStorage.searchMessages(keyword, roleId, { limit });
+    return reply.send({ success: true, data: messages });
+  });
+
   // Migrate messages from localStorage (client sends all messages)
   instance.post('/messages/migrate', async (request, reply) => {
     if (!request.user) {
@@ -709,7 +1045,19 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
-    const body = request.body as { messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>; roleId?: string; groupId?: string };
+    const body = request.body as { 
+      messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>; 
+      roleId?: string; 
+      groupId?: string;
+      viewerFile?: {
+        id: string;
+        name: string;
+        mimeType: string;
+        previewUrl: string;
+        fileUri?: string;
+        absolutePath?: string;
+      } | null;
+    };
 
     if (!llmRouter) {
       return reply.code(500).send({ success: false, error: { message: 'LLM router not initialized' } });
@@ -759,22 +1107,77 @@ fastify.register(async (instance) => {
       });
       console.log('='.repeat(80) + '\n');
 
+      // Build document context if a file is being previewed
+      let documentContext = '';
+      if (body.viewerFile) {
+        console.log(`[ChatStream] Viewer file present: ${body.viewerFile.name}`);
+        console.log(`[ChatStream] Viewer id (cache ID): ${body.viewerFile.id}`);
+        console.log(`[ChatStream] Viewer fileUri: ${body.viewerFile.fileUri}`);
+        console.log(`[ChatStream] Viewer absolutePath: ${body.viewerFile.absolutePath}`);
+        
+        // Use the local file URI for MCP tools if available
+        const fileUriForMcp = body.viewerFile.fileUri || body.viewerFile.absolutePath;
+        const cacheId = body.viewerFile.id;
+        
+        if (fileUriForMcp) {
+          // File is available locally, just log it
+          console.log(`[ChatStream] File available at: ${fileUriForMcp}`);
+        }
+        
+        // Always show the Cache ID in the system prompt if we have a viewerFile
+        // The resolver will look up the temp file by cache ID when MCP tools are called
+        documentContext = `
+
+## CURRENT DOCUMENT IN PREVIEW PANE
+The user currently has the following document displayed in their preview pane:
+- **Filename**: ${body.viewerFile.name}
+- **Type**: ${body.viewerFile.mimeType}
+- **Cache ID**: ${cacheId}
+
+This document is immediately available for the user to ask questions about or request work on. You should be prepared to help with tasks related to this document such as:
+- Summarizing its contents
+- Extracting specific information
+- Answering questions about it
+- Suggesting edits or improvements
+- Converting it to other formats
+
+**IMPORTANT**: When using MCP tools like convert_to_markdown to process this document, use the Cache ID: \`${cacheId}\`
+
+The system will automatically resolve the Cache ID to the correct local file path. Always use the Cache ID in your tool calls for this document.
+
+If the user asks about "this document" or "the file" without specifying, they are referring to this previewed document.`;
+      }
+
       // Keep track of conversation for tool execution
       // Add system message about file tagging for preview
       const systemMessage = {
         role: 'system' as const,
         content: `You are a helpful assistant with access to Google Drive and file management tools.
 
+## IMPORTANT: No Emojis
+Do NOT use any emojis in your responses. Write in markdown format only.
+
 ## File Access
 Use MCP tools (search, listFolder, etc.) to access files. When listing files, show only filenames with clickable links - no internal IDs.
 
-## File Previews
-Use this format to display files in the preview pane:
+## File Previews - CRITICAL
+ALWAYS use this format when mentioning ANY file or document:
 [preview-file:filename.ext](url)
 
-For Google Drive files, convert view URLs to download URLs:
+This applies to:
+- Files found via search or listFolder
+- Documents you want to show the user
+- PDFs, images, HTML files, or any downloadable content
+- Google Drive files (convert to download URL first)
+
+For Google Drive files, ALWAYS convert view URLs to download URLs:
 - View: https://drive.google.com/file/d/FILE_ID/view
 - Download: https://drive.google.com/uc?export=download&id=FILE_ID
+
+Example - when listing files, use:
+- [preview-file:Report.pdf](https://drive.google.com/uc?export=download&id=abc123)
+
+The "preview-file:" prefix is REQUIRED for all file links to make them clickable in the preview pane.
 
 ## Document Processing
 Use convert_to_markdown tool for PDFs and documents. It accepts file://, http://, or https:// URIs.
@@ -784,7 +1187,7 @@ When summarizing documents, use ONLY actual values from the tool output:
 - NEVER use placeholders like [Name], [Date], [Amount]
 - If the document says "Meeting: Jan 15, 2026", write exactly that
 - If you cannot extract a value, write "Not found in document"
-- If the tool returns empty/error, report this honestly - do not fabricate content`,
+- If the tool returns empty/error, report this honestly - do not fabricate content${documentContext}`,
       };
       
       let conversationMessages = [systemMessage, ...body.messages];
@@ -814,7 +1217,9 @@ When summarizing documents, use ONLY actual values from the tool output:
           if (chunk.type === 'text') {
             assistantContent += chunk.content;
             await new Promise(resolve => setTimeout(resolve, 20));
-            reply.raw.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+            // Strip emojis from the content before sending to client
+            const cleanedContent = stripEmojis(chunk.content || '');
+            reply.raw.write(`data: ${JSON.stringify({ content: cleanedContent })}\n\n`);
           } else if (chunk.type === 'tool_call' && chunk.toolCall) {
             const toolCall = chunk.toolCall;
             console.log(`[ChatStream] Tool call: ${toolCall.name}`, {
@@ -829,6 +1234,8 @@ When summarizing documents, use ONLY actual values from the tool output:
         console.log('\n' + '='.repeat(80));
         console.log('[ChatStream] RAW ASSISTANT RESPONSE:');
         console.log('-'.repeat(80));
+        // Strip emojis from the final content
+        assistantContent = stripEmojis(assistantContent);
         console.log(assistantContent);
         console.log('-'.repeat(80));
         if (toolCalls.length > 0) {
@@ -948,14 +1355,85 @@ fastify.register(async (instance) => {
     }
 
     try {
-      let buffer: Buffer;
-      let contentType = body.mimeType || 'application/octet-stream';
-      let filename = body.filename || 'downloaded-file';
-
-      // Check if this is a Google Drive URL
+      const fs = await import('fs/promises');
+      
+      // Create temp directory if it doesn't exist
+      const tempDir = path.join(config.storage.root, 'temp');
+      await fs.mkdir(tempDir, { recursive: true }).catch(() => {});
+      
+      // Generate a cache key from the URL
+      const crypto = await import('crypto');
+      const urlHash = crypto.createHash('md5').update(body.url).digest('hex').substring(0, 12);
+      
+      // Check if this is a Google Drive URL to extract file ID for caching
       const gdriveMatch = body.url.match(/drive\.google\.com\/.*(?:file\/d\/|id=)([a-zA-Z0-9_-]+)/);
       const gdriveDownloadMatch = body.url.match(/drive\.google\.com\/uc\?export=download&id=([a-zA-Z0-9_-]+)/);
       const gdriveFileId = gdriveMatch?.[1] || gdriveDownloadMatch?.[1];
+      
+      // Use Google Drive file ID as cache key if available, otherwise use URL hash
+      const cacheKey = gdriveFileId || urlHash;
+      
+      // Look for existing cached file with this cache key
+      const tempFiles = await fs.readdir(tempDir).catch(() => []);
+      // Find a file that matches the cache ID (format: {cacheId}.{ext})
+      const cachedFile = tempFiles.find(f => {
+        const dotIndex = f.lastIndexOf('.');
+        const fileCacheId = dotIndex > 0 ? f.substring(0, dotIndex) : f;
+        return fileCacheId === cacheKey;
+      });
+      
+      if (cachedFile) {
+        const cachedFilePath = path.join(tempDir, cachedFile);
+        const stats = await fs.stat(cachedFilePath);
+        console.log(`[ViewerDownload] Found cached file: ${cachedFile}`);
+        console.log(`[ViewerDownload] Cache hit! Using local file (${stats.size} bytes)`);
+        
+        // Determine content type from extension
+        const ext = cachedFile.split('.').pop()?.toLowerCase() || '';
+        const contentTypes: Record<string, string> = {
+          pdf: 'application/pdf',
+          png: 'image/png',
+          jpg: 'image/jpeg',
+          jpeg: 'image/jpeg',
+          gif: 'image/gif',
+          svg: 'image/svg+xml',
+          html: 'text/html',
+          txt: 'text/plain',
+          json: 'application/json',
+          md: 'text/markdown',
+        };
+        const contentType = contentTypes[ext] || body.mimeType || 'application/octet-stream';
+        
+        const previewUrl = `/api/viewer/temp/${cachedFile}`;
+        const absoluteFilePath = path.resolve(cachedFilePath);
+        const fileUri = `file://${absoluteFilePath}`;
+        
+        // Get the original filename from the request or cached file
+        const originalFilename = body.filename || cachedFile;
+        
+        console.log(`[ViewerDownload] Preview URL: ${previewUrl}`);
+        console.log('[ViewerDownload] ========================================\n');
+        
+        return reply.send({
+          success: true,
+          data: {
+            id: cacheKey,
+            name: originalFilename,
+            mimeType: contentType,
+            previewUrl,
+            fileUri,
+            absolutePath: absoluteFilePath,
+            size: stats.size,
+            cached: true,
+          },
+        });
+      }
+      
+      console.log(`[ViewerDownload] Cache miss. Downloading file...`);
+      
+      let buffer: Buffer;
+      let contentType = body.mimeType || 'application/octet-stream';
+      let filename = body.filename || 'downloaded-file';
 
       if (gdriveFileId) {
         console.log(`[ViewerDownload] Detected Google Drive file ID: ${gdriveFileId}`);
@@ -1171,21 +1649,15 @@ fastify.register(async (instance) => {
         buffer = Buffer.from(arrayBuffer);
       }
 
-      // Create temp directory if it doesn't exist
-      const tempDir = path.join(config.storage.root, 'temp');
-      console.log(`[ViewerDownload] Temp directory: ${tempDir}`);
-      await import('fs/promises').then(fs => fs.mkdir(tempDir, { recursive: true }).catch(() => {}));
-
-      // Generate unique ID for this file
-      const fileId = uuidv4();
+      // Generate filename with cache key (no timestamp needed)
       const fileExtension = filename.includes('.') ? `.${filename.split('.').pop()}` : '';
-      const tempFilename = `${fileId}${fileExtension}`;
+      const tempFilename = sanitizeFilename(`${cacheKey}${fileExtension}`);
       const tempFilePath = path.join(tempDir, tempFilename);
       console.log(`[ViewerDownload] Temp file path: ${tempFilePath}`);
 
       // Write file to temp directory
       console.log(`[ViewerDownload] File size: ${buffer.length} bytes`);
-      await import('fs/promises').then(fs => fs.writeFile(tempFilePath, buffer));
+      await fs.writeFile(tempFilePath, buffer);
       console.log(`[ViewerDownload] File written successfully`);
 
       // Return the local URL for preview
@@ -1202,13 +1674,14 @@ fastify.register(async (instance) => {
       return reply.send({
         success: true,
         data: {
-          id: fileId,
+          id: cacheKey,
           name: filename,
           mimeType: contentType,
           previewUrl,
           fileUri,  // Add file:// URI for use with convert_to_markdown
           absolutePath: absoluteFilePath,  // Also provide raw path
           size: buffer.length,
+          cached: false,
         },
       });
     } catch (error) {
@@ -1223,7 +1696,31 @@ fastify.register(async (instance) => {
   instance.get('/viewer/temp/:filename', async (request, reply) => {
     const params = request.params as { filename: string };
     const tempDir = path.join(config.storage.root, 'temp');
-    const filePath = path.join(tempDir, params.filename);
+    
+    // Security: Validate filename to prevent path traversal attacks
+    const filename = params.filename;
+    
+    // Reject filenames with path separators or parent directory references
+    if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+      console.log(`[ViewerTemp] SECURITY: Rejected path traversal attempt: ${filename}`);
+      return reply.code(400).send({ success: false, error: { message: 'Invalid filename' } });
+    }
+    
+    // Reject absolute paths
+    if (path.isAbsolute(filename)) {
+      console.log(`[ViewerTemp] SECURITY: Rejected absolute path: ${filename}`);
+      return reply.code(400).send({ success: false, error: { message: 'Invalid filename' } });
+    }
+    
+    const filePath = path.join(tempDir, filename);
+    
+    // Security: Verify the resolved path is still within temp directory
+    const resolvedPath = path.resolve(filePath);
+    const resolvedTempDir = path.resolve(tempDir);
+    if (!resolvedPath.startsWith(resolvedTempDir + path.sep) && resolvedPath !== resolvedTempDir) {
+      console.log(`[ViewerTemp] SECURITY: Path escape attempt - resolved to: ${resolvedPath}`);
+      return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
+    }
 
     try {
       // Check if file exists
@@ -1231,7 +1728,7 @@ fastify.register(async (instance) => {
       await fs.access(filePath);
 
       // Determine content type based on file extension
-      const ext = params.filename.split('.').pop()?.toLowerCase() || '';
+      const ext = filename.split('.').pop()?.toLowerCase() || '';
       const contentTypes: Record<string, string> = {
         pdf: 'application/pdf',
         png: 'image/png',
@@ -1250,7 +1747,7 @@ fastify.register(async (instance) => {
       const fileBuffer = await fs.readFile(filePath);
       reply.header('Content-Type', contentType);
       reply.header('Content-Length', fileBuffer.length);
-      reply.header('Content-Disposition', `inline; filename="${params.filename}"`);
+      reply.header('Content-Disposition', `inline; filename="${filename}"`);
       return reply.send(fileBuffer);
     } catch {
       return reply.code(404).send({ success: false, error: { message: 'File not found' } });

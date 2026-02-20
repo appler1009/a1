@@ -56,22 +56,22 @@ export function Sidebar() {
 
   return (
     <div className={`${sidebarOpen ? 'w-64' : 'w-16'} flex flex-col h-full bg-card border-r border-border transition-all duration-300`}>
-      {/* Header */}
-      <div className="p-4 border-b border-border">
-        <div className="flex items-center justify-between">
-          {sidebarOpen && (
-            <div className="flex items-center gap-2">
-              <MessageSquare className="w-6 h-6 text-primary" />
-              <span className="font-semibold">a1</span>
-            </div>
-          )}
-          <button
-            onClick={toggleSidebar}
-            className="p-1 hover:bg-muted rounded-lg"
-          >
-            <ChevronDown className={`w-4 h-4 transition-transform ${sidebarOpen ? '' : '-rotate-90'}`} />
-          </button>
-        </div>
+      {/* Top Banner - Matching other panes */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border h-11 shrink-0">
+        {sidebarOpen && (
+          <div className="flex items-center gap-2">
+            <MessageSquare className="w-5 h-5 text-primary" />
+            <span className="font-semibold text-sm">a1</span>
+          </div>
+        )}
+        <div className="flex-1" />
+        <button
+          onClick={toggleSidebar}
+          className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
+          title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+        >
+          <ChevronDown className={`w-4 h-4 transition-transform ${sidebarOpen ? '' : '-rotate-90'}`} />
+        </button>
       </div>
 
       {/* Group Selector */}
