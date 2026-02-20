@@ -433,8 +433,13 @@ async function resolveUriForMcp(uri: string, userId?: string): Promise<string> {
   // Extract cache ID from the URI
   let cacheId = uri;
   
+  // If it's a cache:// URI, extract the cache ID
+  if (uri.startsWith('cache://')) {
+    cacheId = uri.replace('cache://', '');
+    console.log(`[UriResolver] Detected cache:// URI, extracted cache ID: ${cacheId}`);
+  }
   // If it's a file:// URI, extract the path part
-  if (uri.startsWith('file://')) {
+  else if (uri.startsWith('file://')) {
     const filePath = uri.replace('file://', '');
     // If it's a full path with slashes, return as-is (already resolved)
     if (filePath.includes('/')) {
@@ -443,9 +448,8 @@ async function resolveUriForMcp(uri: string, userId?: string): Promise<string> {
     // Otherwise, use the path as the cache ID
     cacheId = filePath;
   }
-  
   // Check if this is a preview URL (starts with /api/viewer/temp/)
-  if (uri.startsWith('/api/viewer/temp/')) {
+  else if (uri.startsWith('/api/viewer/temp/')) {
     // Extract the temp filename - the format is now {cacheId}.{ext}
     const tempFilename = uri.replace('/api/viewer/temp/', '');
     // Extract the cache ID (everything before the extension)
@@ -1181,69 +1185,19 @@ If the user asks about "this document" or "the file" without specifying, they ar
       // Add system message about file tagging for preview
       const systemMessage = {
         role: 'system' as const,
-        content: `You are a helpful assistant with access to Google Drive, file management tools, and persistent memory capabilities.
+        content: `You are a helpful assistant with Google Drive, file tools, and persistent memory.
 
-## IMPORTANT: No Emojis
-Do NOT use any emojis in your responses. Write in markdown format only.
+## Rules
+- No emojis. Use markdown only.
+- Use [preview-file:filename.ext](url) for all file links
+- Convert Google Drive view URLs to download: https://drive.google.com/uc?export=download&id=FILE_ID
+- For document summaries, use actual values only - no placeholders
 
-## Persistent Memory
-You have access to a knowledge graph memory system that persists across conversations. Use these tools to remember important information:
-
-- **create_entities**: Store important information about people, projects, concepts, or any entities you want to remember for future conversations
-- **create_relations**: Create relationships between entities (e.g., "Alice" -> "works_on" -> "Project X")
-- **add_observations**: Add new observations to existing entities as you learn more
-- **read_graph**: View all stored memories and relationships
-- **search_nodes**: Search for specific entities or information in your memory
-- **open_nodes**: Retrieve detailed information about specific entities
-
-**When to use memory tools:**
-- User mentions their preferences, goals, or important personal information
-- User shares project details, deadlines, or requirements
-- You learn something about the user that would be useful in future conversations
-- User asks about something discussed in a previous conversation
-
-**How to respond after using memory tools:**
-- Be natural and conversational - like a helpful friend who remembers things
-- Use phrases like "I'll keep that in mind" or "Got it, I'll remember that"
-- NEVER mention technical details like "stored in knowledge graph" or "entity created"
-- NEVER mention cache IDs, file IDs, or internal technical identifiers
-- The user should feel like they're talking to someone who simply remembers, not a database
-
-**Example usage:**
-- If user says "I'm working on a project called Acme", create an entity for "Acme" project, then respond naturally: "Got it! I'll keep that in mind about the Acme project."
-- If user mentions "My manager is Bob", create entities and a relation, then say: "Thanks for letting me know - I'll remember that Bob is your manager."
-
-## File Access
-Use MCP tools (search, listFolder, etc.) to access files. When listing files, show only filenames with clickable links - no internal IDs.
-
-## File Previews - CRITICAL
-ALWAYS use this format when mentioning ANY file or document:
-[preview-file:filename.ext](url)
-
-This applies to:
-- Files found via search or listFolder
-- Documents you want to show the user
-- PDFs, images, HTML files, or any downloadable content
-- Google Drive files (convert to download URL first)
-
-For Google Drive files, ALWAYS convert view URLs to download URLs:
-- View: https://drive.google.com/file/d/FILE_ID/view
-- Download: https://drive.google.com/uc?export=download&id=FILE_ID
-
-Example - when listing files, use:
-- [preview-file:Report.pdf](https://drive.google.com/uc?export=download&id=abc123)
-
-The "preview-file:" prefix is REQUIRED for all file links to make them clickable in the preview pane.
-
-## Document Processing
-Use convert_to_markdown tool for PDFs and documents. It accepts file://, http://, or https:// URIs.
-
-## CRITICAL: Document Summaries
-When summarizing documents, use ONLY actual values from the tool output:
-- NEVER use placeholders like [Name], [Date], [Amount]
-- If the document says "Meeting: Jan 15, 2026", write exactly that
-- If you cannot extract a value, write "Not found in document"
-- If the tool returns empty/error, report this honestly - do not fabricate content${documentContext}`,
+## Persistent Memory (AUTO-EXTRACT)
+You MUST automatically store notable information using memory tools (create_entities, create_relations, add_observations, read_graph, search_nodes).
+- **Automatically remember:** names, roles, preferences, projects, organizations, documents, key facts, dates, locations, decisions - anything worth recalling later.
+- **Process:** Identify notable info → Call memory tools immediately → Respond naturally (e.g., "I'll keep that in mind")
+- **Never mention:** cache IDs, file IDs, "stored in knowledge graph", or technical details${documentContext}`,
       };
       
       let conversationMessages = [systemMessage, ...body.messages];
