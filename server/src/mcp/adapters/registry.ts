@@ -30,6 +30,9 @@ class AdapterRegistry {
     // markitdown uses StdioAdapter (no special auth required)
     this.register('markitdown', StdioAdapter);
     this.register('MarkItDown', StdioAdapter); // Also register by display name
+    // memory server uses StdioAdapter (no special auth required)
+    this.register('memory', StdioAdapter);
+    this.register('Memory', StdioAdapter); // Also register by display name
     // Future: this.register('github', GithubAdapter);
     // Future: this.register('brave-search', BraveSearchAdapter);
   }

@@ -27,6 +27,17 @@ export interface IMessageStorage {
 }
 
 /**
+ * Application settings interface
+ * Key-value storage for application configuration
+ */
+export interface ISettingsStorage {
+  getSetting<T = unknown>(key: string): Promise<T | null>;
+  setSetting(key: string, value: unknown): Promise<void>;
+  deleteSetting(key: string): Promise<void>;
+  getAllSettings(): Promise<Record<string, unknown>>;
+}
+
+/**
  * Storage interface
  * All storage adapters must implement this interface
  */
@@ -52,6 +63,12 @@ export interface IStorage {
   setMetadata(table: string, id: string, data: Record<string, unknown>): Promise<void>;
   deleteMetadata(table: string, id: string): Promise<void>;
   queryMetadata(table: string, filter: Record<string, unknown>): Promise<Record<string, unknown>[]>;
+
+  // Settings operations
+  getSetting<T = unknown>(key: string): Promise<T | null>;
+  setSetting(key: string, value: unknown): Promise<void>;
+  deleteSetting(key: string): Promise<void>;
+  getAllSettings(): Promise<Record<string, unknown>>;
 }
 
 /**
@@ -77,4 +94,9 @@ export abstract class BaseStorage implements IStorage {
   abstract setMetadata(table: string, id: string, data: Record<string, unknown>): Promise<void>;
   abstract deleteMetadata(table: string, id: string): Promise<void>;
   abstract queryMetadata(table: string, filter: Record<string, unknown>): Promise<Record<string, unknown>[]>;
+
+  abstract getSetting<T = unknown>(key: string): Promise<T | null>;
+  abstract setSetting(key: string, value: unknown): Promise<void>;
+  abstract deleteSetting(key: string): Promise<void>;
+  abstract getAllSettings(): Promise<Record<string, unknown>>;
 }

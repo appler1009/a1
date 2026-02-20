@@ -286,4 +286,63 @@ export class S3StorageAdapter extends BaseStorage {
       return [];
     }
   }
+
+  // ============================================
+  // Settings Operations
+  // ============================================
+
+  private getSettingsKey(): string {
+    return `${this.prefix}settings.json`;
+  }
+
+  async getSetting<T = unknown>(key: string): Promise<T | null> {
+    try {
+      const content = await this.getObject(this.getSettingsKey());
+      if (!content) return null;
+      
+      const settings = JSON.parse(content) as Record<string, unknown>;
+      return (settings[key] as T) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async setSetting(key: string, value: unknown): Promise<void> {
+    let settings: Record<string, unknown> = {};
+    
+    try {
+      const content = await this.getObject(this.getSettingsKey());
+      if (content) {
+        settings = JSON.parse(content);
+      }
+    } catch {
+      // File doesn't exist
+    }
+
+    settings[key] = value;
+    await this.putObject(this.getSettingsKey(), JSON.stringify(settings, null, 2));
+  }
+
+  async deleteSetting(key: string): Promise<void> {
+    try {
+      const content = await this.getObject(this.getSettingsKey());
+      if (content) {
+        const settings = JSON.parse(content) as Record<string, unknown>;
+        delete settings[key];
+        await this.putObject(this.getSettingsKey(), JSON.stringify(settings, null, 2));
+      }
+    } catch {
+      // File doesn't exist
+    }
+  }
+
+  async getAllSettings(): Promise<Record<string, unknown>> {
+    try {
+      const content = await this.getObject(this.getSettingsKey());
+      if (!content) return {};
+      return JSON.parse(content) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
 }

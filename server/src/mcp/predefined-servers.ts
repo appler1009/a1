@@ -91,6 +91,22 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     icon: 'file-text',
     hidden: true, // Hidden from UI - automatically available for PDF processing
   },
+
+  {
+    id: 'memory',
+    name: 'Memory',
+    description: 'Persistent knowledge graph memory for storing entities, relations, and observations across conversations. Enables the AI to remember context and user preferences.',
+    command: 'npx',
+    args: ['-y', '@modelcontextprotocol/server-memory'],
+    env: {
+      MEMORY_FILE_PATH: './data/memory.json', // Persistent storage for knowledge graph
+    },
+    auth: {
+      provider: 'none',
+    },
+    icon: 'brain',
+    hidden: true, // Hidden from UI - automatically enabled for all users
+  },
 ];
 
 /**

@@ -239,4 +239,61 @@ export class FSStorageAdapter extends BaseStorage {
       return [];
     }
   }
+
+  // ============================================
+  // Settings Operations
+  // ============================================
+
+  private getSettingsPath(): string {
+    return path.join(this.root, 'data', 'settings.json');
+  }
+
+  async getSetting<T = unknown>(key: string): Promise<T | null> {
+    try {
+      const filePath = this.getSettingsPath();
+      const content = await fs.readFile(filePath, 'utf-8');
+      const settings = JSON.parse(content) as Record<string, unknown>;
+      return (settings[key] as T) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async setSetting(key: string, value: unknown): Promise<void> {
+    const filePath = this.getSettingsPath();
+    let settings: Record<string, unknown> = {};
+    
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      settings = JSON.parse(content);
+    } catch {
+      // File doesn't exist
+    }
+
+    settings[key] = value;
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, JSON.stringify(settings, null, 2), 'utf-8');
+  }
+
+  async deleteSetting(key: string): Promise<void> {
+    try {
+      const filePath = this.getSettingsPath();
+      const content = await fs.readFile(filePath, 'utf-8');
+      const settings = JSON.parse(content);
+      delete settings[key];
+      await fs.writeFile(filePath, JSON.stringify(settings, null, 2), 'utf-8');
+    } catch {
+      // File doesn't exist
+    }
+  }
+
+  async getAllSettings(): Promise<Record<string, unknown>> {
+    try {
+      const filePath = this.getSettingsPath();
+      const content = await fs.readFile(filePath, 'utf-8');
+      return JSON.parse(content) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
 }

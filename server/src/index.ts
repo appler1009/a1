@@ -194,6 +194,33 @@ const storage = createStorage({
   region: process.env.STORAGE_REGION,
 });
 
+// Default settings
+const DEFAULT_SETTINGS: Record<string, unknown> = {
+  MAX_TOOL_ITERATIONS: 10,
+};
+
+/**
+ * Initialize default settings in the database
+ * Only sets values that don't already exist
+ */
+async function initializeDefaultSettings(): Promise<void> {
+  for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+    const existing = await storage.getSetting(key);
+    if (existing === null) {
+      console.log(`[Settings] Initializing default setting: ${key} = ${value}`);
+      await storage.setSetting(key, value);
+    }
+  }
+}
+
+/**
+ * Get a setting value with fallback to default
+ */
+async function getSettingWithDefault<T>(key: string, defaultValue: T): Promise<T> {
+  const value = await storage.getSetting<T>(key);
+  return value !== null ? value : defaultValue;
+}
+
 // Google OAuth handler for token refresh
 let googleOAuthHandler: GoogleOAuthHandler | null = null;
 
@@ -1154,10 +1181,37 @@ If the user asks about "this document" or "the file" without specifying, they ar
       // Add system message about file tagging for preview
       const systemMessage = {
         role: 'system' as const,
-        content: `You are a helpful assistant with access to Google Drive and file management tools.
+        content: `You are a helpful assistant with access to Google Drive, file management tools, and persistent memory capabilities.
 
 ## IMPORTANT: No Emojis
 Do NOT use any emojis in your responses. Write in markdown format only.
+
+## Persistent Memory
+You have access to a knowledge graph memory system that persists across conversations. Use these tools to remember important information:
+
+- **create_entities**: Store important information about people, projects, concepts, or any entities you want to remember for future conversations
+- **create_relations**: Create relationships between entities (e.g., "Alice" -> "works_on" -> "Project X")
+- **add_observations**: Add new observations to existing entities as you learn more
+- **read_graph**: View all stored memories and relationships
+- **search_nodes**: Search for specific entities or information in your memory
+- **open_nodes**: Retrieve detailed information about specific entities
+
+**When to use memory tools:**
+- User mentions their preferences, goals, or important personal information
+- User shares project details, deadlines, or requirements
+- You learn something about the user that would be useful in future conversations
+- User asks about something discussed in a previous conversation
+
+**How to respond after using memory tools:**
+- Be natural and conversational - like a helpful friend who remembers things
+- Use phrases like "I'll keep that in mind" or "Got it, I'll remember that"
+- NEVER mention technical details like "stored in knowledge graph" or "entity created"
+- NEVER mention cache IDs, file IDs, or internal technical identifiers
+- The user should feel like they're talking to someone who simply remembers, not a database
+
+**Example usage:**
+- If user says "I'm working on a project called Acme", create an entity for "Acme" project, then respond naturally: "Got it! I'll keep that in mind about the Acme project."
+- If user mentions "My manager is Bob", create entities and a relation, then say: "Thanks for letting me know - I'll remember that Bob is your manager."
 
 ## File Access
 Use MCP tools (search, listFolder, etc.) to access files. When listing files, show only filenames with clickable links - no internal IDs.
@@ -1195,7 +1249,7 @@ When summarizing documents, use ONLY actual values from the tool output:
       let conversationMessages = [systemMessage, ...body.messages];
       let assistantContent = '';
       let toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
-      const MAX_TOOL_ITERATIONS = 3;
+      const MAX_TOOL_ITERATIONS = await getSettingWithDefault<number>('MAX_TOOL_ITERATIONS', 10);
       let toolIteration = 0;
 
       // Debug logging: print system prompt and user messages
@@ -1994,11 +2048,76 @@ fastify.register(async (instance) => {
   });
 }, { prefix: '/api' });
 
+// Settings routes
+fastify.register(async (instance) => {
+  // Get all settings
+  instance.get('/settings', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const settings = await storage.getAllSettings();
+    return reply.send({ success: true, data: settings });
+  });
+
+  // Get a specific setting
+  instance.get('/settings/:key', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const params = request.params as { key: string };
+    const value = await storage.getSetting(params.key);
+    
+    if (value === null) {
+      return reply.code(404).send({ success: false, error: { message: 'Setting not found' } });
+    }
+    
+    return reply.send({ success: true, data: { key: params.key, value } });
+  });
+
+  // Update a setting
+  instance.put('/settings/:key', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const params = request.params as { key: string };
+    const body = request.body as { value: unknown };
+    
+    if (body.value === undefined) {
+      return reply.code(400).send({ success: false, error: { message: 'Value is required' } });
+    }
+
+    await storage.setSetting(params.key, body.value);
+    console.log(`[Settings] Updated setting: ${params.key} = ${JSON.stringify(body.value)}`);
+    
+    return reply.send({ success: true, data: { key: params.key, value: body.value } });
+  });
+
+  // Delete a setting (resets to default on next startup)
+  instance.delete('/settings/:key', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const params = request.params as { key: string };
+    await storage.deleteSetting(params.key);
+    console.log(`[Settings] Deleted setting: ${params.key}`);
+    
+    return reply.send({ success: true });
+  });
+}, { prefix: '/api' });
+
 // Start server
 const start = async () => {
   try {
     // Initialize storage (already created globally)
     await storage.initialize();
+
+    // Initialize default settings
+    await initializeDefaultSettings();
+    fastify.log.info('Default settings initialized');
 
     // Initialize auth service
     await authService.initialize();

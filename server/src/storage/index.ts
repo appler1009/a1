@@ -144,6 +144,26 @@ export class StorageService implements IStorage {
   queryMetadata(table: string, filter: Record<string, unknown>): Promise<Record<string, unknown>[]> {
     return this.adapter.queryMetadata(table, filter);
   }
+
+  // ============================================
+  // Settings Operations
+  // ============================================
+
+  getSetting<T = unknown>(key: string): Promise<T | null> {
+    return this.adapter.getSetting<T>(key);
+  }
+
+  setSetting(key: string, value: unknown): Promise<void> {
+    return this.adapter.setSetting(key, value);
+  }
+
+  deleteSetting(key: string): Promise<void> {
+    return this.adapter.deleteSetting(key);
+  }
+
+  getAllSettings(): Promise<Record<string, unknown>> {
+    return this.adapter.getAllSettings();
+  }
 }
 
 /**

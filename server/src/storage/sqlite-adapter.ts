@@ -63,6 +63,12 @@ export class SQLiteStorageAdapter extends BaseStorage implements IMessageStorage
         data TEXT NOT NULL,
         PRIMARY KEY (table_name, id)
       );
+      
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      );
     `);
 
     // Load memory into index
@@ -387,5 +393,54 @@ export class SQLiteStorageAdapter extends BaseStorage implements IMessageStorage
     }
 
     return results;
+  }
+
+  // ============================================
+  // Settings Operations
+  // ============================================
+
+  async getSetting<T = unknown>(key: string): Promise<T | null> {
+    const row = this.db.prepare(
+      'SELECT value FROM settings WHERE key = ?'
+    ).get(key) as { value: string } | undefined;
+    
+    if (!row) return null;
+    
+    try {
+      return JSON.parse(row.value) as T;
+    } catch {
+      // If it's not valid JSON, return the raw value
+      return row.value as T;
+    }
+  }
+
+  async setSetting(key: string, value: unknown): Promise<void> {
+    const valueStr = JSON.stringify(value);
+    const now = new Date().toISOString();
+    
+    this.db.prepare(
+      'INSERT OR REPLACE INTO settings (key, value, updatedAt) VALUES (?, ?, ?)'
+    ).run(key, valueStr, now);
+  }
+
+  async deleteSetting(key: string): Promise<void> {
+    this.db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+  }
+
+  async getAllSettings(): Promise<Record<string, unknown>> {
+    const rows = this.db.prepare(
+      'SELECT key, value FROM settings'
+    ).all() as Array<{ key: string; value: string }>;
+
+    const settings: Record<string, unknown> = {};
+    for (const row of rows) {
+      try {
+        settings[row.key] = JSON.parse(row.value);
+      } catch {
+        settings[row.key] = row.value;
+      }
+    }
+
+    return settings;
   }
 }
