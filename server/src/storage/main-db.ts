@@ -266,6 +266,26 @@ export class MainDatabase {
     return this.getUser(id);
   }
 
+  getAllUsers(): User[] {
+    const rows = this.db.prepare('SELECT * FROM users').all() as Array<{
+      id: string;
+      email: string;
+      name: string | null;
+      accountType: 'individual' | 'group';
+      createdAt: string;
+      updatedAt: string;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      email: row.email,
+      name: row.name || undefined,
+      accountType: row.accountType,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    }));
+  }
+
   // ============================================
   // Session Operations
   // ============================================

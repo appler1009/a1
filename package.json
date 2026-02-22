@@ -9,9 +9,10 @@
     "client"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev": "concurrently --names server,client --prefix [\\{name\\}] --kill-others-on-exit \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "npm run dev -w server",
     "dev:client": "npm run dev -w client",
+    "dev:clean": "rm -rf node_modules/*/dist .parcel-cache && npm run dev",
     "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
     "build:dev": "NODE_ENV=development npm run build",
     "build:prod": "NODE_ENV=production npm run build",

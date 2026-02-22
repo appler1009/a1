@@ -1622,11 +1622,11 @@ You MUST automatically store notable information using memory tools (create_enti
             console.log('[ChatStream] Phase 2: Loading tools based on search results');
             
             // Parse the search results to find which tools were recommended
-            // The search result format is: "## 1. tool_name\n**Server:** server_id"
+            // The search result format is: "1. **tool_name** (server_id) - match_score"
             try {
               // Extract tool names from the search result
-              // Format: "## N. tool_name" followed by "**Server:** server_id"
-              const toolNameMatches = toolResult.matchAll(/##\s*\d+\.\s+([a-zA-Z0-9_-]+)/g);
+              // Format: "1. **tool_name** (server_id)"
+              const toolNameMatches = toolResult.matchAll(/\d+\.\s+\*\*([a-zA-Z0-9_]+)\*\*/g);
               const recommendedToolNames = new Set<string>();
               
               for (const match of toolNameMatches) {
@@ -2737,6 +2737,10 @@ const start = async () => {
     // Initialize MCP manager
     await mcpManager.initialize();
     fastify.log.info('MCP manager initialized with persisted servers');
+
+    // Initialize MCP servers for all roles
+    await mcpManager.initializeAllRoles();
+    fastify.log.info('MCP servers initialized for all roles');
 
     // Register in-process adapters for better performance
     // These adapters run directly in the Node.js process without spawning child processes

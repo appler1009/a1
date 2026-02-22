@@ -216,13 +216,29 @@ After calling this tool, you'll receive tool names and their server information.
         };
       }
 
-      // Format results concisely for the LLM - minimize tokens
+      // Format results with full parameter schema for the LLM
       const formattedResults = results.map(({ tool, score }, index) => {
-        // Extract just required params for a compact summary
-        const requiredParams = tool.inputSchema?.required || [];
-        const paramsList = requiredParams.length > 0 ? requiredParams.join(', ') : 'none';
-        
-        return `${index + 1}. **${tool.name}** (${tool.serverKey || 'unknown'}) - ${(score * 100).toFixed(0)}% match\n   ${tool.description?.substring(0, 100) || 'No description'}\n   Required: ${paramsList}`;
+        let paramInfo = '';
+
+        if (tool.inputSchema?.properties) {
+          const props = tool.inputSchema.properties as Record<string, any>;
+          const required = tool.inputSchema.required || [];
+
+          const paramLines = Object.entries(props).map(([name, schema]: [string, any]) => {
+            const isRequired = required.includes(name);
+            const type = schema.type || 'unknown';
+            const desc = schema.description || '';
+            const defaultVal = schema.default !== undefined ? ` (default: ${schema.default})` : '';
+            const reqLabel = isRequired ? '[REQUIRED]' : '[optional]';
+            return `   - ${name} (${type})${defaultVal} ${reqLabel}: ${desc}`;
+          }).join('\n');
+
+          paramInfo = paramLines ? `\n   Parameters:\n${paramLines}` : '';
+        } else {
+          paramInfo = '\n   Parameters: none';
+        }
+
+        return `${index + 1}. **${tool.name}** (${tool.serverKey || 'unknown'}) - ${(score * 100).toFixed(0)}% match\n   ${tool.description?.substring(0, 150) || 'No description'}${paramInfo}`;
       }).join('\n\n');
 
       const response = `Found ${results.length} tools for "${query}":\n\n${formattedResults}`;

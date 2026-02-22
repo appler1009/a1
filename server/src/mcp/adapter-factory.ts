@@ -27,6 +27,96 @@ interface PrepareResult {
 }
 
 /**
+ * Result of token refresh operation
+ */
+interface TokenData {
+  access_token: string;
+  refresh_token?: string;
+  expiry_date?: number;
+  token_type: string;
+  credentialsPath?: string;
+}
+
+/**
+ * Refresh buffer in milliseconds - refresh if expiring within 5 minutes
+ */
+const REFRESH_BUFFER_MS = 5 * 60 * 1000;
+
+/**
+ * Get and refresh Google OAuth token if needed
+ * Shared helper for both in-process and stdio adapters
+ * 
+ * @param userId - The user ID
+ * @param credentialsPath - Optional credentials path for stdio adapters
+ * @returns Token data for Google API calls
+ * @throws Error if token not found or cannot be refreshed
+ */
+async function getGoogleTokenData(userId: string, credentialsPath?: string): Promise<TokenData> {
+  let oauthToken = await authService.getOAuthToken(userId, 'google');
+  
+  if (!oauthToken) {
+    console.warn(`[getGoogleTokenData] No OAuth token found for user ${userId}`);
+    throw new Error(`Google OAuth token not found for user ${userId}. User needs to authenticate first.`);
+  }
+
+  const now = Date.now();
+  const expiryTime = oauthToken.expiryDate || now;
+  const timeUntilExpiry = expiryTime - now;
+
+  // Check if token needs refresh (expiring within buffer or already expired)
+  if (timeUntilExpiry < REFRESH_BUFFER_MS && oauthToken.refreshToken) {
+    const isExpired = timeUntilExpiry < 0;
+    console.log(`[getGoogleTokenData] Token ${isExpired ? 'expired' : `expiring in ${Math.round(timeUntilExpiry / 1000)}s`}, attempting refresh...`);
+
+    try {
+      const { GoogleOAuthHandler } = await import('../auth/google-oauth.js');
+      const googleOAuth = new GoogleOAuthHandler({
+        clientId: process.env.GOOGLE_CLIENT_ID || '',
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+        redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
+      });
+
+      const newTokens = await googleOAuth.refreshAccessToken(oauthToken.refreshToken);
+
+      // Store refreshed token
+      oauthToken = await authService.storeOAuthToken(userId, {
+        provider: 'google',
+        accessToken: newTokens.access_token,
+        refreshToken: newTokens.refresh_token || oauthToken.refreshToken,
+        expiryDate: Date.now() + (newTokens.expires_in * 1000),
+      } as any);
+
+      console.log(`[getGoogleTokenData] Token refreshed successfully. New expiry: ${new Date(oauthToken.expiryDate!).toISOString()}`);
+    } catch (refreshError) {
+      console.error(`[getGoogleTokenData] Failed to refresh token:`, refreshError);
+      
+      // If token is expired and refresh failed, throw error
+      if (isExpired) {
+        throw new Error(`Google OAuth token has expired and cannot be refreshed. User needs to re-authenticate.`);
+      }
+      // If token is still valid, continue with existing token
+      console.log(`[getGoogleTokenData] Proceeding with existing token despite refresh failure`);
+    }
+  } else {
+    console.log(`[getGoogleTokenData] Token is valid (expires in ${Math.round(timeUntilExpiry / 1000)}s)`);
+  }
+
+  // Validate OAuth token structure
+  if (!oauthToken.accessToken) {
+    console.error(`[getGoogleTokenData] ERROR: OAuth token missing accessToken!`);
+    throw new Error('OAuth token is missing accessToken field');
+  }
+
+  return {
+    access_token: oauthToken.accessToken,
+    refresh_token: oauthToken.refreshToken,
+    expiry_date: oauthToken.expiryDate,
+    token_type: 'Bearer',
+    credentialsPath,
+  };
+}
+
+/**
  * Prepare working directory for MCP server
  * Generic credentials setup (token setup is handled by individual adapters)
  */
@@ -154,14 +244,28 @@ export async function getMcpAdapter(userId: string, serverKey: string): Promise<
   console.log(`[MCPAdapterFactory:getMcpAdapter] No cached adapter, creating new one...`);
 
   // Check if this server has an in-process adapter registered FIRST
-  // In-process adapters don't need database config or OAuth tokens
   if (adapterRegistry.isInProcess(serverKey)) {
     console.log(`[MCPAdapterFactory:getMcpAdapter] Using in-process adapter for ${serverKey}`);
+    
+    // For in-process adapters that need OAuth tokens (like Google Drive),
+    // we need to retrieve the token data before creating the adapter
+    let tokenData: any = undefined;
+    
+    // Check if this server requires Google OAuth by looking at predefined servers
+    const { getPredefinedServer } = await import('./predefined-servers.js');
+    const predefinedServer = getPredefinedServer(serverKey);
+    
+    if (predefinedServer?.auth?.provider === 'google') {
+      console.log(`[MCPAdapterFactory:getMcpAdapter] In-process adapter requires Google OAuth, retrieving token...`);
+      tokenData = await getGoogleTokenData(userId);
+      console.log(`[MCPAdapterFactory:getMcpAdapter] Token data prepared for in-process adapter`);
+    }
+    
     const adapter = await adapterRegistry.createInProcess(
       serverKey,
       userId,
       `mcp-${serverKey}`,
-      undefined // No token data needed for in-process adapters
+      tokenData
     );
     
     // Cache the adapter (cast to McpAdapter to satisfy TypeScript)
@@ -200,111 +304,16 @@ export async function getMcpAdapter(userId: string, serverKey: string): Promise<
   let tokenData: any;
   if (serverConfig.auth?.provider === 'google') {
     console.log(`[MCPAdapterFactory:getMcpAdapter] Google auth required, retrieving OAuth token...`);
-    let oauthToken = await authService.getOAuthToken(userId, 'google');
-    if (oauthToken) {
-      console.log(`[MCPAdapterFactory:getMcpAdapter] OAuth token found, checking expiry...`);
-
-      // Check if token is expired or expiring within 5 minutes
-      const now = Date.now();
-      const expiryTime = oauthToken.expiryDate || now;
-      const timeUntilExpiry = expiryTime - now;
-      const REFRESH_BUFFER_MS = 5 * 60 * 1000; // Refresh if expiring within 5 minutes
-
-      if (timeUntilExpiry < REFRESH_BUFFER_MS && oauthToken.refreshToken) {
-        console.log(`[MCPAdapterFactory:getMcpAdapter] Token expiring soon (${Math.round(timeUntilExpiry / 1000)}s remaining), attempting refresh...`);
-
-        try {
-          const { GoogleOAuthHandler } = await import('../auth/google-oauth.js');
-          const googleOAuth = new GoogleOAuthHandler({
-            clientId: process.env.GOOGLE_CLIENT_ID || '',
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-            redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
-          });
-
-          const newTokens = await googleOAuth.refreshAccessToken(oauthToken.refreshToken);
-
-          // Store refreshed token
-          oauthToken = await authService.storeOAuthToken(userId, {
-            provider: 'google',
-            accessToken: newTokens.access_token,
-            refreshToken: newTokens.refresh_token || oauthToken.refreshToken,
-            expiryDate: Date.now() + (newTokens.expires_in * 1000),
-          } as any);
-
-          console.log(`[MCPAdapterFactory:getMcpAdapter] Token refreshed successfully. New expiry: ${new Date(oauthToken.expiryDate!).toISOString()}`);
-        } catch (refreshError) {
-          console.error(`[MCPAdapterFactory:getMcpAdapter] Failed to refresh token:`, refreshError);
-          // Continue with existing token - it might still be valid
-          console.log(`[MCPAdapterFactory:getMcpAdapter] Proceeding with existing token despite refresh failure`);
-        }
-      } else if (timeUntilExpiry < 0) {
-        console.warn(`[MCPAdapterFactory:getMcpAdapter] Token has expired, attempting to refresh...`);
-
-        if (!oauthToken.refreshToken) {
-          console.error(`[MCPAdapterFactory:getMcpAdapter] ERROR: Token expired and no refresh token available!`);
-          throw new Error(`Google OAuth token has expired and cannot be refreshed. User needs to re-authenticate.`);
-        }
-
-        try {
-          const { GoogleOAuthHandler } = await import('../auth/google-oauth.js');
-          const googleOAuth = new GoogleOAuthHandler({
-            clientId: process.env.GOOGLE_CLIENT_ID || '',
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-            redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
-          });
-
-          const newTokens = await googleOAuth.refreshAccessToken(oauthToken.refreshToken);
-
-          // Store refreshed token
-          oauthToken = await authService.storeOAuthToken(userId, {
-            provider: 'google',
-            accessToken: newTokens.access_token,
-            refreshToken: newTokens.refresh_token || oauthToken.refreshToken,
-            expiryDate: Date.now() + (newTokens.expires_in * 1000),
-          } as any);
-
-          console.log(`[MCPAdapterFactory:getMcpAdapter] Expired token refreshed successfully. New expiry: ${new Date(oauthToken.expiryDate!).toISOString()}`);
-        } catch (refreshError) {
-          console.error(`[MCPAdapterFactory:getMcpAdapter] Failed to refresh expired token:`, refreshError);
-          throw new Error(`Google OAuth token has expired and cannot be refreshed. User needs to re-authenticate.`);
-        }
-      } else {
-        console.log(`[MCPAdapterFactory:getMcpAdapter] Token is valid (expires in ${Math.round(timeUntilExpiry / 1000)}s)`);
-      }
-
-      // Validate OAuth token structure
-      if (!oauthToken.accessToken) {
-        console.error(`[MCPAdapterFactory:getMcpAdapter] ERROR: OAuth token missing accessToken!`);
-        throw new Error('OAuth token is missing accessToken field');
-      }
-
-      tokenData = {
-        access_token: oauthToken.accessToken,
-        refresh_token: oauthToken.refreshToken,
-        expiry_date: oauthToken.expiryDate,
-        token_type: 'Bearer',
-        credentialsPath, // Pass credentials path for env var setup
-      };
-
-      // Validate formatted token
-      if (!tokenData.access_token) {
-        console.error(`[MCPAdapterFactory:getMcpAdapter] ERROR: Failed to format token data!`);
-        throw new Error('Token formatting failed - missing access_token');
-      }
-
-      console.log(`[MCPAdapterFactory:getMcpAdapter] Token data prepared and validated:`, {
-        has_access_token: !!tokenData.access_token,
-        access_token_length: tokenData.access_token?.length,
-        access_token_prefix: tokenData.access_token?.substring(0, 10) + '...',
-        has_refresh_token: !!tokenData.refresh_token,
-        expiry_date: tokenData.expiry_date,
-        token_type: tokenData.token_type,
-        credentialsPath: tokenData.credentialsPath,
-      });
-    } else {
-      console.warn(`[MCPAdapterFactory:getMcpAdapter] No OAuth token found for user ${userId}`);
-      throw new Error(`Google OAuth token not found for user ${userId}. User needs to authenticate first.`);
-    }
+    tokenData = await getGoogleTokenData(userId, credentialsPath);
+    console.log(`[MCPAdapterFactory:getMcpAdapter] Token data prepared and validated:`, {
+      has_access_token: !!tokenData.access_token,
+      access_token_length: tokenData.access_token?.length,
+      access_token_prefix: tokenData.access_token?.substring(0, 10) + '...',
+      has_refresh_token: !!tokenData.refresh_token,
+      expiry_date: tokenData.expiry_date,
+      token_type: tokenData.token_type,
+      credentialsPath: tokenData.credentialsPath,
+    });
   }
 
   // Create adapter using registry (handles MCP-specific setup)

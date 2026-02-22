@@ -35,20 +35,7 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
       tokenFilename: 'tokens.json',
     },
     icon: 'drive',
-  },
-
-  {
-    id: 'google-docs-mcp',
-    name: 'Google Docs',
-    description: 'Read and analyze Google Docs. Requires Google OAuth authentication.',
-    command: 'npx',
-    args: ['-y', 'google-docs-mcp'],
-    auth: {
-      provider: 'google',
-      credentialsFilename: 'credentials.json',
-      tokenFilename: 'token.json',
-    },
-    icon: 'docs',
+    inProcess: true, // Use InProcessAdapter for direct API calls (better performance)
   },
 
   {

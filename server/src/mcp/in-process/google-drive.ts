@@ -1,33 +1,40 @@
 /**
  * Google Drive In-Process MCP Module
- * 
- * This module provides direct in-process access to Google Drive functionality
- * without requiring a separate MCP server process.
- * 
- * Benefits:
- * - Lower latency (no process spawning/IPC overhead)
- * - Better debugging (direct stack traces)
- * - Simpler deployment
- * 
- * Note: This is an example implementation. For production use, you would
- * integrate with the actual Google Drive API client library.
+ *
+ * Uses google-drive-mcp-lib for direct in-process Google Drive API calls.
+ * This provides lower latency compared to STDIO-based MCP servers.
+ *
+ * Tools provided (7 total):
+ * - googleDriveListFiles - List files in Google Drive
+ * - googleDriveUploadFile - Upload a file to Google Drive
+ * - googleDriveGetFile - Get metadata for a file
+ * - googleDriveDownloadFile - Download a file from Google Drive
+ * - googleDriveCreateFolder - Create a new folder
+ * - googleDriveSearchFiles - Search for files
+ * - googleDriveDeleteFile - Delete a file
  */
 
 import type { MCPToolInfo } from '@local-agent/shared';
 import type { InProcessMCPModule } from '../adapters/InProcessAdapter.js';
-
-/**
- * Google Drive API client interface
- */
-interface GoogleDriveClient {
-  listFiles(query?: string, pageSize?: number): Promise<any[]>;
-  getFile(fileId: string): Promise<any>;
-  downloadFile(fileId: string): Promise<Buffer>;
-  uploadFile(name: string, content: Buffer, mimeType: string, parentId?: string): Promise<any>;
-  createFolder(name: string, parentId?: string): Promise<any>;
-  deleteFile(fileId: string): Promise<void>;
-  shareFile(fileId: string, email: string, role: string): Promise<any>;
-}
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import {
+  listFiles,
+  uploadFile,
+  getFile,
+  downloadFile,
+  createFolder,
+  searchFiles,
+  deleteFile,
+  toolDefinitions,
+  type Tokens,
+  type ListFilesOperationOptions,
+  type UploadFileOperationOptions,
+  type GetFileOperationOptions,
+  type DownloadFileOperationOptions,
+  type CreateFolderOperationOptions,
+  type SearchFilesOperationOptions,
+  type DeleteFileOperationOptions,
+} from 'google-drive-mcp-lib';
 
 /**
  * Token data passed from the adapter factory
@@ -41,280 +48,210 @@ interface GoogleTokenData {
 
 /**
  * Google Drive In-Process MCP Module
- * 
- * Provides tools for:
- * - Listing files
- * - Reading file content
- * - Downloading files
- * - Uploading files
- * - Creating folders
- * - Sharing files
+ *
+ * Provides tools for Google Drive operations using the google-drive-mcp-lib package.
  */
 export class GoogleDriveInProcess implements InProcessMCPModule {
-  private client: GoogleDriveClient | null = null;
-  private tokenData: GoogleTokenData;
-  
+  private tokens: Tokens;
+
   // Index signature for dynamic tool access
   [key: string]: unknown;
 
   constructor(tokenData: GoogleTokenData) {
-    this.tokenData = tokenData;
+    this.tokens = {
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token,
+      expiry_date: tokenData.expiry_date,
+      token_type: tokenData.token_type || 'Bearer',
+    };
     console.log('[GoogleDriveInProcess] Initialized with token data');
   }
 
   /**
-   * Initialize the Google Drive client
-   * This would typically use the googleapis library
+   * Convert user-friendly query syntax to Google Drive API syntax
+   * Handles:
+   * - "filetype:pdf" style queries to proper Google Drive query format
+   * - Double quotes to single quotes in mimeType filters
+   * - Adding "and" operator between search queries and filters
    */
-  private async ensureClient(): Promise<GoogleDriveClient> {
-    if (this.client) {
-      return this.client;
-    }
+  private convertQuerySyntax(query: string): string {
+    console.log(`[GoogleDriveInProcess:convertQuerySyntax] Input: "${query}"`);
 
-    // In a real implementation, you would initialize the Google Drive API client here
-    // For now, we'll create a mock client
-    console.log('[GoogleDriveInProcess] Initializing Google Drive client...');
-    
-    this.client = {
-      listFiles: async (query?: string, pageSize = 100) => {
-        console.log(`[GoogleDriveInProcess:listFiles] Query: ${query}, PageSize: ${pageSize}`);
-        // Real implementation would call Google Drive API
-        return [];
-      },
-      getFile: async (fileId: string) => {
-        console.log(`[GoogleDriveInProcess:getFile] FileId: ${fileId}`);
-        // Real implementation would call Google Drive API
-        return { id: fileId, name: 'example.txt' };
-      },
-      downloadFile: async (fileId: string) => {
-        console.log(`[GoogleDriveInProcess:downloadFile] FileId: ${fileId}`);
-        // Real implementation would call Google Drive API
-        return Buffer.from('Example file content');
-      },
-      uploadFile: async (name: string, content: Buffer, mimeType: string, parentId?: string) => {
-        console.log(`[GoogleDriveInProcess:uploadFile] Name: ${name}, MimeType: ${mimeType}`);
-        // Real implementation would call Google Drive API
-        return { id: 'new-file-id', name };
-      },
-      createFolder: async (name: string, parentId?: string) => {
-        console.log(`[GoogleDriveInProcess:createFolder] Name: ${name}`);
-        // Real implementation would call Google Drive API
-        return { id: 'new-folder-id', name };
-      },
-      deleteFile: async (fileId: string) => {
-        console.log(`[GoogleDriveInProcess:deleteFile] FileId: ${fileId}`);
-        // Real implementation would call Google Drive API
-      },
-      shareFile: async (fileId: string, email: string, role: string) => {
-        console.log(`[GoogleDriveInProcess:shareFile] FileId: ${fileId}, Email: ${email}, Role: ${role}`);
-        // Real implementation would call Google Drive API
-        return { success: true };
-      },
-    };
+    let convertedQuery = query;
 
-    return this.client;
+    // Step 1: Convert double quotes to single quotes in mimeType values
+    // Pattern: mimeType="something" → mimeType='something'
+    convertedQuery = convertedQuery.replace(/mimeType="([^"]+)"/g, "mimeType='$1'");
+
+    // Step 2: Convert filetype:pdf to mimeType='application/pdf'
+    convertedQuery = convertedQuery.replace(/filetype:\s*pdf/gi, "mimeType='application/pdf'");
+    convertedQuery = convertedQuery.replace(/filetype:\s*doc/gi, "mimeType='application/msword' or mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'");
+    convertedQuery = convertedQuery.replace(/filetype:\s*sheet/gi, "mimeType='application/vnd.ms-excel' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'");
+    convertedQuery = convertedQuery.replace(/filetype:\s*ppt/gi, "mimeType='application/vnd.ms-powerpoint' or mimeType='application/vnd.openxmlformats-officedocument.presentationml.presentation'");
+
+    // Step 3: Add "and" operator between search text and mimeType filters
+    // Pattern: ") mimeType=" → ") and mimeType="
+    convertedQuery = convertedQuery.replace(/\)\s+mimeType=/g, ") and mimeType=");
+
+    // Also handle case where mimeType appears after regular text (no closing paren)
+    // Pattern: "text" mimeType= → "text" and mimeType=
+    convertedQuery = convertedQuery.replace(/"\s+mimeType=/g, "\" and mimeType=");
+
+    // Step 4: Normalize whitespace around operators
+    convertedQuery = convertedQuery.replace(/\s+and\s+/gi, ' and ');
+    convertedQuery = convertedQuery.replace(/\s+or\s+/gi, ' or ');
+
+    console.log(`[GoogleDriveInProcess:convertQuerySyntax] Output: "${convertedQuery}"`);
+    return convertedQuery;
   }
 
   /**
    * List all available tools
    */
   async getTools(): Promise<MCPToolInfo[]> {
-    return [
-      {
-        name: 'drive_list_files',
-        description: 'List files in Google Drive. Optionally filter by query.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            query: {
-              type: 'string',
-              description: 'Optional query string to filter files (e.g., "name contains \'report\'")',
-            },
-            pageSize: {
-              type: 'number',
-              description: 'Maximum number of files to return (default: 100)',
-              default: 100,
-            },
-          },
-        },
-      },
-      {
-        name: 'drive_get_file',
-        description: 'Get metadata for a specific file in Google Drive.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            fileId: {
-              type: 'string',
-              description: 'The ID of the file to retrieve',
-            },
-          },
-          required: ['fileId'],
-        },
-      },
-      {
-        name: 'drive_download_file',
-        description: 'Download the content of a file from Google Drive.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            fileId: {
-              type: 'string',
-              description: 'The ID of the file to download',
-            },
-          },
-          required: ['fileId'],
-        },
-      },
-      {
-        name: 'drive_upload_file',
-        description: 'Upload a new file to Google Drive.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            name: {
-              type: 'string',
-              description: 'The name for the new file',
-            },
-            content: {
-              type: 'string',
-              description: 'The content of the file (base64 encoded for binary)',
-            },
-            mimeType: {
-              type: 'string',
-              description: 'The MIME type of the file',
-              default: 'text/plain',
-            },
-            parentId: {
-              type: 'string',
-              description: 'Optional parent folder ID',
-            },
-          },
-          required: ['name', 'content'],
-        },
-      },
-      {
-        name: 'drive_create_folder',
-        description: 'Create a new folder in Google Drive.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            name: {
-              type: 'string',
-              description: 'The name for the new folder',
-            },
-            parentId: {
-              type: 'string',
-              description: 'Optional parent folder ID',
-            },
-          },
-          required: ['name'],
-        },
-      },
-      {
-        name: 'drive_delete_file',
-        description: 'Delete a file from Google Drive.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            fileId: {
-              type: 'string',
-              description: 'The ID of the file to delete',
-            },
-          },
-          required: ['fileId'],
-        },
-      },
-      {
-        name: 'drive_share_file',
-        description: 'Share a file with another user in Google Drive.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            fileId: {
-              type: 'string',
-              description: 'The ID of the file to share',
-            },
-            email: {
-              type: 'string',
-              description: 'The email address of the user to share with',
-            },
-            role: {
-              type: 'string',
-              description: 'The role to grant (reader, writer, commenter)',
-              enum: ['reader', 'writer', 'commenter'],
-              default: 'reader',
-            },
-          },
-          required: ['fileId', 'email'],
-        },
-      },
-    ];
+    // Convert tool definitions from the library to MCPToolInfo format
+    return toolDefinitions.map((tool) => {
+      // Use zod-to-json-schema library for robust conversion
+      const jsonSchema = zodToJsonSchema(tool.schema, { target: 'jsonSchema7' });
+      // Remove $schema property as MCP doesn't use it
+      const { $schema, ...inputSchema } = jsonSchema as Record<string, unknown>;
+      return {
+        name: tool.name,
+        description: tool.description,
+        inputSchema,
+      };
+    });
   }
 
   /**
    * Tool: List files in Google Drive
    */
-  async drive_list_files(args: { query?: string; pageSize?: number }): Promise<any> {
-    const client = await this.ensureClient();
-    const files = await client.listFiles(args.query, args.pageSize);
-    return {
-      files,
-      count: files.length,
-    };
+  async googleDriveListFiles(args: ListFilesOperationOptions): Promise<any> {
+    console.log('[GoogleDriveInProcess:googleDriveListFiles] Listing files');
+    try {
+      const result = await listFiles({
+        ...args,
+        tokens: this.tokens,
+      });
+      return result;
+    } catch (error) {
+      console.error('[GoogleDriveInProcess:googleDriveListFiles] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Tool: Upload a file to Google Drive
+   */
+  async googleDriveUploadFile(args: UploadFileOperationOptions): Promise<any> {
+    console.log('[GoogleDriveInProcess:googleDriveUploadFile] Uploading file:', args.name);
+    try {
+      const result = await uploadFile({
+        ...args,
+        tokens: this.tokens,
+      });
+      return result;
+    } catch (error) {
+      console.error('[GoogleDriveInProcess:googleDriveUploadFile] Error:', error);
+      throw error;
+    }
   }
 
   /**
    * Tool: Get file metadata
    */
-  async drive_get_file(args: { fileId: string }): Promise<any> {
-    const client = await this.ensureClient();
-    return await client.getFile(args.fileId);
+  async googleDriveGetFile(args: GetFileOperationOptions): Promise<any> {
+    console.log('[GoogleDriveInProcess:googleDriveGetFile] Getting file:', args.fileId);
+    try {
+      const result = await getFile({
+        ...args,
+        tokens: this.tokens,
+      });
+      return result;
+    } catch (error) {
+      console.error('[GoogleDriveInProcess:googleDriveGetFile] Error:', error);
+      throw error;
+    }
   }
 
   /**
-   * Tool: Download file content
+   * Tool: Download a file from Google Drive
    */
-  async drive_download_file(args: { fileId: string }): Promise<any> {
-    const client = await this.ensureClient();
-    const content = await client.downloadFile(args.fileId);
-    return {
-      content: content.toString('base64'),
-      encoding: 'base64',
-    };
-  }
-
-  /**
-   * Tool: Upload a new file
-   */
-  async drive_upload_file(args: { name: string; content: string; mimeType?: string; parentId?: string }): Promise<any> {
-    const client = await this.ensureClient();
-    const content = Buffer.from(args.content, 'base64');
-    return await client.uploadFile(args.name, content, args.mimeType || 'text/plain', args.parentId);
+  async googleDriveDownloadFile(args: DownloadFileOperationOptions): Promise<any> {
+    console.log('[GoogleDriveInProcess:googleDriveDownloadFile] Downloading file:', args.fileId);
+    try {
+      const result = await downloadFile({
+        ...args,
+        tokens: this.tokens,
+      });
+      // Return content as base64 for binary data
+      return {
+        id: result.id,
+        name: result.name,
+        mimeType: result.mimeType,
+        content: result.content.toString('base64'),
+        size: result.size,
+        encoding: 'base64',
+      };
+    } catch (error) {
+      console.error('[GoogleDriveInProcess:googleDriveDownloadFile] Error:', error);
+      throw error;
+    }
   }
 
   /**
    * Tool: Create a new folder
    */
-  async drive_create_folder(args: { name: string; parentId?: string }): Promise<any> {
-    const client = await this.ensureClient();
-    return await client.createFolder(args.name, args.parentId);
+  async googleDriveCreateFolder(args: CreateFolderOperationOptions): Promise<any> {
+    console.log('[GoogleDriveInProcess:googleDriveCreateFolder] Creating folder:', args.name);
+    try {
+      const result = await createFolder({
+        ...args,
+        tokens: this.tokens,
+      });
+      return result;
+    } catch (error) {
+      console.error('[GoogleDriveInProcess:googleDriveCreateFolder] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Tool: Search for files
+   */
+  async googleDriveSearchFiles(args: SearchFilesOperationOptions): Promise<any> {
+    console.log('[GoogleDriveInProcess:googleDriveSearchFiles] Original query:', args.query);
+
+    // Convert user-friendly syntax to Google Drive API syntax
+    const convertedQuery = this.convertQuerySyntax(args.query);
+
+    try {
+      const result = await searchFiles({
+        ...args,
+        query: convertedQuery,
+        tokens: this.tokens,
+      });
+      return result;
+    } catch (error) {
+      console.error('[GoogleDriveInProcess:googleDriveSearchFiles] Error:', error);
+      throw error;
+    }
   }
 
   /**
    * Tool: Delete a file
    */
-  async drive_delete_file(args: { fileId: string }): Promise<any> {
-    const client = await this.ensureClient();
-    await client.deleteFile(args.fileId);
-    return { success: true, message: `File ${args.fileId} deleted` };
-  }
-
-  /**
-   * Tool: Share a file with another user
-   */
-  async drive_share_file(args: { fileId: string; email: string; role?: string }): Promise<any> {
-    const client = await this.ensureClient();
-    return await client.shareFile(args.fileId, args.email, args.role || 'reader');
+  async googleDriveDeleteFile(args: DeleteFileOperationOptions): Promise<any> {
+    console.log('[GoogleDriveInProcess:googleDriveDeleteFile] Deleting file:', args.fileId);
+    try {
+      await deleteFile({
+        ...args,
+        tokens: this.tokens,
+      });
+      return { success: true, message: `File ${args.fileId} deleted` };
+    } catch (error) {
+      console.error('[GoogleDriveInProcess:googleDriveDeleteFile] Error:', error);
+      throw error;
+    }
   }
 }

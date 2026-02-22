@@ -1,10 +1,10 @@
 import type { MCPServerConfig, McpAdapter } from '@local-agent/shared';
 import { BaseStdioAdapter } from './BaseStdioAdapter.js';
-import { GoogleDriveFullAdapter, type GoogleToken } from './GoogleDriveFullAdapter.js';
 import { InProcessAdapter, type InProcessMCPModule } from './InProcessAdapter.js';
 import { SQLiteMemoryInProcess } from '../in-process/sqlite-memory.js';
 import { WeatherInProcess } from '../in-process/weather.js';
 import { MetaMcpSearchInProcess } from '../in-process/meta-mcp-search.js';
+import { GoogleDriveInProcess } from '../in-process/google-drive.js';
 
 /**
  * Simple concrete implementation of BaseStdioAdapter for generic MCP servers
@@ -31,7 +31,7 @@ interface InProcessRegistryEntry {
  */
 interface StdioRegistryEntry {
   type: 'stdio';
-  adapterClass: typeof GoogleDriveFullAdapter | typeof StdioAdapter;
+  adapterClass: typeof StdioAdapter;
 }
 
 type RegistryEntry = InProcessRegistryEntry | StdioRegistryEntry;
@@ -45,11 +45,21 @@ class AdapterRegistry {
   private adapters = new Map<string, RegistryEntry>();
 
   constructor() {
-    // Register predefined adapters by both ID and name for flexibility
-    this.registerStdio('google-drive-full', GoogleDriveFullAdapter);
-    this.registerStdio('Google Drive', GoogleDriveFullAdapter); // Also register by display name
-    this.registerStdio('google-docs-mcp', GoogleDriveFullAdapter); // google-docs also uses Google OAuth
-    this.registerStdio('Google Docs', GoogleDriveFullAdapter); // Also register by display name
+    // Google Drive - in-process for better performance
+    // Uses google-drive-mcp-lib for direct API calls
+    this.registerInProcess('google-drive-full', (userId: string, tokenData?: any) => {
+      if (!tokenData) {
+        throw new Error('Token data required for Google Drive in-process adapter');
+      }
+      return new GoogleDriveInProcess(tokenData);
+    });
+    this.registerInProcess('Google Drive', (userId: string, tokenData?: any) => {
+      if (!tokenData) {
+        throw new Error('Token data required for Google Drive in-process adapter');
+      }
+      return new GoogleDriveInProcess(tokenData);
+    });
+    
     // markitdown uses StdioAdapter (no special auth required)
     this.registerStdio('markitdown', StdioAdapter);
     this.registerStdio('MarkItDown', StdioAdapter); // Also register by display name
@@ -82,7 +92,7 @@ class AdapterRegistry {
    */
   registerStdio(
     serverKey: string,
-    adapterClass: typeof GoogleDriveFullAdapter | typeof StdioAdapter
+    adapterClass: typeof StdioAdapter
   ): void {
     this.adapters.set(serverKey, { type: 'stdio', adapterClass });
     console.log(`[AdapterRegistry] Registered stdio adapter for ${serverKey}`);
@@ -160,21 +170,7 @@ class AdapterRegistry {
     const AdapterClass = entry.adapterClass;
     console.log(`[AdapterRegistry] Creating adapter for ${serverKey} using ${(AdapterClass as any).name}`);
 
-    // Handle adapters that require token data
-    if (AdapterClass === GoogleDriveFullAdapter && tokenData) {
-      return new (AdapterClass as any)(
-        id,
-        userId,
-        serverKey,
-        config.command || '',
-        config.args || [],
-        cwd,
-        config.env || {},
-        tokenData
-      );
-    }
-
-    // Default instantiation for StdioAdapter and others without token data
+    // Default instantiation for StdioAdapter
     return new (AdapterClass as any)(
       id,
       userId,

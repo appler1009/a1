@@ -44,6 +44,66 @@ export class MCPManager {
   }
 
   /**
+   * Initialize MCP servers for all roles across all users
+   * Called during server startup to warm up per-role MCP server connections
+   */
+  async initializeAllRoles(): Promise<void> {
+    console.log(`\n[MCPManager] ${'='.repeat(60)}`);
+    console.log(`[MCPManager] INITIALIZING MCP SERVERS FOR ALL ROLES`);
+    console.log(`[MCPManager] ${'='.repeat(60)}\n`);
+
+    if (!this.db) {
+      console.log('[MCPManager] Database not initialized, skipping role initialization');
+      return;
+    }
+
+    try {
+      // Get all users
+      const users = this.db.getAllUsers();
+      console.log(`[MCPManager] Found ${users.length} user(s)`);
+
+      if (users.length === 0) {
+        console.log('[MCPManager] No users found, skipping role initialization');
+        return;
+      }
+
+      // For each user, get their roles and initialize MCP servers
+      for (const user of users) {
+        console.log(`\n[MCPManager] Initializing roles for user: ${user.email}`);
+
+        const userRoles = this.db.getUserRoles(user.id);
+        console.log(`[MCPManager]   Found ${userRoles.length} role(s) for user ${user.email}`);
+
+        if (userRoles.length === 0) {
+          console.log(`[MCPManager]   No roles found for user ${user.email}, skipping`);
+          continue;
+        }
+
+        // Initialize MCP servers for each role
+        for (const role of userRoles) {
+          try {
+            console.log(`[MCPManager]   Initializing role: ${role.name} (${role.id})`);
+            await this.switchRole(role.id, user.id);
+          } catch (error) {
+            console.error(`[MCPManager]   Error initializing role ${role.id}:`, error);
+            // Continue with next role even if one fails
+          }
+        }
+      }
+
+      // After all roles are initialized, switch to no role (unset current role)
+      console.log(`\n[MCPManager] Resetting current role to none (servers remain initialized in cache)`);
+      this.currentRoleId = null;
+
+      console.log(`\n[MCPManager] ${'='.repeat(60)}`);
+      console.log(`[MCPManager] ROLE INITIALIZATION COMPLETE`);
+      console.log(`[MCPManager] ${'='.repeat(60)}\n`);
+    } catch (error) {
+      console.error('[MCPManager] Error during role initialization:', error);
+    }
+  }
+
+  /**
    * Check if a server is global (not affected by role switches)
    */
   private isGlobalServer(serverId: string): boolean {
@@ -205,7 +265,12 @@ export class MCPManager {
   /**
    * Start an in-process server
    */
-  private async startInProcessServer(server: PredefinedMCPServer, roleId?: string): Promise<void> {
+  private async startInProcessServer(
+    server: PredefinedMCPServer, 
+    roleId?: string, 
+    tokenData?: any,
+    userId?: string
+  ): Promise<void> {
     console.log(`[MCPManager] Starting in-process server: ${server.id}`);
     
     // Check if in-process adapter is registered
@@ -213,12 +278,30 @@ export class MCPManager {
       throw new Error(`No in-process adapter registered for ${server.id}`);
     }
 
+    // For Google Drive in-process, we need to pass token data
+    let adapterTokenData = tokenData;
+    
+    // If server requires Google OAuth but no token provided, get it from auth
+    if (server.auth?.provider === 'google' && !adapterTokenData && userId) {
+      const { authService } = await import('../auth/index.js');
+      const oauthToken = await authService.getOAuthToken(userId, 'google');
+      if (oauthToken) {
+        adapterTokenData = {
+          access_token: oauthToken.accessToken,
+          refresh_token: oauthToken.refreshToken,
+          expiry_date: oauthToken.expiryDate,
+          token_type: 'Bearer',
+        };
+        console.log(`[MCPManager] Retrieved Google OAuth token for in-process ${server.id}`);
+      }
+    }
+
     // Create the in-process adapter
     const adapter = await adapterRegistry.createInProcess(
       server.id,
       roleId || 'system',
       `mcp-${server.id}`,
-      { roleId, dbPath: roleId ? getRoleStorageService().getRoleDatabasePath(roleId) : undefined }
+      adapterTokenData || { roleId, dbPath: roleId ? getRoleStorageService().getRoleDatabasePath(roleId) : undefined }
     );
 
     // Store the adapter
@@ -232,7 +315,7 @@ export class MCPManager {
       enabled: true,
       autoStart: true,
       restartOnExit: false,
-      hidden: true,
+      hidden: server.hidden,
       auth: server.auth,
     };
     this.configs.set(server.id, config);
@@ -246,7 +329,7 @@ export class MCPManager {
   private async disconnectServerAndDeleteTokens(serverId: string, provider: string): Promise<void> {
     const config = this.configs.get(serverId);
     
-    // Step 1: Disconnect the client
+    // Step 1: Disconnect the client (stdio)
     const client = this.clients.get(serverId);
     if (client) {
       console.log(`[MCPManager]   [Shutdown] Disconnecting MCP client...`);
@@ -257,6 +340,19 @@ export class MCPManager {
         console.error(`[MCPManager]   [Shutdown] ✗ Error disconnecting: ${error}`);
       }
       this.clients.delete(serverId);
+    }
+
+    // Step 1b: Disconnect in-process adapter
+    const inProcessAdapter = this.inProcessAdapters.get(serverId);
+    if (inProcessAdapter) {
+      console.log(`[MCPManager]   [Shutdown] Closing in-process adapter...`);
+      try {
+        inProcessAdapter.close();
+        console.log(`[MCPManager]   [Shutdown] ✓ In-process adapter closed`);
+      } catch (error) {
+        console.error(`[MCPManager]   [Shutdown] ✗ Error closing in-process adapter: ${error}`);
+      }
+      this.inProcessAdapters.delete(serverId);
     }
 
     // Step 2: Delete token file
@@ -370,6 +466,34 @@ export class MCPManager {
                 console.log(`[MCPManager] [Role: ${roleId}]   [Token Setup] ✗ No Google OAuth token found (role or user level)`);
               }
             }
+          }
+
+          // Check if this server should use in-process adapter
+          // Match by id or name since role database may store either
+          const predefinedServer = PREDEFINED_MCP_SERVERS.find(s => 
+            s.id === config.id || s.name === config.name || s.id === config.name
+          );
+          if (predefinedServer?.inProcess && adapterRegistry.isInProcess(predefinedServer.id)) {
+            console.log(`[MCPManager] [Role: ${roleId}]   [Restart] Starting in-process server ${config.id} (matched predefined: ${predefinedServer.id})...`);
+            await this.startInProcessServer(predefinedServer, roleId, userToken, userId);
+            // Persist config for tracking
+            const mcpConfig: MCPServerConfig = {
+              id: predefinedServer.id, // Use the predefined ID for consistency
+              name: config.name,
+              transport: config.transport,
+              command: config.command,
+              args: config.args,
+              cwd: config.cwd,
+              url: config.url,
+              env: config.env || {},
+              enabled: config.enabled,
+              autoStart: config.autoStart,
+              restartOnExit: config.restartOnExit,
+              auth: config.auth,
+            };
+            await this.persistConfig(predefinedServer.id, mcpConfig);
+            console.log(`[MCPManager] [Role: ${roleId}]   [Restart] ✓ In-process server ${config.id} started successfully`);
+            continue;
           }
 
           const mcpConfig: MCPServerConfig = {
