@@ -4,6 +4,7 @@ import { GoogleDriveFullAdapter, type GoogleToken } from './GoogleDriveFullAdapt
 import { InProcessAdapter, type InProcessMCPModule } from './InProcessAdapter.js';
 import { SQLiteMemoryInProcess } from '../in-process/sqlite-memory.js';
 import { WeatherInProcess } from '../in-process/weather.js';
+import { MetaMcpSearchInProcess } from '../in-process/meta-mcp-search.js';
 
 /**
  * Simple concrete implementation of BaseStdioAdapter for generic MCP servers
@@ -66,6 +67,11 @@ class AdapterRegistry {
     // Weather server uses in-process adapter for direct API calls
     this.registerInProcess('weather', () => new WeatherInProcess());
     this.registerInProcess('Weather', () => new WeatherInProcess());
+    
+    // Meta MCP Search - semantic search over all available MCP tools
+    // This is the initial tool exposed to the LLM for tool discovery
+    this.registerInProcess('meta-mcp-search', (userId: string) => new MetaMcpSearchInProcess(userId));
+    this.registerInProcess('Meta MCP Search', (userId: string) => new MetaMcpSearchInProcess(userId));
     
     // Future: this.register('github', GithubAdapter);
     // Future: this.register('brave-search', BraveSearchAdapter);

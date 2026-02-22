@@ -8,3 +8,4 @@
 
 export { GoogleDriveInProcess } from './google-drive.js';
 export { SQLiteMemoryInProcess } from './sqlite-memory.js';
+export { MetaMcpSearchInProcess, updateToolManifest, searchTools, isSearchEngineReady } from './meta-mcp-search.js';

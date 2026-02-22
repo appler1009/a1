@@ -127,6 +127,21 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     global: true, // Global: not affected by role switches
     inProcess: true, // Use InProcessAdapter for direct function calls
   },
+
+  {
+    id: 'meta-mcp-search',
+    name: 'Meta MCP Search',
+    description: 'Semantic search over all available MCP tools. This is the initial tool exposed to the LLM for tool discovery. Use natural language to find relevant tools.',
+    command: 'npx',
+    args: ['-y', 'meta-mcp-search'],
+    auth: {
+      provider: 'none',
+    },
+    icon: 'search',
+    hidden: true, // Hidden from UI - automatically available
+    global: true, // Global: not affected by role switches
+    inProcess: true, // Use InProcessAdapter for direct function calls
+  },
 ];
 
 /**

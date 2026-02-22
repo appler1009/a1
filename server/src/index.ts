@@ -1385,8 +1385,15 @@ fastify.register(async (instance) => {
     reply.raw.setHeader('Connection', 'keep-alive');
 
     try {
-      // Load MCP tools
-      console.log('[ChatStream] Loading MCP tools from available servers');
+      // TWO-PHASE MCP TOOL LOADING
+      // Phase 1: Start with only search_tool from meta-mcp-search
+      // Phase 2: After search_tool is called, dynamically load relevant tools
+      
+      // Import the meta-mcp-search module for tool discovery
+      const { updateToolManifest } = await import('./mcp/in-process/meta-mcp-search.js');
+      
+      // Load ALL available MCP tools for the search manifest
+      console.log('[ChatStream] Loading MCP tools from available servers for search manifest');
       const allTools = await mcpManager.listAllTools();
       const flattenedTools = allTools.flatMap(({ serverId, tools }) =>
         tools.map(tool => ({
@@ -1400,6 +1407,11 @@ fastify.register(async (instance) => {
         toolCounts: allTools.map(t => `${t.serverId}:${t.tools.length}`),
       });
 
+      // Update the meta-mcp-search tool manifest with all available tools
+      // This enables semantic search over all tools
+      await updateToolManifest(allTools);
+      console.log(`[ChatStream] Updated meta-mcp-search manifest with ${flattenedTools.length} tools`);
+
       // Proactively build tool-to-server mapping for fast lookups
       // This ensures we know which server has which tool BEFORE the LLM makes a tool call
       const { toolCache } = await import('./mcp/tool-cache.js');
@@ -1408,15 +1420,42 @@ fastify.register(async (instance) => {
       }
       console.log(`[ChatStream] Tool cache built with ${toolCache.getToolCount()} tool-to-server mappings`);
 
-      // Convert tools to provider format with defaults
-      const toolsWithDefaults = flattenedTools.map(tool => ({
-        name: tool.name,
-        description: tool.description || '',
-        inputSchema: tool.inputSchema || {},
-        serverId: tool.serverId,
-      }));
-      const providerTools = llmRouter.convertMCPToolsToOpenAI(toolsWithDefaults);
-      console.log(`[ChatStream] Converted ${providerTools.length} tools to provider format`);
+      // PHASE 1: Start with only search_tool
+      // The search_tool allows the LLM to discover what tools are available
+      const searchToolOnly = [{
+        name: 'search_tool',
+        description: `Search for MCP tools using natural language. Use this tool to discover what tools are available for your task.
+
+IMPORTANT: This is your starting point for tool discovery. Describe what you want to accomplish in plain English, and this tool will return the most relevant MCP tools that can help you.
+
+Examples:
+- "list files in google drive" → returns google_drive_list tool
+- "send a message to slack" → returns slack_send_message tool  
+- "create a github issue" → returns github_create_issue tool
+- "read a pdf document" → returns convert_to_markdown tool
+
+After calling this tool, you'll receive tool names and their server information. The system will then make those tools available for you to use.`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Natural language query describing what you want to accomplish'
+            },
+            limit: {
+              type: 'number',
+              default: 5,
+              description: 'Maximum number of results to return (default: 5)'
+            }
+          },
+          required: ['query']
+        },
+        serverId: 'meta-mcp-search',
+      }];
+
+      // Convert tools to provider format - start with search_tool only
+      const providerTools = llmRouter.convertMCPToolsToOpenAI(searchToolOnly);
+      console.log(`[ChatStream] Phase 1: Providing only search_tool (${providerTools.length} tool)`);
       
       // Print the list of tools being sent to the LLM
       console.log('\n' + '='.repeat(80));
@@ -1556,6 +1595,10 @@ You MUST automatically store notable information using memory tools (create_enti
       // First stream
       await processStream(conversationMessages);
 
+      // Track if we're in Phase 2 (tools have been loaded after search)
+      let phase2Tools: Array<{ name: string; description: string; inputSchema: any; serverId: string }> = [];
+      let hasLoadedPhase2Tools = false;
+
       // Handle tool execution if tools were called (with iteration limit)
       while (toolCalls.length > 0 && toolIteration < MAX_TOOL_ITERATIONS) {
         toolIteration++;
@@ -1574,6 +1617,85 @@ You MUST automatically store notable information using memory tools (create_enti
           console.log(`[ChatStream] Executing tool: ${toolCall.name}`);
           const toolResult = await executeToolWithAdapters(request.user!.id, toolCall.name, toolCall.arguments);
 
+          // PHASE 2: After search_tool returns, dynamically load the relevant tools
+          if (toolCall.name === 'search_tool' && !hasLoadedPhase2Tools) {
+            console.log('[ChatStream] Phase 2: Loading tools based on search results');
+            
+            // Parse the search results to find which tools were recommended
+            // The search result format is: "## 1. tool_name\n**Server:** server_id"
+            try {
+              // Extract tool names from the search result
+              // Format: "## N. tool_name" followed by "**Server:** server_id"
+              const toolNameMatches = toolResult.matchAll(/##\s*\d+\.\s+([a-zA-Z0-9_-]+)/g);
+              const recommendedToolNames = new Set<string>();
+              
+              for (const match of toolNameMatches) {
+                const toolName = match[1];
+                recommendedToolNames.add(toolName);
+                console.log(`[ChatStream] Search recommended tool: ${toolName}`);
+              }
+              
+              // Find the full tool definitions from flattenedTools
+              for (const toolName of recommendedToolNames) {
+                const fullTool = flattenedTools.find(t => t.name === toolName);
+                if (fullTool) {
+                  phase2Tools.push({
+                    name: fullTool.name,
+                    description: fullTool.description || '',
+                    inputSchema: fullTool.inputSchema || {},
+                    serverId: fullTool.serverId,
+                  });
+                  console.log(`[ChatStream] Added Phase 2 tool: ${toolName} from server ${fullTool.serverId}`);
+                }
+              }
+              
+              // Also add search_tool back so the LLM can search again if needed
+              phase2Tools.push({
+                name: 'search_tool',
+                description: `Search for more MCP tools using natural language. Use this if you need additional tools beyond what was already found.`,
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    query: {
+                      type: 'string',
+                      description: 'Natural language query describing what you want to accomplish'
+                    },
+                    limit: {
+                      type: 'number',
+                      default: 8,
+                      description: 'Maximum number of results to return'
+                    }
+                  },
+                  required: ['query']
+                },
+                serverId: 'meta-mcp-search',
+              });
+              
+              if (phase2Tools.length > 0) {
+                hasLoadedPhase2Tools = true;
+                // Update providerTools with the new tools
+                const newProviderTools = llmRouter.convertMCPToolsToOpenAI(phase2Tools);
+                providerTools.length = 0; // Clear existing
+                providerTools.push(...newProviderTools);
+                
+                console.log(`[ChatStream] Phase 2: Now providing ${providerTools.length} tools`);
+                console.log('[ChatStream] Phase 2 tools:', phase2Tools.map(t => t.name).join(', '));
+                
+                // Log the updated tool list
+                console.log('\n' + '='.repeat(80));
+                console.log('[ChatStream] PHASE 2 TOOLS NOW AVAILABLE:');
+                console.log('-'.repeat(80));
+                providerTools.forEach((tool, idx) => {
+                  const name = tool.function?.name || 'unnamed';
+                  console.log(`  [${idx + 1}] ${name}`);
+                });
+                console.log('='.repeat(80) + '\n');
+              }
+            } catch (parseError) {
+              console.error('[ChatStream] Failed to parse search results:', parseError);
+            }
+          }
+
           // Add tool result to conversation
           conversationMessages.push({
             role: 'user',
@@ -1585,9 +1707,10 @@ You MUST automatically store notable information using memory tools (create_enti
           reply.raw.write(`data: ${JSON.stringify({ type: 'tool_result', toolName: toolCall.name, serverId, result: toolResult })}\n\n`);
         }
 
-        // Continue streaming with tool results - disable tools after first iteration to get text response
+        // Continue streaming with tool results
+        // Always allow tools in Phase 2 (we have the relevant tools loaded now)
         const allowMoreTools = toolIteration < MAX_TOOL_ITERATIONS;
-        console.log(`[ChatStream] Continuing stream (tools allowed: ${allowMoreTools})`);
+        console.log(`[ChatStream] Continuing stream (tools allowed: ${allowMoreTools}, phase2: ${hasLoadedPhase2Tools})`);
         await processStream(conversationMessages, allowMoreTools);
       }
 
