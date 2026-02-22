@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
-import { useAuthStore, useEnvironmentStore, useUIStore } from './store';
+import { useAuthStore, useEnvironmentStore, useUIStore, useRolesStore } from './store';
 import { LoginPage } from './pages/LoginPage';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { JoinPage } from './pages/JoinPage';
@@ -9,35 +9,44 @@ import { OAuthCallbackPage } from './pages/OAuthCallbackPage';
 import { Sidebar } from './components/Sidebar';
 import { ChatPane } from './components/panes/ChatPane';
 import { ViewerPane, MCPManagerDialog } from './components/panes/ViewerPane';
+import { OnboardingPane } from './components/panes/OnboardingPane';
 
 function MainApp() {
   const { user } = useAuthStore();
   const { showMcpManager, setShowMcpManager } = useUIStore();
+  const { currentRole, rolesLoaded } = useRolesStore();
 
   if (!user) {
     return <Navigate to="/login" replace />;
   }
+
+  // Show onboarding when roles are loaded but no role is selected
+  const showOnboarding = rolesLoaded && !currentRole;
 
   return (
     <div className="flex h-screen bg-background text-foreground">
       <Sidebar />
 
       <main className="flex-1 flex flex-col">
+        {showOnboarding ? (
+          /* Full-screen onboarding */
+          <OnboardingPane />
+        ) : (
+          /* Main content with resizable panels */
+          <div className="flex-1 h-full overflow-hidden">
+            <PanelGroup direction="horizontal" autoSaveId="main-panels">
+              <Panel defaultSize={50} minSize={30} className="h-full overflow-hidden">
+                <ChatPane />
+              </Panel>
 
-        {/* Main content with resizable panels */}
-        <div className="flex-1 h-full overflow-hidden">
-          <PanelGroup direction="horizontal" autoSaveId="main-panels">
-            <Panel defaultSize={50} minSize={30} className="h-full overflow-hidden">
-              <ChatPane />
-            </Panel>
+              <PanelResizeHandle className="w-1 bg-border hover:bg-primary/50 transition-colors" />
 
-            <PanelResizeHandle className="w-1 bg-border hover:bg-primary/50 transition-colors" />
-
-            <Panel defaultSize={50} minSize={30} className="h-full overflow-hidden">
-              <ViewerPane />
-            </Panel>
-          </PanelGroup>
-        </div>
+              <Panel defaultSize={50} minSize={30} className="h-full overflow-hidden">
+                <ViewerPane />
+              </Panel>
+            </PanelGroup>
+          </div>
+        )}
       </main>
 
       {/* MCP Manager Modal */}
@@ -54,11 +63,21 @@ function MainApp() {
 
 function App() {
   const fetchEnvironment = useEnvironmentStore((state) => state.fetchEnvironment);
+  const fetchRoles = useRolesStore((state) => state.fetchRoles);
+  const user = useAuthStore((state) => state.user);
 
   useEffect(() => {
     // Fetch environment info on app startup
     fetchEnvironment();
   }, [fetchEnvironment]);
+
+  // Fetch roles when user is authenticated
+  useEffect(() => {
+    if (user) {
+      console.log('[App] User authenticated, fetching roles...');
+      fetchRoles();
+    }
+  }, [user, fetchRoles]);
 
   return (
     <BrowserRouter>

@@ -6,3 +6,4 @@ export { BaseStdioAdapter } from './adapters/BaseStdioAdapter.js';
 export { GoogleDriveFullAdapter } from './adapters/GoogleDriveFullAdapter.js';
 export { adapterRegistry } from './adapters/registry.js';
 export { PREDEFINED_MCP_SERVERS, getPredefinedServer, listPredefinedServers, requiresAuth } from './predefined-servers.js';
+export type { PredefinedMCPServer } from './predefined-servers.js';

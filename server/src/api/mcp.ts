@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authService } from '../auth/index.js';
 import { mcpManager } from '../mcp/index.js';
+import { getRoleStorageService } from '../storage/role-storage-service.js';
 import type { MCPServerConfig } from '@local-agent/shared';
 
 const AddMCPServerSchema = z.object({
@@ -20,6 +21,7 @@ const AddMCPServerSchema = z.object({
     tokenFilename: z.string().optional(),
     credentialsFilename: z.string().optional(),
   }).optional(),
+  roleId: z.string().optional(), // Role to associate this server with
 });
 
 const CallToolSchema = z.object({
@@ -35,14 +37,32 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
       return reply.status(401).send({ success: false, error: 'Not authenticated' });
     }
     try {
-      const rawMetadata = await mcpManager['storage'].queryMetadata('mcp_servers', {});
-      return { success: true, data: { rawMetadata } };
+      const { getMainDatabase } = await import('../storage/main-db.js');
+      const mainDb = getMainDatabase();
+      const configs = mainDb.getMCPServerConfigs();
+      
+      // Also get role-specific configs
+      const roleStorage = getRoleStorageService();
+      const currentRoleId = roleStorage.getCurrentRoleId();
+      let roleConfigs = null;
+      if (currentRoleId) {
+        roleConfigs = await roleStorage.listMcpServers(currentRoleId);
+      }
+      
+      return { 
+        success: true, 
+        data: { 
+          mainConfigs: configs,
+          currentRoleId,
+          roleConfigs,
+        } 
+      };
     } catch (error) {
       return { success: true, data: { error: String(error) } };
     }
   });
 
-  // List MCP servers
+  // List MCP servers for the current role
   fastify.get('/api/mcp/servers', async (request, reply) => {
     if (!request.user) {
       return reply.status(401).send({
@@ -52,9 +72,13 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
     }
 
     const servers = mcpManager.getServers();
+    const currentRoleId = mcpManager.getCurrentRoleId();
+    
     console.log('[MCP] getServers() type:', typeof servers);
     console.log('[MCP] getServers() is array:', Array.isArray(servers));
     console.log('[MCP] getServers() length:', servers?.length);
+    console.log('[MCP] Current role ID:', currentRoleId);
+    
     if (servers && servers.length > 0) {
       console.log('[MCP] First server type:', typeof servers[0]);
       console.log('[MCP] First server:', JSON.stringify(servers[0], null, 2));
@@ -63,7 +87,7 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
     return { success: true, data: servers };
   });
 
-  // Add MCP server
+  // Add MCP server to a specific role
   fastify.post('/api/mcp/servers', async (request, reply) => {
     if (!request.user) {
       return reply.status(401).send({
@@ -75,6 +99,17 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
     try {
       const body = request.body as any;
       const addServerBody = AddMCPServerSchema.parse(body);
+      
+      // Get the role ID - either from request body or current role
+      const roleStorage = getRoleStorageService();
+      const roleId = addServerBody.roleId || roleStorage.getCurrentRoleId();
+      
+      if (!roleId) {
+        return reply.status(400).send({
+          success: false,
+          error: { code: 'NO_ROLE', message: 'No role specified and no current role set. Please switch to a role first.' },
+        });
+      }
 
       const config: MCPServerConfig = {
         id: crypto.randomUUID(),
@@ -91,30 +126,48 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
         auth: body.auth, // Include auth config if provided
       };
 
-      // If auth config includes Google OAuth, fetch the stored token
+      // If auth config includes Google OAuth, fetch the appropriate token
       let userToken: any;
       if (config.auth?.provider === 'google') {
-        const oauthToken = await authService.getOAuthToken(request.user.id, 'google');
-        if (!oauthToken) {
-          return reply.status(400).send({
-            success: false,
-            error: { code: 'NO_AUTH_TOKEN', message: 'No Google OAuth token found. Please authenticate with Google first.' },
-          });
+        // First try role-specific OAuth token
+        const roleToken = await roleStorage.getRoleOAuthToken(roleId, 'google');
+        if (roleToken) {
+          userToken = {
+            access_token: roleToken.accessToken,
+            refresh_token: roleToken.refreshToken,
+            expiry_date: roleToken.expiryDate,
+            token_type: 'Bearer',
+          };
+          console.log(`[MCP] Using role-specific Google OAuth token for server ${config.name}`);
+        } else {
+          // Fall back to user-level OAuth token
+          const oauthToken = await authService.getOAuthToken(request.user.id, 'google');
+          if (!oauthToken) {
+            return reply.status(400).send({
+              success: false,
+              error: { code: 'NO_AUTH_TOKEN', message: 'No Google OAuth token found. Please authenticate with Google first.' },
+            });
+          }
+
+          userToken = {
+            access_token: oauthToken.accessToken,
+            refresh_token: oauthToken.refreshToken,
+            expiry_date: oauthToken.expiryDate,
+            token_type: 'Bearer',
+          };
+
+          console.log(`[MCP] Using user-level Google OAuth token for server ${config.name}`);
         }
+      }
 
-        userToken = {
-          access_token: oauthToken.accessToken,
-          refresh_token: oauthToken.refreshToken,
-          expiry_date: oauthToken.expiryDate,
-          token_type: 'Bearer',
-        };
-
-        console.log(`[MCP] Using stored Google OAuth token for server ${config.name}`);
+      // Make sure the manager's current role is set
+      if (mcpManager.getCurrentRoleId() !== roleId) {
+        await mcpManager.switchRole(roleId, request.user.id);
       }
 
       await mcpManager.addServer(config, userToken);
 
-      return { success: true, data: config };
+      return { success: true, data: { ...config, roleId } };
     } catch (error) {
       console.error('[MCP] Failed to add server:', error);
       return reply.status(400).send({

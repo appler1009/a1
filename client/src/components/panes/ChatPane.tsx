@@ -3,6 +3,7 @@ import { Send, Loader2 } from 'lucide-react';
 import { useAuthStore, useRolesStore, useChatStore, useUIStore, type ViewerFile, type Message } from '../../store';
 import { MessageItem } from '../MessageItem';
 import { TopBanner } from '../TopBanner';
+import { apiFetch } from '../../lib/api';
 
 /**
  * Parse Google Drive search result to extract PDF files
@@ -108,10 +109,8 @@ async function downloadFileForPreview(url: string, filename: string, mimeType: s
   console.log(`[PreviewFile]   MIME Type: ${mimeType}`);
   
   try {
-    const response = await fetch('/api/viewer/download', {
+    const response = await apiFetch('/api/viewer/download', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify({ url, filename, mimeType }),
     });
     
@@ -160,17 +159,17 @@ export function ChatPane() {
   const MESSAGE_LIMIT = 10; // Keep only this many messages when trimming
 
   const { user, currentGroup } = useAuthStore();
-  const { currentRole } = useRolesStore();
-  const { 
-    messages, 
-    streaming, 
-    currentContent, 
+  const { currentRole, currentRoleId: storedRoleId, rolesLoaded } = useRolesStore();
+  const {
+    messages,
+    streaming,
+    currentContent,
     hasMore,
     loading,
     migrated,
-    addMessage, 
-    setStreaming, 
-    setCurrentContent, 
+    addMessage,
+    setStreaming,
+    setCurrentContent,
     fetchMessages,
     migrateFromLocalStorage,
     clearServerMessages,
@@ -178,7 +177,8 @@ export function ChatPane() {
   } = useChatStore();
   const { setViewerFile, setViewerTab, viewerFile } = useUIStore();
 
-  const currentRoleId = currentRole?.id || 'default';
+  // Use currentRole.id if available, fallback to stored role ID, then 'default'
+  const activeRoleId = currentRole?.id || storedRoleId || 'default';
 
   // Handle search results
   const handleSearchResults = useCallback((results: Message[], keyword: string) => {
@@ -201,14 +201,26 @@ export function ChatPane() {
     }
   }, [migrated, migrateFromLocalStorage]);
 
-  // Fetch messages when role changes
+  // Fetch messages only after roles are loaded and we have a valid currentRole
   useEffect(() => {
-    fetchMessages(currentRoleId, { limit: 10 });
-  }, [currentRoleId, fetchMessages]);
+    // Wait for roles to be loaded from server before fetching messages
+    if (!rolesLoaded) {
+      console.log('[ChatPane] Waiting for roles to load...');
+      return;
+    }
+    
+    // Only fetch if we have a valid currentRole (not 'default')
+    if (currentRole?.id) {
+      console.log('[ChatPane] Roles loaded, fetching messages for role:', currentRole.id);
+      fetchMessages(currentRole.id, { limit: 10 });
+    } else {
+      console.log('[ChatPane] No current role set, skipping message fetch');
+    }
+  }, [rolesLoaded, currentRole?.id, fetchMessages]);
 
   // Filter messages for current role
   const roleMessages = messages.filter(
-    (m) => m.roleId === currentRoleId
+    (m) => m.roleId === activeRoleId
   );
 
   // Maintain scroll position when older messages are prepended
@@ -292,7 +304,7 @@ export function ChatPane() {
         // Save current scroll height before loading
         prevScrollHeightRef.current = scrollHeight;
         const oldestMessage = roleMessages[0];
-        fetchMessages(currentRoleId, { before: oldestMessage.id, limit: 10 });
+        fetchMessages(activeRoleId, { before: oldestMessage.id, limit: 10 });
       }
       
       // Reset the trigger when user scrolls away from top
@@ -309,7 +321,7 @@ export function ChatPane() {
         }
         // Set a new timeout to trim after 10 seconds of being at bottom
         trimTimeoutRef.current = setTimeout(() => {
-          trimMessages(currentRoleId, MESSAGE_LIMIT);
+          trimMessages(activeRoleId, MESSAGE_LIMIT);
           trimTimeoutRef.current = null;
         }, 10000);
       } else if (!atBottom && trimTimeoutRef.current) {
@@ -318,7 +330,7 @@ export function ChatPane() {
         trimTimeoutRef.current = null;
       }
     }
-  }, [hasMore, loading, roleMessages, currentRoleId, fetchMessages, trimMessages]);
+  }, [hasMore, loading, roleMessages, activeRoleId, fetchMessages, trimMessages]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -326,7 +338,7 @@ export function ChatPane() {
 
     const userMessage = {
       id: crypto.randomUUID(),
-      roleId: currentRoleId,
+      roleId: activeRoleId,
       groupId: currentGroup?.id || null,
       userId: user.id,
       role: 'user' as const,
@@ -340,10 +352,8 @@ export function ChatPane() {
     setCurrentContent('');
 
     try {
-      const response = await fetch('/api/chat/stream', {
+      const response = await apiFetch('/api/chat/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           messages: [...roleMessages, userMessage].map((m) => ({
             role: m.role,
@@ -407,7 +417,7 @@ export function ChatPane() {
                   if (fullContent.trim()) {
                     const partialMessage = {
                       id: crypto.randomUUID(),
-                      roleId: currentRoleId,
+                      roleId: activeRoleId,
                       groupId: currentGroup?.id || null,
                       userId: user.id,
                       role: 'assistant' as const,
@@ -441,7 +451,7 @@ export function ChatPane() {
                   const serverName = parsed.serverId ? parsed.serverId.replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()) : 'MCP';
                   const toolMessage = {
                     id: crypto.randomUUID(),
-                    roleId: currentRoleId,
+                    roleId: activeRoleId,
                     groupId: currentGroup?.id || null,
                     userId: user.id,
                     role: 'system' as const,
@@ -471,7 +481,7 @@ export function ChatPane() {
         if (fullContent.trim()) {
           const assistantMessage = {
             id: crypto.randomUUID(),
-            roleId: currentRoleId,
+            roleId: activeRoleId,
             groupId: currentGroup?.id || null,
             userId: user.id,
             role: 'assistant' as const,
@@ -536,7 +546,7 @@ export function ChatPane() {
     const confirmed = window.confirm('Are you sure you want to delete all chat messages for this role? This action cannot be undone.');
     if (!confirmed) return;
     
-    await clearServerMessages(currentRoleId);
+    await clearServerMessages(activeRoleId);
   };
 
   // Cleanup trim timeout on unmount
@@ -548,11 +558,28 @@ export function ChatPane() {
     };
   }, []);
 
+  // Debug: Log role info on every render
+  useEffect(() => {
+    console.log('[ChatPane] Debug Info:');
+    console.log('  - activeRoleId:', activeRoleId);
+    console.log('  - currentRole:', currentRole?.id, currentRole?.name);
+    console.log('  - storedRoleId:', storedRoleId);
+    console.log('  - rolesLoaded:', rolesLoaded);
+    console.log('  - roleMessages.length:', roleMessages.length);
+  }, [activeRoleId, currentRole, storedRoleId, rolesLoaded, roleMessages.length]);
+
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
+      {/* Debug Banner - Show current role ID */}
+      <div className="px-4 py-1 bg-yellow-100 border-b border-yellow-300 text-xs text-yellow-800 font-mono">
+        <span>Role ID: <strong>{activeRoleId}</strong></span>
+        {currentRole && <span className="ml-3">| Role: <strong>{currentRole.name}</strong></span>}
+        {rolesLoaded ? <span className="ml-3 text-green-600">✓ Loaded</span> : <span className="ml-3 text-red-600">⟳ Loading...</span>}
+      </div>
+
       {/* Top Banner */}
       <TopBanner
-        roleId={currentRoleId}
+        roleId={activeRoleId}
         onSearchResults={handleSearchResults}
         onClearSearch={handleClearSearch}
         isSearchMode={isSearchMode}
@@ -571,9 +598,9 @@ export function ChatPane() {
               </div>
             ) : (
               searchResults.map((message) => (
-                <MessageItem 
-                  key={message.id} 
-                  message={message} 
+                <MessageItem
+                  key={message.id}
+                  message={message}
                   highlightKeyword={searchKeyword}
                 />
               ))

@@ -1,87 +1,446 @@
-import type { MCPServerConfig, MCPToolInfo, MCPResource, MCPServerInfo } from '@local-agent/shared';
+import type { MCPServerConfig, MCPToolInfo, MCPResource, MCPServerInfo, McpAdapter } from '@local-agent/shared';
 import { createMCPClient, MCPClientInterface } from './client.js';
-import { createStorage } from '../storage/index.js';
+import { getMainDatabase, MainDatabase } from '../storage/main-db.js';
+import { getRoleStorageService, RoleStorageService } from '../storage/role-storage-service.js';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { PREDEFINED_MCP_SERVERS } from './predefined-servers.js';
+import { PREDEFINED_MCP_SERVERS, PredefinedMCPServer } from './predefined-servers.js';
+import { adapterRegistry } from './adapters/registry.js';
 
 /**
  * MCP Manager
  * Manages multiple MCP server connections
+ * Supports role-specific MCP server configurations
+ * 
+ * Server types:
+ * - Global servers (global: true): Not affected by role switches, always running
+ * - Per-role servers (global: false): Restarted on role switch with role-specific config
  */
 export class MCPManager {
   private clients: Map<string, MCPClientInterface> = new Map();
   private configs: Map<string, MCPServerConfig> = new Map();
-  private storage = createStorage({
-    type: 'sqlite',
-    root: './data',
-  });
+  private inProcessAdapters: Map<string, McpAdapter> = new Map();
+  private db: MainDatabase | null = null;
+  private currentRoleId: string | null = null;
 
   /**
    * Initialize the MCP manager and load persisted configs
    */
   async initialize(): Promise<void> {
-    await this.storage.initialize();
+    this.db = getMainDatabase();
+    
+    // Start global hidden servers first (markitdown)
+    await this.startGlobalServers();
+    
+    // Load persisted server configs from main database
     await this.loadPersistedConfigs();
-    await this.startHiddenServers();
   }
 
   /**
-   * Start hidden MCP servers that should be automatically available
-   * These servers don't show in the UI but provide background functionality
+   * Get the current role ID
    */
-  private async startHiddenServers(): Promise<void> {
-    const hiddenServers = PREDEFINED_MCP_SERVERS.filter(s => s.hidden);
+  getCurrentRoleId(): string | null {
+    return this.currentRoleId;
+  }
+
+  /**
+   * Check if a server is global (not affected by role switches)
+   */
+  private isGlobalServer(serverId: string): boolean {
+    const predefined = PREDEFINED_MCP_SERVERS.find(s => s.id === serverId);
+    return predefined?.global === true;
+  }
+
+  /**
+   * Switch to a new role - disconnect per-role servers and load role-specific configs
+   * Global servers are not affected by role switches
+   */
+  async switchRole(newRoleId: string | null, userId?: string): Promise<void> {
+    console.log(`\n[MCPManager] ${'='.repeat(60)}`);
+    console.log(`[MCPManager] ROLE SWITCH INITIATED`);
+    console.log(`[MCPManager]   Old Role: ${this.currentRoleId || 'none'}`);
+    console.log(`[MCPManager]   New Role: ${newRoleId || 'none'}`);
+    console.log(`[MCPManager]   User ID: ${userId || 'not provided'}`);
+    console.log(`[MCPManager] ${'='.repeat(60)}\n`);
     
-    for (const server of hiddenServers) {
-      // Check if already running
+    const oldRoleId = this.currentRoleId;
+    this.currentRoleId = newRoleId;
+
+    // If no new role, disconnect all per-role servers
+    if (!newRoleId) {
+      console.log(`[MCPManager] No new role, disconnecting all per-role servers`);
+      await this.disconnectPerRoleServers();
+      this.logActiveServers();
+      return;
+    }
+
+    // Disconnect all per-role servers (global servers stay running)
+    await this.disconnectPerRoleServers();
+
+    // Load role-specific MCP server configurations
+    console.log(`\n[MCPManager] [Role: ${newRoleId}] Loading role-specific MCP configurations...`);
+    await this.loadRoleSpecificConfigs(newRoleId, userId);
+
+    // Start per-role hidden servers (memory)
+    await this.startPerRoleServers(newRoleId);
+
+    this.logActiveServers();
+  }
+
+  /**
+   * Log active servers with names
+   */
+  private logActiveServers(): void {
+    const totalServers = this.clients.size + this.inProcessAdapters.size;
+    console.log(`\n[MCPManager] ${'='.repeat(60)}`);
+    console.log(`[MCPManager] ROLE SWITCH COMPLETE`);
+    console.log(`[MCPManager]   Active servers: ${totalServers}`);
+    for (const [id, config] of this.configs) {
+      const global = this.isGlobalServer(id);
+      const inProcess = this.inProcessAdapters.has(id);
+      const type = inProcess ? 'IN-PROCESS' : 'STDIO';
+      console.log(`[MCPManager]     - ${config.name} (${id}) [${global ? 'GLOBAL' : 'PER-ROLE'}] [${type}]`);
+    }
+    console.log(`[MCPManager] ${'='.repeat(60)}\n`);
+  }
+
+  /**
+   * Disconnect all per-role (non-global) servers
+   */
+  private async disconnectPerRoleServers(): Promise<void> {
+    const perRoleServers = Array.from(this.configs.entries())
+      .filter(([serverId]) => !this.isGlobalServer(serverId))
+      .map(([serverId, config]) => ({ serverId, provider: config.auth?.provider || 'none' }));
+
+    console.log(`[MCPManager] Disconnecting ${perRoleServers.length} per-role servers...`);
+    
+    for (const { serverId, provider } of perRoleServers) {
+      console.log(`[MCPManager]   - Disconnecting: ${serverId}`);
+      await this.disconnectServerAndDeleteTokens(serverId, provider);
+    }
+  }
+
+  /**
+   * Start global hidden servers (markitdown)
+   */
+  private async startGlobalServers(): Promise<void> {
+    const globalServers = PREDEFINED_MCP_SERVERS.filter(s => s.global && s.hidden);
+    
+    for (const server of globalServers) {
       if (this.clients.has(server.id)) {
-        console.log(`[MCPManager] Hidden server ${server.id} already running`);
+        console.log(`[MCPManager] Global server ${server.id} already running`);
         continue;
       }
 
       try {
-        console.log(`[MCPManager] Starting hidden server: ${server.id}`);
-        
-        const config: MCPServerConfig = {
-          id: server.id,
-          name: server.name,
-          transport: 'stdio',
-          command: server.command,
-          args: server.args,
-          env: server.env || {},
-          enabled: true,
-          autoStart: true,
-          restartOnExit: false,
-          hidden: true, // Mark as hidden so it won't show in UI
-          auth: server.auth,
-        };
-
-        await this.addServer(config);
-        console.log(`[MCPManager] Hidden server ${server.id} started successfully`);
+        console.log(`[MCPManager] Starting global server: ${server.id}`);
+        await this.startPredefinedServer(server);
+        console.log(`[MCPManager] Global server ${server.id} started successfully`);
       } catch (error) {
-        console.error(`[MCPManager] Failed to start hidden server ${server.id}:`, error);
+        console.error(`[MCPManager] Failed to start global server ${server.id}:`, error);
       }
     }
   }
 
   /**
-   * Load persisted server configs from database
+   * Start per-role hidden servers (memory)
+   */
+  private async startPerRoleServers(roleId: string): Promise<void> {
+    const perRoleServers = PREDEFINED_MCP_SERVERS.filter(s => !s.global && s.hidden);
+    
+    for (const server of perRoleServers) {
+      if (this.clients.has(server.id)) {
+        console.log(`[MCPManager] Per-role server ${server.id} already running`);
+        continue;
+      }
+
+      try {
+        console.log(`[MCPManager] Starting per-role server: ${server.id} for role: ${roleId}`);
+        await this.startPredefinedServer(server, roleId);
+        console.log(`[MCPManager] Per-role server ${server.id} started successfully`);
+      } catch (error) {
+        console.error(`[MCPManager] Failed to start per-role server ${server.id}:`, error);
+      }
+    }
+  }
+
+  /**
+   * Start a predefined server
+   */
+  private async startPredefinedServer(server: PredefinedMCPServer, roleId?: string): Promise<void> {
+    // Check if this is an in-process server
+    if (server.inProcess) {
+      await this.startInProcessServer(server, roleId);
+      return;
+    }
+
+    // Prepare environment variables
+    const env: Record<string, string> = server.env ? { ...server.env } : {};
+    
+    // If server needs role database path, set it
+    if (roleId) {
+      const roleStorage = getRoleStorageService();
+      const roleDbPath = roleStorage.getRoleDatabasePath(roleId);
+      env.SQLITE_DB_PATH = roleDbPath;
+      console.log(`[MCPManager] Setting SQLITE_DB_PATH for ${server.id}: ${roleDbPath}`);
+    }
+
+    const config: MCPServerConfig = {
+      id: server.id,
+      name: server.name,
+      transport: 'stdio',
+      command: server.command,
+      args: server.args,
+      env,
+      enabled: true,
+      autoStart: true,
+      restartOnExit: false,
+      hidden: true,
+      auth: server.auth,
+    };
+
+    await this.addServer(config);
+  }
+
+  /**
+   * Start an in-process server
+   */
+  private async startInProcessServer(server: PredefinedMCPServer, roleId?: string): Promise<void> {
+    console.log(`[MCPManager] Starting in-process server: ${server.id}`);
+    
+    // Check if in-process adapter is registered
+    if (!adapterRegistry.isInProcess(server.id)) {
+      throw new Error(`No in-process adapter registered for ${server.id}`);
+    }
+
+    // Create the in-process adapter
+    const adapter = await adapterRegistry.createInProcess(
+      server.id,
+      roleId || 'system',
+      `mcp-${server.id}`,
+      { roleId, dbPath: roleId ? getRoleStorageService().getRoleDatabasePath(roleId) : undefined }
+    );
+
+    // Store the adapter
+    this.inProcessAdapters.set(server.id, adapter as unknown as McpAdapter);
+    
+    // Store a minimal config for tracking
+    const config: MCPServerConfig = {
+      id: server.id,
+      name: server.name,
+      transport: 'stdio', // Placeholder
+      enabled: true,
+      autoStart: true,
+      restartOnExit: false,
+      hidden: true,
+      auth: server.auth,
+    };
+    this.configs.set(server.id, config);
+    
+    console.log(`[MCPManager] In-process server ${server.id} started successfully`);
+  }
+
+  /**
+   * Disconnect a server and delete its token files
+   */
+  private async disconnectServerAndDeleteTokens(serverId: string, provider: string): Promise<void> {
+    const config = this.configs.get(serverId);
+    
+    // Step 1: Disconnect the client
+    const client = this.clients.get(serverId);
+    if (client) {
+      console.log(`[MCPManager]   [Shutdown] Disconnecting MCP client...`);
+      try {
+        await client.disconnect();
+        console.log(`[MCPManager]   [Shutdown] ✓ Client disconnected`);
+      } catch (error) {
+        console.error(`[MCPManager]   [Shutdown] ✗ Error disconnecting: ${error}`);
+      }
+      this.clients.delete(serverId);
+    }
+
+    // Step 2: Delete token file
+    if (config?.auth?.tokenFilename) {
+      let tokenPath: string;
+      
+      if (serverId.includes('google-drive') && config.auth.tokenFilename === 'tokens.json') {
+        const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+        const tokenDir = process.env.GOOGLE_DRIVE_MCP_TOKEN_PATH
+          ? path.dirname(process.env.GOOGLE_DRIVE_MCP_TOKEN_PATH)
+          : path.join(homeDir, '.config', 'google-drive-mcp');
+        tokenPath = path.join(tokenDir, config.auth.tokenFilename);
+      } else {
+        tokenPath = path.join(process.cwd(), config.auth.tokenFilename);
+      }
+
+      console.log(`[MCPManager]   [Token Cleanup] Deleting token file: ${tokenPath}`);
+      try {
+        await fs.unlink(tokenPath);
+        console.log(`[MCPManager]   [Token Cleanup] ✓ Token file deleted`);
+      } catch (error: any) {
+        if (error.code === 'ENOENT') {
+          console.log(`[MCPManager]   [Token Cleanup] Token file not found (already deleted)`);
+        } else {
+          console.error(`[MCPManager]   [Token Cleanup] ✗ Error deleting token: ${error}`);
+        }
+      }
+    }
+
+    // Step 3: Remove config from memory
+    this.configs.delete(serverId);
+    console.log(`[MCPManager]   [Shutdown] ✓ Server ${serverId} fully shut down`);
+  }
+
+  /**
+   * Disconnect all non-hidden servers
+   */
+  private async disconnectAllNonHidden(): Promise<void> {
+    const nonHiddenServers = Array.from(this.configs.entries())
+      .filter(([_, config]) => !config.hidden)
+      .map(([serverId, config]) => ({ serverId, provider: config.auth?.provider || 'none' }));
+
+    for (const { serverId, provider } of nonHiddenServers) {
+      console.log(`[MCPManager] [Shutdown] Disconnecting non-hidden server: ${serverId}`);
+      await this.disconnectServerAndDeleteTokens(serverId, provider);
+    }
+  }
+
+  /**
+   * Load role-specific MCP server configurations
+   */
+  private async loadRoleSpecificConfigs(roleId: string, userId?: string): Promise<void> {
+    console.log(`[MCPManager] [Role: ${roleId}] ${'─'.repeat(50)}`);
+    console.log(`[MCPManager] [Role: ${roleId}] LOADING ROLE-SPECIFIC MCP CONFIGURATIONS`);
+    console.log(`[MCPManager] [Role: ${roleId}] ${'─'.repeat(50)}`);
+    
+    try {
+      const roleStorage = getRoleStorageService();
+      const roleConfigs = await roleStorage.listMcpServers(roleId);
+      
+      console.log(`[MCPManager] [Role: ${roleId}] Found ${roleConfigs.length} MCP server configs in role database`);
+
+      for (const config of roleConfigs) {
+        console.log(`\n[MCPManager] [Role: ${roleId}] Processing server: ${config.id} (${config.name})`);
+        console.log(`[MCPManager] [Role: ${roleId}]   - Enabled: ${config.enabled}`);
+        console.log(`[MCPManager] [Role: ${roleId}]   - Auth Provider: ${config.auth?.provider || 'none'}`);
+        
+        if (!config.enabled) {
+          console.log(`[MCPManager] [Role: ${roleId}]   - Skipping disabled server`);
+          continue;
+        }
+
+        // Check if already running
+        if (this.clients.has(config.id)) {
+          console.log(`[MCPManager] [Role: ${roleId}]   - Server already running, skipping`);
+          continue;
+        }
+
+        try {
+          // Get role-specific OAuth token if needed
+          let userToken: any = undefined;
+          if (config.auth?.provider === 'google') {
+            console.log(`[MCPManager] [Role: ${roleId}]   [Token Setup] Looking for Google OAuth token...`);
+            
+            const roleToken = await roleStorage.getRoleOAuthToken(roleId, 'google');
+            if (roleToken) {
+              userToken = {
+                access_token: roleToken.accessToken,
+                refresh_token: roleToken.refreshToken,
+                expiry_date: roleToken.expiryDate,
+                token_type: 'Bearer',
+              };
+              console.log(`[MCPManager] [Role: ${roleId}]   [Token Setup] ✓ Found role-specific Google OAuth token`);
+              console.log(`[MCPManager] [Role: ${roleId}]   [Token Setup]   - Access token: ${roleToken.accessToken.substring(0, 20)}...`);
+              console.log(`[MCPManager] [Role: ${roleId}]   [Token Setup]   - Refresh token: ${roleToken.refreshToken ? 'present' : 'not present'}`);
+              console.log(`[MCPManager] [Role: ${roleId}]   [Token Setup]   - Expiry: ${roleToken.expiryDate ? new Date(roleToken.expiryDate).toISOString() : 'not set'}`);
+            } else if (userId) {
+              console.log(`[MCPManager] [Role: ${roleId}]   [Token Setup] No role-specific token, checking user-level token...`);
+              // Fall back to user-level token if no role-specific token
+              const { authService } = await import('../auth/index.js');
+              const userOAuthToken = await authService.getOAuthToken(userId, 'google');
+              if (userOAuthToken) {
+                userToken = {
+                  access_token: userOAuthToken.accessToken,
+                  refresh_token: userOAuthToken.refreshToken,
+                  expiry_date: userOAuthToken.expiryDate,
+                  token_type: 'Bearer',
+                };
+                console.log(`[MCPManager] [Role: ${roleId}]   [Token Setup] ✓ Using user-level Google OAuth token`);
+              } else {
+                console.log(`[MCPManager] [Role: ${roleId}]   [Token Setup] ✗ No Google OAuth token found (role or user level)`);
+              }
+            }
+          }
+
+          const mcpConfig: MCPServerConfig = {
+            id: config.id,
+            name: config.name,
+            transport: config.transport,
+            command: config.command,
+            args: config.args,
+            cwd: config.cwd,
+            url: config.url,
+            env: config.env || {},
+            enabled: config.enabled,
+            autoStart: config.autoStart,
+            restartOnExit: config.restartOnExit,
+            auth: config.auth,
+          };
+
+          console.log(`[MCPManager] [Role: ${roleId}]   [Restart] Starting server ${config.id}...`);
+          await this.addServer(mcpConfig, userToken);
+          console.log(`[MCPManager] [Role: ${roleId}]   [Restart] ✓ Server ${config.id} started successfully`);
+        } catch (error) {
+          console.error(`[MCPManager] [Role: ${roleId}]   [Restart] ✗ Failed to start server ${config.id}:`, error);
+        }
+      }
+      
+      console.log(`\n[MCPManager] [Role: ${roleId}] ${'─'.repeat(50)}`);
+      console.log(`[MCPManager] [Role: ${roleId}] CONFIGURATION LOADING COMPLETE`);
+      console.log(`[MCPManager] [Role: ${roleId}] ${'─'.repeat(50)}`);
+    } catch (error) {
+      console.error(`[MCPManager] [Role: ${roleId}] Error loading role-specific configs:`, error);
+    }
+  }
+
+  /**
+   * Load persisted server configs from main database
+   * Only loads servers that don't require authentication (auth-required servers are loaded via loadRoleSpecificConfigs)
+   * Memory server is handled separately by startPerRoleServers() during role switches
    */
   private async loadPersistedConfigs(): Promise<void> {
+    if (!this.db) return;
+    
     try {
-      const configs = await this.storage.queryMetadata('mcp_servers', {});
-      console.log(`[MCPManager] Loaded ${configs.length} persisted MCP server configs`);
+      const configs = this.db.getMCPServerConfigs();
+      console.log(`[MCPManager] Loaded ${configs.length} persisted MCP server configs from main database`);
 
-      for (const config of configs) {
-        const serverId = config.id as string;
-        const serverConfig = config.config as MCPServerConfig;
-
-        if (serverConfig.enabled) {
+      for (const { id: serverId, config: serverConfig } of configs) {
+        const typedConfig = serverConfig as MCPServerConfig;
+        
+        // Skip memory server - it's handled by startPerRoleServers() with role-specific database path
+        if (serverId === 'memory') {
+          console.log(`[MCPManager] Skipping server ${serverId} (handled by startPerRoleServers with role-specific path)`);
+          continue;
+        }
+        
+        // Skip servers that require authentication - they'll be loaded via loadRoleSpecificConfigs
+        if (typedConfig.auth?.provider && typedConfig.auth.provider !== 'none') {
+          console.log(`[MCPManager] Skipping server ${serverId} (requires ${typedConfig.auth.provider} auth, will be loaded on role switch)`);
+          continue;
+        }
+        
+        if (typedConfig.enabled) {
+          // Check if already running (from startHiddenServers)
+          if (this.clients.has(serverId)) {
+            console.log(`[MCPManager] Server ${serverId} already running, skipping`);
+            continue;
+          }
+          
           try {
             console.log(`[MCPManager] Connecting to persisted server: ${serverId}`);
             // Include the original serverId from database
-            await this.addServer({ ...serverConfig, id: serverId });
+            await this.addServer({ ...typedConfig, id: serverId });
           } catch (error) {
             console.error(`[MCPManager] Failed to connect to persisted server ${serverId}:`, error);
           }
@@ -93,30 +452,72 @@ export class MCPManager {
   }
 
   /**
-   * Save server config to database
+   * Save server config to role-specific database
+   * If no role is set, saves to main database (for hidden/global servers)
    */
   private async persistConfig(serverId: string, config: MCPServerConfig): Promise<void> {
+    // Hidden servers are stored in main database
+    if (config.hidden || !this.currentRoleId) {
+      if (this.db) {
+        try {
+          this.db.saveMCPServerConfig(serverId, config as unknown as Record<string, unknown>);
+          console.log(`[MCPManager] Persisted config for hidden/global server: ${serverId}`);
+        } catch (error) {
+          console.error(`[MCPManager] Failed to persist config for ${serverId}:`, error);
+        }
+      }
+      return;
+    }
+
+    // Role-specific servers are stored in role database
     try {
-      await this.storage.setMetadata('mcp_servers', serverId, {
+      const roleStorage = getRoleStorageService();
+      await roleStorage.saveMcpServer(this.currentRoleId, {
         id: serverId,
-        config,
-        createdAt: new Date().toISOString(),
+        name: config.name,
+        transport: config.transport as 'stdio' | 'websocket' | 'http',
+        command: config.command,
+        args: config.args,
+        cwd: config.cwd ?? undefined,
+        url: config.url,
+        enabled: config.enabled,
+        autoStart: config.autoStart,
+        restartOnExit: config.restartOnExit,
+        auth: config.auth,
+        env: config.env,
       });
-      console.log(`[MCPManager] Persisted config for server: ${serverId}`);
+      console.log(`[MCPManager] Persisted config for role ${this.currentRoleId} server: ${serverId}`);
     } catch (error) {
-      console.error(`[MCPManager] Failed to persist config for ${serverId}:`, error);
+      console.error(`[MCPManager] Failed to persist role-specific config for ${serverId}:`, error);
     }
   }
 
   /**
-   * Remove server config from database
+   * Remove server config from role-specific database
    */
   private async deletePersistedConfig(serverId: string): Promise<void> {
+    const config = this.configs.get(serverId);
+    
+    // Hidden servers are stored in main database
+    if (config?.hidden || !this.currentRoleId) {
+      if (this.db) {
+        try {
+          this.db.deleteMCPServerConfig(serverId);
+          console.log(`[MCPManager] Deleted persisted config for hidden/global server: ${serverId}`);
+        } catch (error) {
+          console.error(`[MCPManager] Failed to delete persisted config for ${serverId}:`, error);
+        }
+      }
+      return;
+    }
+
+    // Role-specific servers are stored in role database
     try {
-      await this.storage.deleteMetadata('mcp_servers', serverId);
-      console.log(`[MCPManager] Deleted persisted config for server: ${serverId}`);
+      const roleStorage = getRoleStorageService();
+      await roleStorage.deleteMcpServer(this.currentRoleId, serverId);
+      console.log(`[MCPManager] Deleted persisted config for role ${this.currentRoleId} server: ${serverId}`);
     } catch (error) {
-      console.error(`[MCPManager] Failed to delete persisted config for ${serverId}:`, error);
+      console.error(`[MCPManager] Failed to delete role-specific config for ${serverId}:`, error);
     }
   }
 
@@ -142,7 +543,14 @@ export class MCPManager {
     config: MCPServerConfig,
     userToken?: { access_token: string; refresh_token?: string; expiry_date?: number; scope?: string; token_type?: string }
   ): Promise<void> {
-    if (!config.auth) return;
+    const roleId = this.currentRoleId || 'no-role';
+    
+    if (!config.auth) {
+      console.log(`[MCPManager] [Role: ${roleId}] [Token Setup] No auth config for ${serverId}, skipping token preparation`);
+      return;
+    }
+
+    console.log(`[MCPManager] [Role: ${roleId}] [Token Setup] Preparing auth files for ${serverId}...`);
 
     // Create credentials file from environment variables if needed
     if (config.auth.credentialsFilename && config.auth.provider === 'google') {
@@ -162,7 +570,7 @@ export class MCPManager {
       const dir = path.dirname(credentialsPath);
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(credentialsPath, JSON.stringify(credentials, null, 2));
-      console.log(`[MCPManager] Created credentials file: ${credentialsPath}`);
+      console.log(`[MCPManager] [Role: ${roleId}] [Token Setup]   - Created credentials file: ${credentialsPath}`);
     }
 
     // Create token file if token is provided
@@ -186,6 +594,8 @@ export class MCPManager {
         tokenPath = path.join(process.cwd(), tokenFilename);
       }
 
+      console.log(`[MCPManager] [Role: ${roleId}] [Token Setup]   - Writing token file: ${tokenPath}`);
+
       // Create parent directory if needed
       const dir = path.dirname(tokenPath);
       await fs.mkdir(dir, { recursive: true });
@@ -202,7 +612,9 @@ export class MCPManager {
         : userToken;
 
       await fs.writeFile(tokenPath, JSON.stringify(tokenData, null, 2));
-      console.log(`[MCPManager] Created token file: ${tokenPath}`);
+      console.log(`[MCPManager] [Role: ${roleId}] [Token Setup]   - ✓ Token file created successfully`);
+    } else {
+      console.log(`[MCPManager] [Role: ${roleId}] [Token Setup]   - No user token provided, skipping token file creation`);
     }
   }
 
@@ -253,20 +665,31 @@ export class MCPManager {
   }
 
   /**
-   * Get all connected servers
+   * Get all connected servers (both stdio and in-process)
    */
   getServers(): Array<{ id: string; config: MCPServerConfig; info: MCPServerInfo | null }> {
     const result: Array<{ id: string; config: MCPServerConfig; info: MCPServerInfo | null }> = [];
 
     console.log(`[MCPManager] this.configs has ${this.configs.size} servers`);
+    console.log(`[MCPManager] this.inProcessAdapters has ${this.inProcessAdapters.size} adapters`);
     console.log(`[MCPManager] Config keys:`, Array.from(this.configs.keys()));
 
     for (const [id, config] of this.configs) {
       const client = this.clients.get(id);
+      const isInProcess = this.inProcessAdapters.has(id);
+      
+      // For in-process adapters, create a minimal info object
+      const info: MCPServerInfo | null = client?.getInfo() || (isInProcess ? {
+        name: config.name,
+        tools: [], // Tools are loaded on demand
+        resources: [],
+        connected: true,
+      } : null);
+      
       result.push({
         id,
         config,
-        info: client?.getInfo() || null,
+        info,
       });
     }
 
@@ -275,10 +698,12 @@ export class MCPManager {
   }
 
   /**
-   * Get list of connected server names
+   * Get list of connected server names (both stdio and in-process)
    */
   getConnectedServers(): string[] {
-    return Array.from(this.clients.keys());
+    const stdioServers = Array.from(this.clients.keys());
+    const inProcessServers = Array.from(this.inProcessAdapters.keys());
+    return [...stdioServers, ...inProcessServers];
   }
 
   /**
@@ -301,17 +726,36 @@ export class MCPManager {
   }
 
   /**
-   * List all tools from all connected servers
+   * Get a server's config from in-memory cache
+   * This includes both main DB and role-specific DB configs that have been loaded
+   */
+  getServerConfig(serverId: string): MCPServerConfig | undefined {
+    return this.configs.get(serverId);
+  }
+
+  /**
+   * List all tools from all connected servers (both stdio and in-process)
    */
   async listAllTools(): Promise<Array<{ serverId: string; tools: MCPToolInfo[] }>> {
     const results: Array<{ serverId: string; tools: MCPToolInfo[] }> = [];
     
+    // Get tools from stdio clients
     for (const [serverId, client] of this.clients) {
       try {
         const tools = await client.listTools();
         results.push({ serverId, tools });
       } catch (error) {
         console.error(`Failed to list tools for server ${serverId}:`, error);
+      }
+    }
+    
+    // Get tools from in-process adapters
+    for (const [serverId, adapter] of this.inProcessAdapters) {
+      try {
+        const tools = await adapter.listTools();
+        results.push({ serverId, tools });
+      } catch (error) {
+        console.error(`Failed to list tools for in-process server ${serverId}:`, error);
       }
     }
     
@@ -330,20 +774,29 @@ export class MCPManager {
   }
 
   /**
-   * Call a tool on a specific server
+   * Call a tool on a specific server (stdio or in-process)
    */
   async callTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<unknown> {
+    // Check stdio clients first
     const client = this.clients.get(serverId);
-    if (!client) {
-      throw new Error(`Server ${serverId} not found`);
+    if (client) {
+      return client.callTool(toolName, args);
     }
-    return client.callTool(toolName, args);
+    
+    // Check in-process adapters
+    const adapter = this.inProcessAdapters.get(serverId);
+    if (adapter) {
+      return adapter.callTool(toolName, args);
+    }
+    
+    throw new Error(`Server ${serverId} not found`);
   }
 
   /**
-   * Find which server has a specific tool
+   * Find which server has a specific tool (checks both stdio and in-process)
    */
   async findTool(toolName: string): Promise<{ serverId: string; tool: MCPToolInfo } | null> {
+    // Check stdio clients
     for (const [serverId, client] of this.clients) {
       try {
         const tools = await client.listTools();
@@ -355,6 +808,20 @@ export class MCPManager {
         console.error(`Failed to search tools for server ${serverId}:`, error);
       }
     }
+    
+    // Check in-process adapters
+    for (const [serverId, adapter] of this.inProcessAdapters) {
+      try {
+        const tools = await adapter.listTools();
+        const tool = tools.find(t => t.name === toolName);
+        if (tool) {
+          return { serverId, tool };
+        }
+      } catch (error) {
+        console.error(`Failed to search tools for in-process server ${serverId}:`, error);
+      }
+    }
+    
     return null;
   }
 

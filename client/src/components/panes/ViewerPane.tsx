@@ -2,6 +2,7 @@ import { useUIStore } from '../../store';
 import React, { useState, useRef, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { TopBanner } from '../TopBanner';
+import { apiFetch } from '../../lib/api';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
@@ -157,6 +158,13 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
 
   // Prevent duplicate add calls during OAuth flow
   const pendingAddRef = React.useRef<string | null>(null);
+  
+  // Track OAuth popup window for polling
+  const oauthPopupRef = React.useRef<Window | null>(null);
+  const oauthPollIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+  
+  // Track selected server ID for polling callback (avoids closure issues)
+  const selectedServerIdRef = React.useRef<string | null>(null);
 
   // Auto-dismiss toast after 3 seconds
   React.useEffect(() => {
@@ -165,19 +173,43 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
       return () => clearTimeout(timer);
     }
   }, [toast]);
+  
+  // Cleanup OAuth polling on unmount
+  React.useEffect(() => {
+    return () => {
+      if (oauthPollIntervalRef.current) {
+        clearInterval(oauthPollIntervalRef.current);
+      }
+    };
+  }, []);
 
   // Fetch current servers
   const fetchServers = React.useCallback(async () => {
     try {
-      const response = await fetch('/api/mcp/servers');
+      const response = await apiFetch('/api/mcp/servers');
       const data = await response.json();
       if (data.success) {
-        const serverList = (data.data || []).map((server: any) => ({
-          id: server.id,
-          name: server.config?.name || server.name,
-          command: server.config?.command || '',
-          enabled: server.config?.enabled !== false,
-        }));
+        // Handle both array and object responses
+        let serverList: MCPServer[] = [];
+        if (Array.isArray(data.data)) {
+          serverList = data.data.map((server: any) => ({
+            id: server.id,
+            name: server.config?.name || server.name,
+            command: server.config?.command || '',
+            enabled: server.config?.enabled !== false,
+          }));
+        } else if (data.data && typeof data.data === 'object') {
+          // Handle case where data.data might be an object with servers as properties
+          const serversObj = data.data;
+          if (serversObj.servers && Array.isArray(serversObj.servers)) {
+            serverList = serversObj.servers.map((server: any) => ({
+              id: server.id,
+              name: server.config?.name || server.name,
+              command: server.config?.command || '',
+              enabled: server.config?.enabled !== false,
+            }));
+          }
+        }
         setServers(serverList);
       }
     } catch (error) {
@@ -188,7 +220,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   // Fetch predefined available servers
   const fetchPredefinedServers = React.useCallback(async () => {
     try {
-      const response = await fetch('/api/mcp/available-servers');
+      const response = await apiFetch('/api/mcp/available-servers');
       const data = await response.json();
       if (data.success) {
         setPredefinedServers(data.data || []);
@@ -203,11 +235,21 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     fetchPredefinedServers();
   }, [fetchServers, fetchPredefinedServers]);
 
+  // Check if OAuth token exists for a provider
+  const checkOAuthToken = async (provider: string): Promise<boolean> => {
+    try {
+      const response = await apiFetch(`/api/auth/oauth/token/${provider}`, { excludeRoleId: true });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  };
+
   // Start OAuth flow for any provider
   const startOAuthFlow = async (provider: string): Promise<boolean> => {
     try {
       const endpoint = `/api/auth/${provider}/start`;
-      const authResponse = await fetch(endpoint);
+      const authResponse = await apiFetch(endpoint, { excludeRoleId: true });
 
       if (!authResponse.ok) {
         console.error(`Failed to start ${provider} OAuth:`, authResponse.status);
@@ -222,17 +264,96 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
         const left = window.screenX + (window.outerWidth - width) / 2;
         const top = window.screenY + (window.outerHeight - height) / 2;
 
-        window.open(
+        const popup = window.open(
           authData.data.authUrl,
           `${provider}-auth`,
           `width=${width},height=${height},left=${left},top=${top}`
         );
+        
+        // Store popup reference for polling
+        if (popup) {
+          oauthPopupRef.current = popup;
+          
+          // Start polling for OAuth completion
+          startOAuthPolling(provider);
+        }
+        
         return true;
       }
     } catch (error) {
       console.error(`Error starting ${provider} OAuth:`, error);
     }
     return false;
+  };
+  
+  // Poll for OAuth completion as a fallback to postMessage
+  const startOAuthPolling = (provider: string) => {
+    // Clear any existing polling
+    if (oauthPollIntervalRef.current) {
+      clearInterval(oauthPollIntervalRef.current);
+    }
+    
+    console.log(`[OAuth] Starting polling for ${provider} token...`);
+    console.log(`[OAuth] Selected server ID: ${selectedServerIdRef.current}`);
+    
+    let attempts = 0;
+    const maxAttempts = 60; // 60 seconds max
+    
+    oauthPollIntervalRef.current = setInterval(async () => {
+      attempts++;
+      
+      // Check if popup is closed
+      const popupClosed = oauthPopupRef.current?.closed;
+      
+      // Check if token exists
+      const hasToken = await checkOAuthToken(provider);
+      
+      console.log(`[OAuth] Poll attempt ${attempts}: hasToken=${hasToken}, popupClosed=${popupClosed}`);
+      
+      if (hasToken) {
+        console.log(`[OAuth] Token found for ${provider} after ${attempts} attempts`);
+        clearInterval(oauthPollIntervalRef.current!);
+        oauthPollIntervalRef.current = null;
+        oauthPopupRef.current = null;
+        
+        // Add the server now that we have the token
+        const serverId = selectedServerIdRef.current;
+        if (serverId) {
+          console.log(`[OAuth] Adding server after auth: ${serverId}`);
+          addServerAfterAuth(serverId);
+        }
+        return;
+      }
+      
+      // If popup is closed and no token, show error
+      if (popupClosed && !hasToken) {
+        console.log(`[OAuth] Popup closed without token after ${attempts} attempts`);
+        clearInterval(oauthPollIntervalRef.current!);
+        oauthPollIntervalRef.current = null;
+        oauthPopupRef.current = null;
+        
+        // Don't show error immediately - user might have cancelled
+        // Just reset the auth state
+        setAuthRequired(false);
+        setSelectedServerId(null);
+        selectedServerIdRef.current = null;
+        setAuthProvider(null);
+        return;
+      }
+      
+      // Timeout after max attempts
+      if (attempts >= maxAttempts) {
+        console.log(`[OAuth] Polling timed out after ${maxAttempts} attempts`);
+        clearInterval(oauthPollIntervalRef.current!);
+        oauthPollIntervalRef.current = null;
+        oauthPopupRef.current = null;
+        setToast({ message: 'Authentication timed out. Please try again.', type: 'error' });
+        setAuthRequired(false);
+        setSelectedServerId(null);
+        selectedServerIdRef.current = null;
+        setAuthProvider(null);
+      }
+    }, 1000);
   };
 
   // Add server after auth is complete (called after OAuth success)
@@ -247,9 +368,8 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     console.log(`[addServerAfterAuth] Adding server: ${serverId}`);
     setAdding(true);
     try {
-      const response = await fetch('/api/mcp/servers/add-predefined', {
+      const response = await apiFetch('/api/mcp/servers/add-predefined', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ serverId }),
       });
 
@@ -262,6 +382,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
         setToast({ message: `✅ Successfully added ${server?.name || 'MCP server'}!`, type: 'success' });
         setAuthRequired(false);
         setSelectedServerId(null);
+        selectedServerIdRef.current = null;
         setAuthProvider(null);
         onClose();
       } else {
@@ -270,12 +391,14 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
         // Clear auth state but don't close dialog so user can retry
         setAuthRequired(false);
         setSelectedServerId(null);
+        selectedServerIdRef.current = null;
       }
     } catch (error) {
       console.error(`[addServerAfterAuth] Error:`, error);
       setToast({ message: `Error adding server: ${error instanceof Error ? error.message : 'Unknown error'}`, type: 'error' });
       setAuthRequired(false);
       setSelectedServerId(null);
+      selectedServerIdRef.current = null;
     } finally {
       setAdding(false);
       pendingAddRef.current = null;
@@ -290,6 +413,13 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
 
       if (event.data?.type === 'oauth_success') {
         console.log(`[OAuth] Received success message for ${event.data.provider}`);
+        
+        // Stop polling since we got the message
+        if (oauthPollIntervalRef.current) {
+          clearInterval(oauthPollIntervalRef.current);
+          oauthPollIntervalRef.current = null;
+        }
+        
         // Try adding the server after OAuth completes
         if (selectedServerId) {
           console.log(`[OAuth] Adding server after auth: ${selectedServerId}`);
@@ -316,6 +446,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     if (requiresAuth && server.auth?.provider) {
       // Trigger OAuth immediately for this provider
       setSelectedServerId(serverId);
+      selectedServerIdRef.current = serverId; // Set ref for polling callback
       setAuthProvider(server.auth.provider);
       setAuthRequired(true);
 
@@ -332,9 +463,8 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     // No auth required, proceed with adding the server immediately
     setAdding(true);
     try {
-      const response = await fetch('/api/mcp/servers/add-predefined', {
+      const response = await apiFetch('/api/mcp/servers/add-predefined', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ serverId }),
       });
 
@@ -359,9 +489,8 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
       const currentServer = servers.find(s => s.id === serverId);
       const newEnabled = !currentServer?.enabled;
 
-      const response = await fetch(`/api/mcp/servers/${serverId}`, {
+      const response = await apiFetch(`/api/mcp/servers/${serverId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: newEnabled }),
       });
 
@@ -380,7 +509,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     if (!confirm(`Are you sure you want to remove this server?`)) return;
 
     try {
-      const response = await fetch(`/api/mcp/servers/${serverId}`, {
+      const response = await apiFetch(`/api/mcp/servers/${serverId}`, {
         method: 'DELETE',
       });
 
@@ -434,8 +563,16 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
           </div>
           <button
             onClick={() => {
+              // Stop any ongoing OAuth polling
+              if (oauthPollIntervalRef.current) {
+                clearInterval(oauthPollIntervalRef.current);
+                oauthPollIntervalRef.current = null;
+              }
+              oauthPopupRef.current = null;
               setAuthRequired(false);
               setSelectedServerId(null);
+              selectedServerIdRef.current = null;
+              setAuthProvider(null);
             }}
             className="px-4 py-2 bg-muted rounded-lg hover:bg-muted/80"
           >

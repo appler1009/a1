@@ -18,6 +18,8 @@ export interface PredefinedMCPServer {
   };
   icon?: string; // e.g., 'drive', 'book', 'github'
   hidden?: boolean; // If true, won't show in UI feature list but can still be used
+  global?: boolean; // If true, server is not affected by role switches (stays running)
+  inProcess?: boolean; // If true, use InProcessAdapter instead of stdio
 }
 
 export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
@@ -90,22 +92,40 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     },
     icon: 'file-text',
     hidden: true, // Hidden from UI - automatically available for PDF processing
+    global: true, // Global: not affected by role switches
   },
 
   {
     id: 'memory',
     name: 'Memory',
-    description: 'Persistent knowledge graph memory for storing entities, relations, and observations across conversations. Enables the AI to remember context and user preferences.',
+    description: 'Persistent knowledge graph memory for storing entities, relations, and observations across conversations. Enables the AI to remember context and user preferences. Uses SQLite for storage in the role database.',
     command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-memory'],
+    args: ['-y', 'mcp-memory-sqlite'],
     env: {
-      MEMORY_FILE_PATH: './data/memory.json', // Persistent storage for knowledge graph
+      // SQLITE_DB_PATH will be set dynamically by MCP Manager based on current role
     },
     auth: {
       provider: 'none',
     },
     icon: 'brain',
     hidden: true, // Hidden from UI - automatically enabled for all users
+    global: false, // Per-role: restarts with role-specific database on role switch
+    inProcess: true, // Use InProcessAdapter for direct function calls
+  },
+
+  {
+    id: 'weather',
+    name: 'Weather',
+    description: 'Global weather data from NOAA and Open-Meteo APIs. Provides forecasts, current conditions, historical data (1940-present), alerts, air quality, marine conditions, and more. No API keys required.',
+    command: 'npx',
+    args: ['-y', '@dangahagan/weather-mcp'],
+    auth: {
+      provider: 'none',
+    },
+    icon: 'cloud',
+    hidden: true, // Hidden from UI - automatically available
+    global: true, // Global: not affected by role switches
+    inProcess: true, // Use InProcessAdapter for direct function calls
   },
 ];
 

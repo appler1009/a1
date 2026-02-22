@@ -3,7 +3,8 @@ import { promises as fs } from 'fs';
 import type { McpAdapter, MCPServerConfig } from '@local-agent/shared';
 import { adapterRegistry } from './adapters/registry.js';
 import { authService } from '../auth/index.js';
-import { createStorage } from '../storage/index.js';
+import { getMainDatabase } from '../storage/main-db.js';
+import { mcpManager } from './manager.js';
 
 /**
  * Cache for adapter instances
@@ -12,23 +13,10 @@ import { createStorage } from '../storage/index.js';
 const activeAdapters = new Map<string, McpAdapter>();
 
 /**
- * Storage for accessing MCP configs
+ * Set of server keys that should use in-process adapters
+ * Populated by registerInProcessAdapter()
  */
-const storage = createStorage({
-  type: 'sqlite',
-  root: './data',
-});
-
-/**
- * Initialize storage on first use
- */
-let storageInitialized = false;
-async function ensureStorageInitialized(): Promise<void> {
-  if (!storageInitialized) {
-    await storage.initialize();
-    storageInitialized = true;
-  }
-}
+const inProcessServers = new Set<string>();
 
 /**
  * Result of preparing MCP directory
@@ -92,18 +80,29 @@ async function prepareUserMcpDir(
 }
 
 /**
- * Load MCP server config from database
+ * Load MCP server config from MCPManager's in-memory cache or main database
  * The serverKey is the serverId from the persisted config
+ *
+ * Priority:
+ * 1. MCPManager's in-memory cache (includes role-specific configs)
+ * 2. Main database (for global/persisted configs)
  */
 async function loadServerConfig(serverKey: string): Promise<MCPServerConfig> {
-  await ensureStorageInitialized();
+  // First, check MCPManager's in-memory cache
+  // This includes both main DB configs AND role-specific configs loaded during role switch
+  const managerConfig = mcpManager.getServerConfig(serverKey);
+  if (managerConfig) {
+    console.log(`[MCPAdapterFactory:loadServerConfig] Found config in MCPManager cache for: ${serverKey}`);
+    return managerConfig;
+  }
 
+  // Fall back to main database for global/persisted configs
   try {
-    // Load from SQLite metadata table where MCP configs are persisted
-    // MCPManager stores configs in 'mcp_servers' table with serverId as the key
-    const configData = await storage.getMetadata('mcp_servers', serverKey);
-    if (configData && configData.config) {
-      return configData.config as MCPServerConfig;
+    const mainDb = getMainDatabase();
+    const config = mainDb.getMCPServerConfig(serverKey);
+    if (config) {
+      console.log(`[MCPAdapterFactory:loadServerConfig] Found config in main database for: ${serverKey}`);
+      return config as unknown as MCPServerConfig;
     }
   } catch (error) {
     console.error(`[MCPAdapterFactory] Error loading config for ${serverKey}:`, error);
@@ -154,7 +153,35 @@ export async function getMcpAdapter(userId: string, serverKey: string): Promise<
 
   console.log(`[MCPAdapterFactory:getMcpAdapter] No cached adapter, creating new one...`);
 
-  // Load server config from database
+  // Check if this server has an in-process adapter registered FIRST
+  // In-process adapters don't need database config or OAuth tokens
+  if (adapterRegistry.isInProcess(serverKey)) {
+    console.log(`[MCPAdapterFactory:getMcpAdapter] Using in-process adapter for ${serverKey}`);
+    const adapter = await adapterRegistry.createInProcess(
+      serverKey,
+      userId,
+      `mcp-${serverKey}`,
+      undefined // No token data needed for in-process adapters
+    );
+    
+    // Cache the adapter (cast to McpAdapter to satisfy TypeScript)
+    console.log(`[MCPAdapterFactory:getMcpAdapter] Caching in-process adapter with key: ${cacheKey}`);
+    const cachedAdapter = adapter as unknown as McpAdapter;
+    activeAdapters.set(cacheKey, cachedAdapter);
+
+    // Wrap close method to handle cleanup
+    const originalClose = adapter.close.bind(adapter);
+    adapter.close = () => {
+      console.log(`[MCPAdapterFactory] Closing in-process adapter: ${cacheKey}`);
+      originalClose();
+      activeAdapters.delete(cacheKey);
+    };
+
+    console.log(`[MCPAdapterFactory:getMcpAdapter] Complete - returning in-process adapter`);
+    return cachedAdapter;
+  }
+
+  // Load server config from database (only for stdio adapters)
   console.log(`[MCPAdapterFactory:getMcpAdapter] Loading config for ${serverKey}...`);
   const serverConfig = await loadServerConfig(serverKey);
   console.log(`[MCPAdapterFactory:getMcpAdapter] Config loaded`, {
@@ -281,7 +308,7 @@ export async function getMcpAdapter(userId: string, serverKey: string): Promise<
   }
 
   // Create adapter using registry (handles MCP-specific setup)
-  console.log(`[MCPAdapterFactory:getMcpAdapter] Creating adapter via registry...`);
+  console.log(`[MCPAdapterFactory:getMcpAdapter] Creating stdio adapter via registry...`);
   const adapter = adapterRegistry.create(
     serverKey,
     userId,

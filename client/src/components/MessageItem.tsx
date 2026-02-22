@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Message } from '../store';
 import { useUIStore, type ViewerFile } from '../store';
+import { apiFetch } from '../lib/api';
 
 interface MessageItemProps {
   message: Message;
@@ -61,10 +62,8 @@ export const MessageItem = memo(function MessageItem({ message, highlightKeyword
     const mimeType = mimeTypes[ext] || 'application/octet-stream';
 
     try {
-      const response = await fetch('/api/viewer/download', {
+      const response = await apiFetch('/api/viewer/download', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ url, filename, mimeType }),
       });
 

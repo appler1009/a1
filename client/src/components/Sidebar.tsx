@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   MessageSquare,
   Settings,
@@ -7,11 +8,15 @@ import {
   Users
 } from 'lucide-react';
 import { useAuthStore, useRolesStore, useUIStore, useEnvironmentStore } from '../store';
+import { CreateRoleDialog } from './CreateRoleDialog';
+import { LoadingOverlay } from './LoadingOverlay';
+import { apiFetch } from '../lib/api';
 
 export function Sidebar() {
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const { user, currentGroup, groups, setCurrentGroup, logout } = useAuthStore();
-  const { roles, currentRole, setCurrentRole, addRole } = useRolesStore();
-  const { sidebarOpen, toggleSidebar, setShowMcpManager } = useUIStore();
+  const { roles, currentRole, switchRole, addRole } = useRolesStore();
+  const { sidebarOpen, toggleSidebar, setShowMcpManager, roleSwitching, setRoleSwitching } = useUIStore();
   const environment = useEnvironmentStore((state) => state.environment);
 
   const getEnvironmentBadgeClass = (env?: string) => {
@@ -27,35 +32,42 @@ export function Sidebar() {
     }
   };
 
-  const handleCreateRole = async () => {
-    if (!currentGroup) return;
-    
-    const name = prompt('Enter role name:');
-    if (!name) return;
-
+  const handleCreateRole = async (name: string) => {
     try {
-      const response = await fetch('/api/roles', {
+      const response = await apiFetch('/api/roles', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
-          groupId: currentGroup.id,
           name,
+          groupId: currentGroup?.id || undefined,
         }),
       });
-      
+
+      if (!response.ok) {
+        throw new Error('Failed to create role');
+      }
+
       const data = await response.json();
       if (data.success) {
+        console.log('[Sidebar] ✓ Created role:', data.data.name, data.data.id);
         addRole(data.data);
-        setCurrentRole(data.data);
+        // Switch to the newly created role
+        await switchRole(data.data, setRoleSwitching);
+      } else {
+        throw new Error(data.error?.message || 'Failed to create role');
       }
     } catch (error) {
-      console.error('Failed to create role:', error);
+      const message = error instanceof Error ? error.message : 'Failed to create role';
+      console.error('[Sidebar] Failed to create role:', message);
+      throw error;
     }
   };
 
   return (
-    <div className={`${sidebarOpen ? 'w-64' : 'w-16'} flex flex-col h-full bg-card border-r border-border transition-all duration-300`}>
+    <>
+      {/* Loading overlay for role switching */}
+      {roleSwitching && <LoadingOverlay message="Switching role..." />}
+      
+      <div className={`${sidebarOpen ? 'w-64' : 'w-16'} flex flex-col h-full bg-card border-r border-border transition-all duration-300`}>
       {/* Top Banner - Matching other panes */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border h-11 shrink-0">
         {sidebarOpen && (
@@ -101,8 +113,8 @@ export function Sidebar() {
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs text-muted-foreground">Roles</span>
             <button
-              onClick={handleCreateRole}
-              className="p-1 hover:bg-muted rounded-lg"
+              onClick={() => setIsCreateDialogOpen(true)}
+              className="p-1 hover:bg-muted rounded-lg transition-colors"
               title="Create role"
             >
               <Plus className="w-4 h-4" />
@@ -116,12 +128,13 @@ export function Sidebar() {
             .map((role) => (
               <button
                 key={role.id}
-                onClick={() => setCurrentRole(role)}
+                onClick={() => switchRole(role, setRoleSwitching)}
+                disabled={roleSwitching}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
                   currentRole?.id === role.id
                     ? 'bg-primary text-primary-foreground'
                     : 'hover:bg-muted'
-                }`}
+                } ${roleSwitching ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <Users className="w-4 h-4" />
                 {sidebarOpen && <span className="truncate">{role.name}</span>}
@@ -178,6 +191,14 @@ export function Sidebar() {
           </button>
         </div>
       </div>
+
+      {/* Create Role Dialog */}
+      <CreateRoleDialog
+        isOpen={isCreateDialogOpen}
+        onClose={() => setIsCreateDialogOpen(false)}
+        onCreateRole={handleCreateRole}
+      />
     </div>
+    </>
   );
 }

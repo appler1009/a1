@@ -1,0 +1,932 @@
+import Database from 'better-sqlite3';
+import type { User, Session, Group, GroupMember, Invitation } from '@local-agent/shared';
+import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
+import fs from 'fs';
+
+/**
+ * Role definition stored in the main database
+ */
+export interface RoleDefinition {
+  id: string;
+  userId: string;
+  groupId: string | null;
+  name: string;
+  jobDesc: string | null;
+  systemPrompt: string | null;
+  model: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * OAuth token stored in main database (user-level)
+ */
+export interface OAuthTokenEntry {
+  provider: string;
+  userId: string;
+  accessToken: string;
+  refreshToken: string | null;
+  expiryDate: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Main database schema for user registration and role mapping
+ * This is the central database that maps users to their roles
+ * Each role has its own separate SQLite database for complete isolation
+ */
+export class MainDatabase {
+  private db: Database.Database;
+  private dbPath: string;
+
+  constructor(dataDir: string) {
+    // Ensure data directory exists
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    
+    this.dbPath = path.join(dataDir, 'main.db');
+    this.db = new Database(this.dbPath);
+  }
+
+  async initialize(): Promise<void> {
+    this.db.exec(`
+      -- Users table
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        name TEXT,
+        accountType TEXT DEFAULT 'individual',
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+      
+      -- Sessions table
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        expiresAt TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(userId);
+      
+      -- Groups table
+      CREATE TABLE IF NOT EXISTS groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT,
+        createdAt TEXT NOT NULL
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_groups_url ON groups(url);
+      
+      -- Group memberships table
+      CREATE TABLE IF NOT EXISTS memberships (
+        id TEXT PRIMARY KEY,
+        groupId TEXT NOT NULL,
+        userId TEXT NOT NULL,
+        role TEXT DEFAULT 'member',
+        createdAt TEXT NOT NULL,
+        FOREIGN KEY (groupId) REFERENCES groups(id) ON DELETE CASCADE,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(groupId, userId)
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_memberships_group ON memberships(groupId);
+      CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(userId);
+      
+      -- Invitations table
+      CREATE TABLE IF NOT EXISTS invitations (
+        id TEXT PRIMARY KEY,
+        code TEXT UNIQUE NOT NULL,
+        groupId TEXT NOT NULL,
+        createdBy TEXT NOT NULL,
+        email TEXT,
+        role TEXT DEFAULT 'member',
+        expiresAt TEXT,
+        usedAt TEXT,
+        acceptedAt TEXT,
+        createdAt TEXT NOT NULL,
+        FOREIGN KEY (groupId) REFERENCES groups(id) ON DELETE CASCADE,
+        FOREIGN KEY (createdBy) REFERENCES users(id)
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_invitations_code ON invitations(code);
+      CREATE INDEX IF NOT EXISTS idx_invitations_group ON invitations(groupId);
+      
+      -- Roles table (maps users to their role databases)
+      CREATE TABLE IF NOT EXISTS roles (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        groupId TEXT,
+        name TEXT NOT NULL,
+        jobDesc TEXT,
+        systemPrompt TEXT,
+        model TEXT,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (groupId) REFERENCES groups(id) ON DELETE SET NULL
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_roles_user ON roles(userId);
+      CREATE INDEX IF NOT EXISTS idx_roles_group ON roles(groupId);
+      
+      -- OAuth tokens table (user-level tokens)
+      CREATE TABLE IF NOT EXISTS oauth_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider TEXT NOT NULL,
+        userId TEXT NOT NULL,
+        accessToken TEXT NOT NULL,
+        refreshToken TEXT,
+        expiryDate INTEGER,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(provider, userId)
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_tokens(userId);
+      CREATE INDEX IF NOT EXISTS idx_oauth_provider ON oauth_tokens(provider);
+      
+      -- MCP Servers table (persisted server configs)
+      CREATE TABLE IF NOT EXISTS mcp_servers (
+        id TEXT PRIMARY KEY,
+        config TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      );
+    `);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  // ============================================
+  // User Operations
+  // ============================================
+
+  createUser(email: string, name?: string, accountType: 'individual' | 'group' = 'individual'): User {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+    
+    this.db.prepare(`
+      INSERT INTO users (id, email, name, accountType, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, email, name || null, accountType, now, now);
+
+    return {
+      id,
+      email,
+      name,
+      accountType,
+      createdAt: new Date(now),
+      updatedAt: new Date(now),
+    };
+  }
+
+  getUser(id: string): User | null {
+    const row = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as {
+      id: string;
+      email: string;
+      name: string | null;
+      accountType: 'individual' | 'group';
+      createdAt: string;
+      updatedAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      email: row.email,
+      name: row.name || undefined,
+      accountType: row.accountType,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    };
+  }
+
+  getUserByEmail(email: string): User | null {
+    const row = this.db.prepare('SELECT * FROM users WHERE email = ?').get(email) as {
+      id: string;
+      email: string;
+      name: string | null;
+      accountType: 'individual' | 'group';
+      createdAt: string;
+      updatedAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      email: row.email,
+      name: row.name || undefined,
+      accountType: row.accountType,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    };
+  }
+
+  updateUser(id: string, updates: Partial<User>): User | null {
+    const user = this.getUser(id);
+    if (!user) return null;
+
+    const now = new Date().toISOString();
+    const fields: string[] = ['updatedAt = ?'];
+    const values: (string | null)[] = [now];
+
+    if (updates.email !== undefined) {
+      fields.push('email = ?');
+      values.push(updates.email);
+    }
+    if (updates.name !== undefined) {
+      fields.push('name = ?');
+      values.push(updates.name || null);
+    }
+    if (updates.accountType !== undefined) {
+      fields.push('accountType = ?');
+      values.push(updates.accountType);
+    }
+
+    values.push(id);
+
+    this.db.prepare(`
+      UPDATE users SET ${fields.join(', ')} WHERE id = ?
+    `).run(...values);
+
+    return this.getUser(id);
+  }
+
+  // ============================================
+  // Session Operations
+  // ============================================
+
+  createSession(userId: string): Session {
+    const id = uuidv4();
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    const now = new Date().toISOString();
+
+    this.db.prepare(`
+      INSERT INTO sessions (id, userId, expiresAt, createdAt)
+      VALUES (?, ?, ?, ?)
+    `).run(id, userId, expiresAt.toISOString(), now);
+
+    return {
+      id,
+      userId,
+      expiresAt,
+      createdAt: new Date(now),
+    };
+  }
+
+  getSession(id: string): Session | null {
+    const row = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as {
+      id: string;
+      userId: string;
+      expiresAt: string;
+      createdAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    const expiresAt = new Date(row.expiresAt);
+    if (expiresAt < new Date()) {
+      this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+      return null;
+    }
+
+    return {
+      id: row.id,
+      userId: row.userId,
+      expiresAt,
+      createdAt: new Date(row.createdAt),
+    };
+  }
+
+  deleteSession(id: string): void {
+    this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  }
+
+  // ============================================
+  // Group Operations
+  // ============================================
+
+  createGroup(name: string, url?: string): Group {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+
+    this.db.prepare(`
+      INSERT INTO groups (id, name, url, createdAt)
+      VALUES (?, ?, ?, ?)
+    `).run(id, name, url || null, now);
+
+    return {
+      id,
+      name,
+      url,
+      createdAt: new Date(now),
+    };
+  }
+
+  getGroup(id: string): Group | null {
+    const row = this.db.prepare('SELECT * FROM groups WHERE id = ?').get(id) as {
+      id: string;
+      name: string;
+      url: string | null;
+      createdAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      name: row.name,
+      url: row.url || undefined,
+      createdAt: new Date(row.createdAt),
+    };
+  }
+
+  getGroupByUrl(url: string): Group | null {
+    const row = this.db.prepare('SELECT * FROM groups WHERE url = ?').get(url) as {
+      id: string;
+      name: string;
+      url: string | null;
+      createdAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      name: row.name,
+      url: row.url || undefined,
+      createdAt: new Date(row.createdAt),
+    };
+  }
+
+  getUserGroups(userId: string): Group[] {
+    const rows = this.db.prepare(`
+      SELECT g.* FROM groups g
+      JOIN memberships m ON g.id = m.groupId
+      WHERE m.userId = ?
+    `).all(userId) as Array<{
+      id: string;
+      name: string;
+      url: string | null;
+      createdAt: string;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      url: row.url || undefined,
+      createdAt: new Date(row.createdAt),
+    }));
+  }
+
+  // ============================================
+  // Membership Operations
+  // ============================================
+
+  addMember(groupId: string, userId: string, role: 'owner' | 'admin' | 'member' = 'member'): GroupMember {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+
+    this.db.prepare(`
+      INSERT OR REPLACE INTO memberships (id, groupId, userId, role, createdAt)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, groupId, userId, role, now);
+
+    return {
+      id,
+      groupId,
+      userId,
+      role,
+      createdAt: new Date(now),
+    };
+  }
+
+  getMembership(groupId: string, userId: string): GroupMember | null {
+    const row = this.db.prepare(`
+      SELECT * FROM memberships WHERE groupId = ? AND userId = ?
+    `).get(groupId, userId) as {
+      id: string;
+      groupId: string;
+      userId: string;
+      role: 'owner' | 'admin' | 'member';
+      createdAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      groupId: row.groupId,
+      userId: row.userId,
+      role: row.role,
+      createdAt: new Date(row.createdAt),
+    };
+  }
+
+  getGroupMembers(groupId: string): GroupMember[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM memberships WHERE groupId = ?
+    `).all(groupId) as Array<{
+      id: string;
+      groupId: string;
+      userId: string;
+      role: 'owner' | 'admin' | 'member';
+      createdAt: string;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      groupId: row.groupId,
+      userId: row.userId,
+      role: row.role,
+      createdAt: new Date(row.createdAt),
+    }));
+  }
+
+  updateMemberRole(groupId: string, userId: string, role: 'owner' | 'admin' | 'member'): GroupMember | null {
+    const now = new Date().toISOString();
+    
+    const result = this.db.prepare(`
+      UPDATE memberships SET role = ? WHERE groupId = ? AND userId = ?
+    `).run(role, groupId, userId);
+
+    if (result.changes === 0) return null;
+
+    return this.getMembership(groupId, userId);
+  }
+
+  removeMember(groupId: string, userId: string): boolean {
+    const result = this.db.prepare(`
+      DELETE FROM memberships WHERE groupId = ? AND userId = ?
+    `).run(groupId, userId);
+
+    return result.changes > 0;
+  }
+
+  // ============================================
+  // Invitation Operations
+  // ============================================
+
+  createInvitation(
+    groupId: string,
+    createdBy: string,
+    email?: string,
+    role: 'owner' | 'admin' | 'member' = 'member',
+    expiresInSeconds: number = 7 * 24 * 60 * 60
+  ): Invitation {
+    const id = uuidv4();
+    const code = this.generateInviteCode();
+    const now = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+
+    this.db.prepare(`
+      INSERT INTO invitations (id, code, groupId, createdBy, email, role, expiresAt, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, code, groupId, createdBy, email || null, role, expiresAt, now);
+
+    return {
+      id,
+      code,
+      groupId,
+      createdBy,
+      email,
+      role,
+      expiresAt: new Date(expiresAt),
+      createdAt: new Date(now),
+    };
+  }
+
+  getInvitationByCode(code: string): Invitation | null {
+    const row = this.db.prepare('SELECT * FROM invitations WHERE code = ?').get(code) as {
+      id: string;
+      code: string;
+      groupId: string;
+      createdBy: string;
+      email: string | null;
+      role: 'owner' | 'admin' | 'member';
+      expiresAt: string | null;
+      usedAt: string | null;
+      acceptedAt: string | null;
+      createdAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      code: row.code,
+      groupId: row.groupId,
+      createdBy: row.createdBy,
+      email: row.email || undefined,
+      role: row.role,
+      expiresAt: row.expiresAt ? new Date(row.expiresAt) : undefined,
+      usedAt: row.usedAt ? new Date(row.usedAt) : undefined,
+      acceptedAt: row.acceptedAt ? new Date(row.acceptedAt) : undefined,
+      createdAt: new Date(row.createdAt),
+    };
+  }
+
+  getGroupInvitations(groupId: string): Invitation[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM invitations WHERE groupId = ? AND usedAt IS NULL
+    `).all(groupId) as Array<{
+      id: string;
+      code: string;
+      groupId: string;
+      createdBy: string;
+      email: string | null;
+      role: 'owner' | 'admin' | 'member';
+      expiresAt: string | null;
+      usedAt: string | null;
+      acceptedAt: string | null;
+      createdAt: string;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      code: row.code,
+      groupId: row.groupId,
+      createdBy: row.createdBy,
+      email: row.email || undefined,
+      role: row.role,
+      expiresAt: row.expiresAt ? new Date(row.expiresAt) : undefined,
+      usedAt: row.usedAt ? new Date(row.usedAt) : undefined,
+      acceptedAt: row.acceptedAt ? new Date(row.acceptedAt) : undefined,
+      createdAt: new Date(row.createdAt),
+    }));
+  }
+
+  acceptInvitation(code: string, userId: string): GroupMember {
+    const invitation = this.getInvitationByCode(code);
+    if (!invitation) {
+      throw new Error('Invitation not found');
+    }
+
+    if (invitation.usedAt) {
+      throw new Error('Invitation already used');
+    }
+
+    if (invitation.expiresAt && invitation.expiresAt < new Date()) {
+      throw new Error('Invitation expired');
+    }
+
+    const now = new Date().toISOString();
+    
+    this.db.prepare(`
+      UPDATE invitations SET usedAt = ?, acceptedAt = ? WHERE id = ?
+    `).run(now, now, invitation.id);
+
+    const membership = this.addMember(invitation.groupId, userId, invitation.role || 'member');
+    this.updateUser(userId, { accountType: 'group' });
+
+    return membership;
+  }
+
+  revokeInvitation(invitationId: string): boolean {
+    const result = this.db.prepare('DELETE FROM invitations WHERE id = ?').run(invitationId);
+    return result.changes > 0;
+  }
+
+  private generateInviteCode(): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let code = '';
+    for (let i = 0; i < 8; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+  }
+
+  // ============================================
+  // Role Operations
+  // ============================================
+
+  createRole(
+    userId: string,
+    name: string,
+    groupId?: string,
+    jobDesc?: string,
+    systemPrompt?: string,
+    model?: string
+  ): RoleDefinition {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+
+    this.db.prepare(`
+      INSERT INTO roles (id, userId, groupId, name, jobDesc, systemPrompt, model, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, userId, groupId || null, name, jobDesc || null, systemPrompt || null, model || null, now, now);
+
+    return {
+      id,
+      userId,
+      groupId: groupId || null,
+      name,
+      jobDesc: jobDesc || null,
+      systemPrompt: systemPrompt || null,
+      model: model || null,
+      createdAt: new Date(now),
+      updatedAt: new Date(now),
+    };
+  }
+
+  getRole(id: string): RoleDefinition | null {
+    const row = this.db.prepare('SELECT * FROM roles WHERE id = ?').get(id) as {
+      id: string;
+      userId: string;
+      groupId: string | null;
+      name: string;
+      jobDesc: string | null;
+      systemPrompt: string | null;
+      model: string | null;
+      createdAt: string;
+      updatedAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      userId: row.userId,
+      groupId: row.groupId,
+      name: row.name,
+      jobDesc: row.jobDesc,
+      systemPrompt: row.systemPrompt,
+      model: row.model,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    };
+  }
+
+  getUserRoles(userId: string): RoleDefinition[] {
+    const rows = this.db.prepare('SELECT * FROM roles WHERE userId = ?').all(userId) as Array<{
+      id: string;
+      userId: string;
+      groupId: string | null;
+      name: string;
+      jobDesc: string | null;
+      systemPrompt: string | null;
+      model: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      userId: row.userId,
+      groupId: row.groupId,
+      name: row.name,
+      jobDesc: row.jobDesc,
+      systemPrompt: row.systemPrompt,
+      model: row.model,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    }));
+  }
+
+  getGroupRoles(groupId: string): RoleDefinition[] {
+    const rows = this.db.prepare('SELECT * FROM roles WHERE groupId = ?').all(groupId) as Array<{
+      id: string;
+      userId: string;
+      groupId: string | null;
+      name: string;
+      jobDesc: string | null;
+      systemPrompt: string | null;
+      model: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      userId: row.userId,
+      groupId: row.groupId,
+      name: row.name,
+      jobDesc: row.jobDesc,
+      systemPrompt: row.systemPrompt,
+      model: row.model,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    }));
+  }
+
+  updateRole(id: string, updates: Partial<Omit<RoleDefinition, 'id' | 'userId' | 'createdAt'>>): RoleDefinition | null {
+    const role = this.getRole(id);
+    if (!role) return null;
+
+    const now = new Date().toISOString();
+    const fields: string[] = ['updatedAt = ?'];
+    const values: (string | null)[] = [now];
+
+    if (updates.name !== undefined) {
+      fields.push('name = ?');
+      values.push(updates.name);
+    }
+    if (updates.groupId !== undefined) {
+      fields.push('groupId = ?');
+      values.push(updates.groupId);
+    }
+    if (updates.jobDesc !== undefined) {
+      fields.push('jobDesc = ?');
+      values.push(updates.jobDesc || null);
+    }
+    if (updates.systemPrompt !== undefined) {
+      fields.push('systemPrompt = ?');
+      values.push(updates.systemPrompt || null);
+    }
+    if (updates.model !== undefined) {
+      fields.push('model = ?');
+      values.push(updates.model || null);
+    }
+
+    values.push(id);
+
+    this.db.prepare(`
+      UPDATE roles SET ${fields.join(', ')} WHERE id = ?
+    `).run(...values);
+
+    return this.getRole(id);
+  }
+
+  deleteRole(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM roles WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
+  // ============================================
+  // OAuth Token Operations
+  // ============================================
+
+  storeOAuthToken(
+    userId: string,
+    provider: string,
+    accessToken: string,
+    refreshToken?: string,
+    expiryDate?: number
+  ): OAuthTokenEntry {
+    const now = new Date().toISOString();
+
+    this.db.prepare(`
+      INSERT OR REPLACE INTO oauth_tokens (provider, userId, accessToken, refreshToken, expiryDate, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, COALESCE((SELECT createdAt FROM oauth_tokens WHERE provider = ? AND userId = ?), ?), ?)
+    `).run(provider, userId, accessToken, refreshToken || null, expiryDate || null, provider, userId, now, now);
+
+    return {
+      provider,
+      userId,
+      accessToken,
+      refreshToken: refreshToken || null,
+      expiryDate: expiryDate || null,
+      createdAt: new Date(now),
+      updatedAt: new Date(now),
+    };
+  }
+
+  getOAuthToken(userId: string, provider: string): OAuthTokenEntry | null {
+    const row = this.db.prepare(`
+      SELECT * FROM oauth_tokens WHERE userId = ? AND provider = ?
+    `).get(userId, provider) as {
+      provider: string;
+      userId: string;
+      accessToken: string;
+      refreshToken: string | null;
+      expiryDate: number | null;
+      createdAt: string;
+      updatedAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      provider: row.provider,
+      userId: row.userId,
+      accessToken: row.accessToken,
+      refreshToken: row.refreshToken,
+      expiryDate: row.expiryDate,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    };
+  }
+
+  revokeOAuthToken(userId: string, provider: string): boolean {
+    const result = this.db.prepare(`
+      DELETE FROM oauth_tokens WHERE userId = ? AND provider = ?
+    `).run(userId, provider);
+
+    return result.changes > 0;
+  }
+
+  // ============================================
+  // MCP Server Operations
+  // ============================================
+
+  /**
+   * Save MCP server config
+   */
+  saveMCPServerConfig(serverId: string, config: Record<string, unknown>): void {
+    const now = new Date().toISOString();
+    const configJson = JSON.stringify(config);
+    
+    this.db.prepare(`
+      INSERT INTO mcp_servers (id, config, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET config = ?, updatedAt = ?
+    `).run(serverId, configJson, now, now, configJson, now);
+  }
+
+  /**
+   * Get all MCP server configs
+   */
+  getMCPServerConfigs(): Array<{ id: string; config: Record<string, unknown> }> {
+    const rows = this.db.prepare('SELECT id, config FROM mcp_servers').all() as Array<{
+      id: string;
+      config: string;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      config: JSON.parse(row.config) as Record<string, unknown>,
+    }));
+  }
+
+  /**
+   * Get a single MCP server config by ID
+   */
+  getMCPServerConfig(serverId: string): Record<string, unknown> | null {
+    const row = this.db.prepare('SELECT config FROM mcp_servers WHERE id = ?').get(serverId) as {
+      config: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return JSON.parse(row.config) as Record<string, unknown>;
+  }
+
+  /**
+   * Delete MCP server config
+   */
+  deleteMCPServerConfig(serverId: string): boolean {
+    const result = this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(serverId);
+    return result.changes > 0;
+  }
+
+  // ============================================
+  // Utility Methods
+  // ============================================
+
+  /**
+   * Get the path to the role-specific database file
+   */
+  getRoleDbPath(roleId: string): string {
+    return path.join(path.dirname(this.dbPath), `role_${roleId}.db`);
+  }
+
+  /**
+   * Check if a role database exists
+   */
+  roleDbExists(roleId: string): boolean {
+    return fs.existsSync(this.getRoleDbPath(roleId));
+  }
+
+  /**
+   * Delete a role database file
+   */
+  deleteRoleDb(roleId: string): boolean {
+    const dbPath = this.getRoleDbPath(roleId);
+    if (fs.existsSync(dbPath)) {
+      fs.unlinkSync(dbPath);
+      return true;
+    }
+    return false;
+  }
+}
+
+// Singleton instance
+let mainDb: MainDatabase | null = null;
+
+export function getMainDatabase(dataDir: string = './data'): MainDatabase {
+  if (!mainDb) {
+    mainDb = new MainDatabase(dataDir);
+  }
+  return mainDb;
+}
+
+export function closeMainDatabase(): void {
+  if (mainDb) {
+    mainDb.close();
+    mainDb = null;
+  }
+}
