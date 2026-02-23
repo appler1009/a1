@@ -103,12 +103,21 @@ function EmailBody({ email }: { email: EmailMessage }) {
     // This implementation renders HTML as-is. Only use with trusted email sources!
 
     return (
-      <div
-        className="prose prose-sm dark:prose-invert max-w-none p-4"
-        dangerouslySetInnerHTML={{ __html: email.body }}
-        // WARNING: dangerouslySetInnerHTML can be a security risk
-        // Only use if email content is from a trusted source
-      />
+      <>
+        <style>{`
+          .email-html-body table,
+          .email-html-body table * {
+            border: none !important;
+            border-collapse: collapse;
+          }
+        `}</style>
+        <div
+          className="email-html-body prose prose-sm dark:prose-invert max-w-none p-4"
+          dangerouslySetInnerHTML={{ __html: email.body }}
+          // WARNING: dangerouslySetInnerHTML can be a security risk
+          // Only use if email content is from a trusted source
+        />
+      </>
     );
   }
 

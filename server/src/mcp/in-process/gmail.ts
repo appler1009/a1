@@ -13,6 +13,8 @@
  * - gmailModifyMessageLabels - Add/remove labels from messages
  * - gmailTrashMessage - Move message to trash
  * - gmailUntrashMessage - Restore message from trash
+ * - gmailArchiveMessage - Archive a message
+ * - gmailUnarchiveMessage - Unarchive a message
  * - gmailListLabels - List all available labels
  * - gmailListThreads - List conversation threads
  * - gmailGetThread - Get a specific thread by ID
@@ -29,6 +31,8 @@ import {
   modifyMessageLabels,
   trashMessage,
   untrashMessage,
+  archiveMessage,
+  unarchiveMessage,
   listLabels,
   listThreads,
   getThread,
@@ -273,6 +277,34 @@ export class GmailInProcess implements InProcessMCPModule {
       {
         name: 'gmailUntrashMessage',
         description: 'Restore a message from trash',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            messageId: {
+              type: 'string',
+              description: 'The message ID',
+            },
+          },
+          required: ['messageId'],
+        },
+      },
+      {
+        name: 'gmailArchiveMessage',
+        description: 'Archive a message (remove from inbox but keep in account)',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            messageId: {
+              type: 'string',
+              description: 'The message ID',
+            },
+          },
+          required: ['messageId'],
+        },
+      },
+      {
+        name: 'gmailUnarchiveMessage',
+        description: 'Unarchive a message (restore to inbox)',
         inputSchema: {
           type: 'object',
           properties: {
@@ -695,6 +727,42 @@ export class GmailInProcess implements InProcessMCPModule {
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error('[GmailInProcess:gmailUntrashMessage] Error:', errorMsg);
+      throw error;
+    }
+  }
+
+  /**
+   * Archive a message
+   */
+  async gmailArchiveMessage(args: any): Promise<unknown> {
+    try {
+      console.log('[GmailInProcess:gmailArchiveMessage] Archiving message', args);
+      const result = await archiveMessage(args.messageId, this.tokens);
+      return {
+        type: 'text',
+        text: JSON.stringify(result, null, 2),
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('[GmailInProcess:gmailArchiveMessage] Error:', errorMsg);
+      throw error;
+    }
+  }
+
+  /**
+   * Unarchive a message
+   */
+  async gmailUnarchiveMessage(args: any): Promise<unknown> {
+    try {
+      console.log('[GmailInProcess:gmailUnarchiveMessage] Unarchiving message', args);
+      const result = await unarchiveMessage(args.messageId, this.tokens);
+      return {
+        type: 'text',
+        text: JSON.stringify(result, null, 2),
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('[GmailInProcess:gmailUnarchiveMessage] Error:', errorMsg);
       throw error;
     }
   }

@@ -1663,6 +1663,7 @@ When showing email search results from gmailSearchMessages:
   - 1. [preview-file:Email Subject](cache-id) | From: sender@example.com (Sender Name) | Feb 22, 2026
   - 2. [preview-file:Another Subject](cache-id) | From: other@example.com | Feb 21, 2026
 - This makes it easy for users to scan results and click on emails they want to view
+- **IMPORTANT**: Any emails shown as links in your response MUST be downloaded using gmailGetMessage - never show raw email data or message IDs as links. Always use the cache-id from gmailGetMessage responses.
 
 ## MEMORY SYSTEM
 You have access to a knowledge graph memory system with the following tools:

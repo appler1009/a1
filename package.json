@@ -34,6 +34,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.76.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "gmail-mcp-lib": "^1.0.1"
+    "gmail-mcp-lib": "^1.1.0"
   }
 }
