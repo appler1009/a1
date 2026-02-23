@@ -145,6 +145,7 @@ export interface MCPToolInfo {
   name: string;
   description?: string;
   inputSchema: Record<string, unknown>;
+  requiresDetailedSchema?: boolean; // If true, full inputSchema should be included in search results
 }
 
 export interface MCPResource {

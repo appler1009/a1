@@ -48,18 +48,9 @@ export const MessageItem = memo(function MessageItem({ message, highlightKeyword
 
   // Handle preview-file links by downloading and displaying in preview pane
   const handlePreviewFileClick = async (filename: string, url: string) => {
-    // Determine mime type from extension
-    const ext = filename.split('.').pop()?.toLowerCase() || '';
-    const mimeTypes: Record<string, string> = {
-      pdf: 'application/pdf',
-      png: 'image/png',
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      gif: 'image/gif',
-      svg: 'image/svg+xml',
-      html: 'text/html',
-    };
-    const mimeType = mimeTypes[ext] || 'application/octet-stream';
+    // Import and use the centralized MIME type detection
+    const { getMimeTypeFromExtension } = await import('../lib/preview-adapters');
+    const mimeType = getMimeTypeFromExtension(filename);
 
     try {
       const response = await apiFetch('/api/viewer/download', {

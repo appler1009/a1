@@ -16,9 +16,14 @@ import { MetaMcpSearch, type ToolDef } from 'meta-mcp-search';
 
 /**
  * Result from searchWithScores
+ * Extended ToolDef to include requiresDetailedSchema flag
  */
+interface ExtendedToolDef extends ToolDef {
+  requiresDetailedSchema?: boolean;
+}
+
 interface ScoredTool {
-  tool: ToolDef;
+  tool: ExtendedToolDef;
   score: number;
 }
 
@@ -73,27 +78,28 @@ async function initSearchEngine(): Promise<void> {
  * Update the tool manifest and reinitialize the search engine
  * This is called when tools are discovered from MCP servers
  */
-export async function updateToolManifest(tools: Array<{ 
-  serverId: string; 
-  tools: MCPToolInfo[] 
+export async function updateToolManifest(tools: Array<{
+  serverId: string;
+  tools: MCPToolInfo[]
 }>): Promise<void> {
   console.log(`[MetaMcpSearch] Updating tool manifest with ${tools.reduce((sum, s) => sum + s.tools.length, 0)} tools from ${tools.length} servers`);
-  
-  // Convert to ToolDef format
+
+  // Convert to ToolDef format, preserving requiresDetailedSchema flag
   toolManifest = tools.flatMap(({ serverId, tools: serverTools }) =>
     serverTools.map(tool => ({
       name: tool.name,
       description: tool.description || '',
       inputSchema: tool.inputSchema as ToolDef['inputSchema'],
-      serverKey: serverId
+      serverKey: serverId,
+      requiresDetailedSchema: tool.requiresDetailedSchema
     }))
-  );
+  ) as any; // Cast to any since ToolDef doesn't have requiresDetailedSchema but we add it dynamically
 
   // Reinitialize search engine with new tools
   if (searchInstance) {
     searchInstance = null;
   }
-  
+
   if (toolManifest.length > 0) {
     await initSearchEngine();
   }
@@ -220,7 +226,11 @@ After calling this tool, you'll receive tool names and their server information.
       const formattedResults = results.map(({ tool, score }, index) => {
         let paramInfo = '';
 
-        if (tool.inputSchema?.properties) {
+        // For tools that require detailed schema, include the full schema
+        if (tool.requiresDetailedSchema && tool.inputSchema) {
+          paramInfo = `\n   Full Schema:\n\`\`\`json\n${JSON.stringify(tool.inputSchema, null, 2)}\n\`\`\``;
+        } else if (tool.inputSchema?.properties) {
+          // Otherwise, show a brief summary of parameters
           const props = tool.inputSchema.properties as Record<string, any>;
           const required = tool.inputSchema.required || [];
 

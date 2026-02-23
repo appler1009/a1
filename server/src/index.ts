@@ -763,11 +763,16 @@ async function handleToolResult(
   resultText: string,
   userId: string
 ): Promise<string> {
-          
-          // For convert_to_markdown with sizable content (>10 lines), save to a markdown file
-          // and return both the original file preview and the markdown preview
-          const resultLines = resultText.split('\n').length;
-          if (toolName === 'convert_to_markdown' && resultLines > 10) {
+  // Check if this is a display_email result
+  if (toolName === 'display_email') {
+    // Return the result as-is - it contains the special marker that the client will recognize
+    return resultText;
+  }
+
+  // For convert_to_markdown with sizable content (>10 lines), save to a markdown file
+  // and return both the original file preview and the markdown preview
+  const resultLines = resultText.split('\n').length;
+  if (toolName === 'convert_to_markdown' && resultLines > 10) {
             try {
               const fs = await import('fs/promises');
               const tempDir = path.join(config.storage.root, 'temp');
@@ -1357,6 +1362,81 @@ fastify.register(async (instance) => {
     return reply.send({ success: true, data: { migrated } });
   });
 
+  /**
+   * Enhance tool definition with detailed parameter descriptions
+   * Adds context and examples to help LLM understand how to use the tool
+   */
+  function enrichToolDefinition(tool: {
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, any>;
+    serverId?: string;
+  }): typeof tool {
+    if (!tool.inputSchema || typeof tool.inputSchema !== 'object') {
+      return tool;
+    }
+
+    const enriched = { ...tool };
+    const schema = { ...tool.inputSchema };
+
+    // Enhance parameter descriptions with context
+    if (schema.properties && typeof schema.properties === 'object') {
+      const enhancedProps: Record<string, any> = {};
+
+      for (const [key, prop] of Object.entries(schema.properties)) {
+        if (typeof prop === 'object' && prop !== null) {
+          enhancedProps[key] = { ...prop };
+
+          // Add helpful hints based on parameter name and type
+          if (!enhancedProps[key].description) {
+            enhancedProps[key].description = `${key} parameter`;
+          }
+
+          // Add examples for common parameter types
+          if (enhancedProps[key].type === 'string' && !enhancedProps[key].examples) {
+            if (key.includes('id') || key.includes('Id')) {
+              enhancedProps[key].description += ' (unique identifier)';
+            } else if (key.includes('query') || key.includes('search')) {
+              enhancedProps[key].description += ' (natural language query or search term)';
+            } else if (key.includes('email')) {
+              enhancedProps[key].description += ' (email address)';
+            } else if (key.includes('url') || key.includes('uri')) {
+              enhancedProps[key].description += ' (full URL or URI)';
+            }
+          }
+
+          // Add constraints information
+          if (enhancedProps[key].minLength) {
+            enhancedProps[key].description += ` (min: ${enhancedProps[key].minLength} chars)`;
+          }
+          if (enhancedProps[key].maxLength) {
+            enhancedProps[key].description += ` (max: ${enhancedProps[key].maxLength} chars)`;
+          }
+          if (enhancedProps[key].enum) {
+            enhancedProps[key].description += ` (valid values: ${enhancedProps[key].enum.join(', ')})`;
+          }
+          if (enhancedProps[key].default !== undefined) {
+            enhancedProps[key].description += ` [default: ${enhancedProps[key].default}]`;
+          }
+        }
+      }
+
+      schema.properties = enhancedProps;
+    }
+
+    // Add description about required fields if not present
+    if (schema.required && Array.isArray(schema.required) && schema.required.length > 0) {
+      const existingDesc = enriched.description || '';
+      const requiredFields = schema.required.join(', ');
+      if (!existingDesc.includes('Required') && !existingDesc.includes('required')) {
+        enriched.description = `${existingDesc}${existingDesc ? '\n' : ''}Required parameters: ${requiredFields}`;
+      }
+    }
+
+    enriched.inputSchema = schema;
+    return enriched;
+  }
+
   instance.post('/chat/stream', async (request, reply) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
@@ -1420,42 +1500,86 @@ fastify.register(async (instance) => {
       }
       console.log(`[ChatStream] Tool cache built with ${toolCache.getToolCount()} tool-to-server mappings`);
 
-      // PHASE 1: Start with only search_tool
+      // PHASE 1: Start with search_tool + memory retrieval tools
       // The search_tool allows the LLM to discover what tools are available
-      const searchToolOnly = [{
-        name: 'search_tool',
-        description: `Search for MCP tools using natural language. Use this tool to discover what tools are available for your task.
+      // Memory tools provide access to the knowledge graph for context
+      const phase1Tools = [
+        {
+          name: 'search_tool',
+          description: `Search for MCP tools using natural language. Use this tool to discover what tools are available for your task.
 
 IMPORTANT: This is your starting point for tool discovery. Describe what you want to accomplish in plain English, and this tool will return the most relevant MCP tools that can help you.
 
 Examples:
 - "list files in google drive" → returns google_drive_list tool
-- "send a message to slack" → returns slack_send_message tool  
+- "send a message to slack" → returns slack_send_message tool
 - "create a github issue" → returns github_create_issue tool
 - "read a pdf document" → returns convert_to_markdown tool
 
 After calling this tool, you'll receive tool names and their server information. The system will then make those tools available for you to use.`,
-        inputSchema: {
-          type: 'object',
-          properties: {
-            query: {
-              type: 'string',
-              description: 'Natural language query describing what you want to accomplish'
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Natural language query describing what you want to accomplish'
+              },
+              limit: {
+                type: 'number',
+                default: 5,
+                description: 'Maximum number of results to return (default: 5)'
+              }
             },
-            limit: {
-              type: 'number',
-              default: 5,
-              description: 'Maximum number of results to return (default: 5)'
-            }
+            required: ['query']
           },
-          required: ['query']
+          serverId: 'meta-mcp-search',
         },
-        serverId: 'meta-mcp-search',
-      }];
+        // Memory retrieval tools - always available for context
+        {
+          name: 'memory_search_nodes',
+          description: 'Search the knowledge graph for relevant entities, relationships, and observations. Use this to find existing context about topics discussed before.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Search query to find relevant entities and observations in memory'
+              }
+            },
+            required: ['query']
+          },
+          serverId: 'sqlite-memory',
+        },
+        {
+          name: 'memory_read_graph',
+          description: 'Read the entire knowledge graph including all entities, relations, and observations. Use this to get a complete overview of what has been learned.',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          },
+          serverId: 'sqlite-memory',
+        },
+        {
+          name: 'memory_open_nodes',
+          description: 'Retrieve specific entities by name from the knowledge graph. Use this to access detailed information about known topics.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              names: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Array of entity names to retrieve from memory'
+              }
+            },
+            required: ['names']
+          },
+          serverId: 'sqlite-memory',
+        }
+      ];
 
-      // Convert tools to provider format - start with search_tool only
-      const providerTools = llmRouter.convertMCPToolsToOpenAI(searchToolOnly);
-      console.log(`[ChatStream] Phase 1: Providing only search_tool (${providerTools.length} tool)`);
+      // Convert tools to provider format
+      const providerTools = llmRouter.convertMCPToolsToOpenAI(phase1Tools);
+      console.log(`[ChatStream] Phase 1: Providing search_tool + memory retrieval tools (${providerTools.length} tools)`);
       
       // Print the list of tools being sent to the LLM
       console.log('\n' + '='.repeat(80));
@@ -1518,21 +1642,41 @@ If the user asks about "this document" or "the file" without specifying, they ar
       // Add system message about file tagging for preview
       const systemMessage = {
         role: 'system' as const,
-        content: `You are a helpful assistant with Google Drive, file tools, and persistent memory.
+        content: `You are a helpful assistant.
 
-## Rules
-- No emojis. Use markdown only.
-- Use [preview-file:filename.ext](url) for all file links
-- Convert Google Drive view URLs to download: https://drive.google.com/uc?export=download&id=FILE_ID
-- For document summaries, use actual values only - no placeholders
-- **NEVER mention cache IDs, file IDs, or internal technical identifiers in your responses to the user**
-- When referencing files, always use the human-readable filename (e.g., "Report.pdf" not "1FXgYGOZse5UqROlqMJc1QtieBdowYsOG")
+- No emojis. Use markdown.
+- Use human-readable filenames and email subjects, never mention cache IDs or internal identifiers.
+- For all cached files (PDFs, Google Drive files, emails): Use [preview-file:Filename](cache-id) format for preview pane display. Never mention cache IDs in plain text.
+- For Google Drive files: Format as [preview-file:Filename](cache-id) where cache-id is from the downloaded/cached file, not the Google Drive ID.
+- When retrieving emails with gmailGetMessage or gmailGetThread: NEVER include email bodies in your response text. The email will be displayed in the preview pane automatically. Format cached emails as: [preview-file:Email Subject.json](cache-id-from-response). Include .json extension so preview pane correctly detects it as email. Just acknowledge that you retrieved it and provide a brief summary (subject, sender, key details).
 
-## Persistent Memory (AUTO-EXTRACT)
-You MUST automatically store notable information using memory tools (create_entities, create_relations, add_observations, read_graph, search_nodes).
-- **Automatically remember:** names, roles, preferences, projects, organizations, documents, key facts, dates, locations, decisions - anything worth recalling later.
-- **Process:** Identify notable info → Call memory tools immediately → Respond naturally (e.g., "I'll keep that in mind")
-- **Never mention:** cache IDs, file IDs, "stored in knowledge graph", or technical details${documentContext}`,
+## GMAIL EMAIL SEARCH RESULTS
+When showing email search results from gmailSearchMessages:
+- **NEVER** just list message IDs - they are useless to the user
+- **ALWAYS** fetch each message using gmailGetMessage() to get human-readable details
+- **MUST SHOW** for each email at minimum:
+  - Subject (as a [preview-file:...] link for direct viewing)
+  - Sender (From address and display name)
+  - Date (human-readable format)
+  - Brief preview/snippet if available
+- Format as a numbered list that users can understand:
+  - 1. [preview-file:Email Subject](cache-id) | From: sender@example.com (Sender Name) | Feb 22, 2026
+  - 2. [preview-file:Another Subject](cache-id) | From: other@example.com | Feb 21, 2026
+- This makes it easy for users to scan results and click on emails they want to view
+
+## MEMORY SYSTEM
+You have access to a knowledge graph memory system with the following tools:
+- **memory_search_nodes**: Search for relevant entities, relationships, and observations by query (e.g., "customer preferences", "project decisions")
+- **memory_read_graph**: Read the entire knowledge graph to get a complete overview of all learned information
+- **memory_open_nodes**: Retrieve specific entities by name to access their detailed observations and relationships
+
+**When to use memory:**
+- At the beginning of conversations, search memory for relevant context about the topic
+- Before making recommendations, check if related information exists in memory
+- When the user mentions a previous context or topic, look it up in memory first
+- Use memory to maintain continuity and personalization across conversations
+
+**Memory write tools** (create, add, delete entities/relations) are available via the search_tool if you need to save new learning.${documentContext}`,
       };
       
       let conversationMessages = [systemMessage, ...body.messages];
@@ -1540,6 +1684,11 @@ You MUST automatically store notable information using memory tools (create_enti
       let toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
       const MAX_TOOL_ITERATIONS = await getSettingWithDefault<number>('MAX_TOOL_ITERATIONS', 10);
       let toolIteration = 0;
+
+      // Track consecutive identical tool calls to prevent infinite loops
+      let lastToolCall: { name: string; args: string } | null = null;
+      let consecutiveIdenticalCallCount = 0;
+      const MAX_CONSECUTIVE_IDENTICAL_CALLS = 3;
 
       // Debug logging: print system prompt and user messages
       console.log('\n' + '='.repeat(80));
@@ -1615,6 +1764,29 @@ You MUST automatically store notable information using memory tools (create_enti
         // Execute tools and add results
         for (const toolCall of toolCalls) {
           console.log(`[ChatStream] Executing tool: ${toolCall.name}`);
+
+          // Check for consecutive identical tool calls (prevent infinite loops)
+          const currentCallKey = `${toolCall.name}:${JSON.stringify(toolCall.arguments)}`;
+          if (lastToolCall && lastToolCall.args === currentCallKey) {
+            consecutiveIdenticalCallCount++;
+            console.warn(`[ChatStream] ⚠️  Consecutive identical call #${consecutiveIdenticalCallCount}: ${toolCall.name}`);
+
+            if (consecutiveIdenticalCallCount >= MAX_CONSECUTIVE_IDENTICAL_CALLS) {
+              console.error(`[ChatStream] ❌ BLOCKED: Same tool called ${MAX_CONSECUTIVE_IDENTICAL_CALLS}x with same params`);
+              const blockedMessage = `⚠️ Tool call blocked: The same tool (${toolCall.name}) has been called ${MAX_CONSECUTIVE_IDENTICAL_CALLS} consecutive times with the same parameters. This usually indicates the tool is not working as expected or you need a different approach. Please try a different tool or modify your parameters.`;
+              conversationMessages.push({
+                role: 'user',
+                content: `Tool result for ${toolCall.name} (BLOCKED - repeated call):\n${blockedMessage}`,
+              });
+              reply.raw.write(`data: ${JSON.stringify({ type: 'tool_result', toolName: toolCall.name, result: blockedMessage, blocked: true })}\n\n`);
+              continue; // Skip execution, move to next tool call
+            }
+          } else {
+            // Reset counter if it's a different tool call
+            lastToolCall = { name: toolCall.name, args: currentCallKey };
+            consecutiveIdenticalCallCount = 1;
+          }
+
           const toolResult = await executeToolWithAdapters(request.user!.id, toolCall.name, toolCall.arguments);
 
           // PHASE 2: After search_tool returns, dynamically load the relevant tools
@@ -1639,18 +1811,19 @@ You MUST automatically store notable information using memory tools (create_enti
               for (const toolName of recommendedToolNames) {
                 const fullTool = flattenedTools.find(t => t.name === toolName);
                 if (fullTool) {
-                  phase2Tools.push({
+                  const enrichedTool = enrichToolDefinition({
                     name: fullTool.name,
                     description: fullTool.description || '',
                     inputSchema: fullTool.inputSchema || {},
-                    serverId: fullTool.serverId,
-                  });
+                    serverId: fullTool.serverId || 'unknown',
+                  }) as any;
+                  phase2Tools.push(enrichedTool);
                   console.log(`[ChatStream] Added Phase 2 tool: ${toolName} from server ${fullTool.serverId}`);
                 }
               }
               
               // Also add search_tool back so the LLM can search again if needed
-              phase2Tools.push({
+              const searchToolEnriched = enrichToolDefinition({
                 name: 'search_tool',
                 description: `Search for more MCP tools using natural language. Use this if you need additional tools beyond what was already found.`,
                 inputSchema: {
@@ -1669,7 +1842,8 @@ You MUST automatically store notable information using memory tools (create_enti
                   required: ['query']
                 },
                 serverId: 'meta-mcp-search',
-              });
+              }) as any;
+              phase2Tools.push(searchToolEnriched);
               
               if (phase2Tools.length > 0) {
                 hasLoadedPhase2Tools = true;
@@ -1681,13 +1855,30 @@ You MUST automatically store notable information using memory tools (create_enti
                 console.log(`[ChatStream] Phase 2: Now providing ${providerTools.length} tools`);
                 console.log('[ChatStream] Phase 2 tools:', phase2Tools.map(t => t.name).join(', '));
                 
-                // Log the updated tool list
+                // Log the updated tool list with detailed parameters
                 console.log('\n' + '='.repeat(80));
-                console.log('[ChatStream] PHASE 2 TOOLS NOW AVAILABLE:');
+                console.log('[ChatStream] PHASE 2 TOOLS NOW AVAILABLE (WITH DETAILED PARAMETERS):');
                 console.log('-'.repeat(80));
-                providerTools.forEach((tool, idx) => {
-                  const name = tool.function?.name || 'unnamed';
-                  console.log(`  [${idx + 1}] ${name}`);
+                phase2Tools.forEach((tool, idx) => {
+                  console.log(`\n[${idx + 1}] ${tool.name}`);
+                  if (tool.description) {
+                    console.log(`    Description: ${tool.description.split('\n')[0]}`);
+                  }
+                  if (tool.inputSchema?.properties) {
+                    const propNames = Object.keys(tool.inputSchema.properties);
+                    if (propNames.length > 0) {
+                      console.log(`    Parameters: ${propNames.join(', ')}`);
+                      for (const propName of propNames.slice(0, 3)) {
+                        const prop = tool.inputSchema.properties[propName] as any;
+                        if (prop?.description) {
+                          console.log(`      - ${propName}: ${prop.description.substring(0, 80)}`);
+                        }
+                      }
+                      if (propNames.length > 3) {
+                        console.log(`      ... and ${propNames.length - 3} more parameters`);
+                      }
+                    }
+                  }
                 });
                 console.log('='.repeat(80) + '\n');
               }
@@ -1785,23 +1976,36 @@ fastify.register(async (instance) => {
 
     try {
       const fs = await import('fs/promises');
-      
+
       // Create temp directory if it doesn't exist
       const tempDir = path.join(config.storage.root, 'temp');
       await fs.mkdir(tempDir, { recursive: true }).catch(() => {});
-      
-      // Generate a cache key from the URL
-      const crypto = await import('crypto');
-      const urlHash = crypto.createHash('md5').update(body.url).digest('hex').substring(0, 12);
-      
-      // Check if this is a Google Drive URL to extract file ID for caching
-      const gdriveMatch = body.url.match(/drive\.google\.com\/.*(?:file\/d\/|id=)([a-zA-Z0-9_-]+)/);
-      const gdriveDownloadMatch = body.url.match(/drive\.google\.com\/uc\?export=download&id=([a-zA-Z0-9_-]+)/);
-      const gdriveFileId = gdriveMatch?.[1] || gdriveDownloadMatch?.[1];
-      
-      // Use Google Drive file ID as cache key if available, otherwise use URL hash
-      const cacheKey = gdriveFileId || urlHash;
-      
+
+      // Check if body.url is a cache ID (not a real URL)
+      // Cache IDs look like: gmail_xxx_yyyy, gmail_thread_xxx_yyyy, or file-id
+      const isCacheId = !body.url.includes('://') && !body.url.includes('/');
+
+      let cacheKey: string;
+      let gdriveFileId: string | undefined;
+
+      if (isCacheId) {
+        // This is already a cache ID, use it directly
+        console.log(`[ViewerDownload] Detected cache ID: ${body.url}`);
+        cacheKey = body.url;
+      } else {
+        // Generate a cache key from the URL
+        const crypto = await import('crypto');
+        const urlHash = crypto.createHash('md5').update(body.url).digest('hex').substring(0, 12);
+
+        // Check if this is a Google Drive URL to extract file ID for caching
+        const gdriveMatch = body.url.match(/drive\.google\.com\/.*(?:file\/d\/|id=)([a-zA-Z0-9_-]+)/);
+        const gdriveDownloadMatch = body.url.match(/drive\.google\.com\/uc\?export=download&id=([a-zA-Z0-9_-]+)/);
+        gdriveFileId = gdriveMatch?.[1] || gdriveDownloadMatch?.[1];
+
+        // Use Google Drive file ID as cache key if available, otherwise use URL hash
+        cacheKey = gdriveFileId || urlHash;
+      }
+
       // Look for existing cached file with this cache key
       const tempFiles = await fs.readdir(tempDir).catch(() => []);
       // Find a file that matches the cache ID (format: {cacheId}.{ext})
@@ -1836,13 +2040,18 @@ fastify.register(async (instance) => {
         const previewUrl = `/api/viewer/temp/${cachedFile}`;
         const absoluteFilePath = path.resolve(cachedFilePath);
         const fileUri = `file://${absoluteFilePath}`;
-        
+
         // Get the original filename from the request or cached file
-        const originalFilename = body.filename || cachedFile;
-        
+        let originalFilename = body.filename || cachedFile;
+
+        // For cached email files, ensure filename includes .json extension for adapter detection
+        if (cachedFile.includes('email') && !originalFilename.endsWith('.json')) {
+          originalFilename = `${originalFilename}.json`;
+        }
+
         console.log(`[ViewerDownload] Preview URL: ${previewUrl}`);
         console.log('[ViewerDownload] ========================================\n');
-        
+
         return reply.send({
           success: true,
           data: {
@@ -1857,9 +2066,71 @@ fastify.register(async (instance) => {
           },
         });
       }
-      
+
+      // If this was a cache ID but we couldn't find the file, try with common extensions
+      if (isCacheId) {
+        console.log(`[ViewerDownload] Cache miss for cache ID. Trying with common extensions...`);
+        const commonExtensions = ['json', 'pdf', 'txt', 'html', 'md'];
+
+        for (const ext of commonExtensions) {
+          const filename = `${cacheKey}.${ext}`;
+          const filepath = path.join(tempDir, filename);
+          try {
+            const stats = await fs.stat(filepath);
+            console.log(`[ViewerDownload] Found file with extension .${ext}: ${filename}`);
+
+            const contentTypes: Record<string, string> = {
+              pdf: 'application/pdf',
+              json: 'application/json',
+              txt: 'text/plain',
+              html: 'text/html',
+              md: 'text/markdown',
+            };
+
+            const contentType = contentTypes[ext] || 'application/octet-stream';
+            const previewUrl = `/api/viewer/temp/${filename}`;
+            const absoluteFilePath = path.resolve(filepath);
+            const fileUri = `file://${absoluteFilePath}`;
+
+            let originalFilename = body.filename || filename;
+            if (ext === 'json' && originalFilename.includes('email')) {
+              originalFilename = originalFilename.endsWith('.json') ? originalFilename : `${originalFilename}.json`;
+            }
+
+            console.log(`[ViewerDownload] Cache recovery successful with .${ext} extension`);
+            console.log('[ViewerDownload] ========================================\n');
+
+            return reply.send({
+              success: true,
+              data: {
+                id: cacheKey,
+                name: originalFilename,
+                mimeType: contentType,
+                previewUrl,
+                fileUri,
+                absolutePath: absoluteFilePath,
+                size: stats.size,
+                cached: true,
+              },
+            });
+          } catch {
+            // File doesn't exist with this extension, try next one
+          }
+        }
+
+        // Cache ID not found with any extension
+        console.error(`[ViewerDownload] ERROR: Cache ID not found in temp directory: ${cacheKey}`);
+        return reply.code(404).send({
+          success: false,
+          error: {
+            message: `Cached file not found: ${cacheKey}. The file may have been deleted or expired.`,
+            cacheId: cacheKey
+          }
+        });
+      }
+
       console.log(`[ViewerDownload] Cache miss. Downloading file...`);
-      
+
       let buffer: Buffer;
       let contentType = body.mimeType || 'application/octet-stream';
       let filename = body.filename || 'downloaded-file';
@@ -2410,7 +2681,7 @@ fastify.register(async (instance) => {
       // Create config from predefined server
       console.log(`[AddPredefinedServer:${requestId}] Creating server config...`);
       const config = {
-        id: undefined, // Will be auto-generated
+        id: predefinedServer.id, // Use canonical ID (e.g., 'gmail-mcp-lib') so adapter registry can find it
         name: predefinedServer.name,
         transport: 'stdio' as const,
         command: predefinedServer.command,

@@ -5,6 +5,8 @@ import { SQLiteMemoryInProcess } from '../in-process/sqlite-memory.js';
 import { WeatherInProcess } from '../in-process/weather.js';
 import { MetaMcpSearchInProcess } from '../in-process/meta-mcp-search.js';
 import { GoogleDriveInProcess } from '../in-process/google-drive.js';
+import { GmailInProcess } from '../in-process/gmail.js';
+import { DisplayEmailInProcess } from '../in-process/display-email.js';
 
 /**
  * Simple concrete implementation of BaseStdioAdapter for generic MCP servers
@@ -47,7 +49,7 @@ class AdapterRegistry {
   constructor() {
     // Google Drive - in-process for better performance
     // Uses google-drive-mcp-lib for direct API calls
-    this.registerInProcess('google-drive-full', (userId: string, tokenData?: any) => {
+    this.registerInProcess('google-drive-mcp-lib', (userId: string, tokenData?: any) => {
       if (!tokenData) {
         throw new Error('Token data required for Google Drive in-process adapter');
       }
@@ -82,7 +84,28 @@ class AdapterRegistry {
     // This is the initial tool exposed to the LLM for tool discovery
     this.registerInProcess('meta-mcp-search', (userId: string) => new MetaMcpSearchInProcess(userId));
     this.registerInProcess('Meta MCP Search', (userId: string) => new MetaMcpSearchInProcess(userId));
-    
+
+    // Gmail - in-process for better performance
+    // Uses gmail-mcp-lib for direct API calls
+    this.registerInProcess('gmail-mcp-lib', (userId: string, tokenData?: any) => {
+      if (!tokenData) {
+        throw new Error('Token data required for Gmail in-process adapter');
+      }
+      const storageRoot = process.env.STORAGE_ROOT || './data';
+      return new GmailInProcess(tokenData, storageRoot);
+    });
+    this.registerInProcess('Gmail', (userId: string, tokenData?: any) => {
+      if (!tokenData) {
+        throw new Error('Token data required for Gmail in-process adapter');
+      }
+      const storageRoot = process.env.STORAGE_ROOT || './data';
+      return new GmailInProcess(tokenData, storageRoot);
+    });
+
+    // Display Email - allows AI to show emails in preview pane
+    this.registerInProcess('display-email', () => new DisplayEmailInProcess());
+    this.registerInProcess('Display Email', () => new DisplayEmailInProcess());
+
     // Future: this.register('github', GithubAdapter);
     // Future: this.register('brave-search', BraveSearchAdapter);
   }

@@ -159,6 +159,7 @@ export const MCPToolInfoSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
   inputSchema: z.record(z.unknown()).optional(),
+  requiresDetailedSchema: z.boolean().optional(),
 });
 
 // MCP Resource

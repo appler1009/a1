@@ -163,6 +163,9 @@ export class MainDatabase {
         updatedAt TEXT NOT NULL
       );
     `);
+
+    // Migrate old MCP server IDs to new package names
+    this.migrateMCPServerIds();
   }
 
   close(): void {
@@ -901,6 +904,45 @@ export class MainDatabase {
   deleteMCPServerConfig(serverId: string): boolean {
     const result = this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(serverId);
     return result.changes > 0;
+  }
+
+  /**
+   * Migrate old MCP server IDs to new package names
+   * Handles: google-drive-full → google-drive-mcp-lib, gmail-full → gmail-mcp-lib
+   */
+  migrateMCPServerIds(): void {
+    try {
+      const migrations = [
+        { old: 'google-drive-full', new: 'google-drive-mcp-lib' },
+        { old: 'gmail-full', new: 'gmail-mcp-lib' },
+      ];
+
+      for (const { old, new: newId } of migrations) {
+        // Update old ID to new ID if it exists and new doesn't
+        const result = this.db.prepare(`
+          UPDATE mcp_servers
+          SET id = ?
+          WHERE id = ? AND NOT EXISTS (
+            SELECT 1 FROM mcp_servers WHERE id = ?
+          )
+        `).run(newId, old, newId);
+
+        if (result.changes > 0) {
+          console.log(`[MainDatabase] Migrated MCP server: ${old} → ${newId}`);
+        }
+
+        // Delete old ID if new ID already exists (cleanup duplicate)
+        const deleteResult = this.db.prepare(`
+          DELETE FROM mcp_servers WHERE id = ?
+        `).run(old);
+
+        if (deleteResult.changes > 0 && result.changes === 0) {
+          console.log(`[MainDatabase] Deleted duplicate old MCP server: ${old}`);
+        }
+      }
+    } catch (error) {
+      console.error('[MainDatabase] Error migrating MCP server IDs:', error);
+    }
   }
 
   // ============================================

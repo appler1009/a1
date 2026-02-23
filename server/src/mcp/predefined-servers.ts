@@ -5,7 +5,7 @@
  */
 
 export interface PredefinedMCPServer {
-  id: string; // Internal ID: 'google-drive-full', 'markitdown', etc.
+  id: string; // Internal ID: 'google-drive-mcp-lib', 'gmail-mcp-lib', 'markitdown', etc.
   name: string; // Display name
   description: string;
   command: string;
@@ -24,7 +24,7 @@ export interface PredefinedMCPServer {
 
 export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
   {
-    id: 'google-drive-full',
+    id: 'google-drive-mcp-lib',
     name: 'Google Drive',
     description: 'Access files and documents from Google Drive. Requires Google OAuth authentication.',
     command: 'npx',
@@ -129,6 +129,34 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     global: true, // Global: not affected by role switches
     inProcess: true, // Use InProcessAdapter for direct function calls
   },
+
+  {
+    id: 'gmail-mcp-lib',
+    name: 'Gmail',
+    description: 'Access Gmail inbox, search emails, send messages, manage labels and threads. Requires Google OAuth authentication.',
+    command: 'npx',
+    args: ['-y', 'gmail-mcp-lib'],
+    auth: {
+      provider: 'google',
+    },
+    icon: 'mail',
+    inProcess: true, // Use InProcessAdapter for direct API calls (better performance)
+  },
+
+  // DISABLED: Testing email preview with cache IDs instead
+  // {
+  //   id: 'display-email',
+  //   name: 'Display Email',
+  //   description: 'Display email messages and threads in the preview pane. Called by the AI to show email content to the user.',
+  //   command: '', // In-process only
+  //   args: [],
+  //   auth: {
+  //     provider: 'none',
+  //   },
+  //   hidden: true, // Hidden from UI - automatically available
+  //   global: true, // Global: not affected by role switches
+  //   inProcess: true, // Use InProcessAdapter for direct function calls
+  // },
 ];
 
 /**

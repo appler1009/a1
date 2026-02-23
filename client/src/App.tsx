@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import { useAuthStore, useEnvironmentStore, useUIStore, useRolesStore } from './store';
+import { initializePreviewAdapters } from './lib/adapters';
 import { LoginPage } from './pages/LoginPage';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { JoinPage } from './pages/JoinPage';
@@ -67,6 +68,9 @@ function App() {
   const user = useAuthStore((state) => state.user);
 
   useEffect(() => {
+    // Initialize preview adapters on app startup
+    initializePreviewAdapters();
+
     // Fetch environment info on app startup
     fetchEnvironment();
   }, [fetchEnvironment]);

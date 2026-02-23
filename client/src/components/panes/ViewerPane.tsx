@@ -1,13 +1,8 @@
 import { useUIStore } from '../../store';
-import React, { useState, useRef, useEffect } from 'react';
-import { Document, Page, pdfjs } from 'react-pdf';
+import React, { useRef, useEffect, useState } from 'react';
 import { TopBanner } from '../TopBanner';
 import { apiFetch } from '../../lib/api';
-import 'react-pdf/dist/Page/AnnotationLayer.css';
-import 'react-pdf/dist/Page/TextLayer.css';
-
-// Set up PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+import { previewAdapterRegistry } from '../../lib/preview-adapters';
 
 interface MCPServer {
   id?: string;
@@ -31,8 +26,6 @@ interface PredefinedMCPServer {
 
 export function ViewerPane() {
   const { viewerFile } = useUIStore();
-  const [numPages, setNumPages] = useState<number | null>(null);
-  const [scale, setScale] = useState(1.0);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState<number>(600);
 
@@ -52,82 +45,42 @@ export function ViewerPane() {
     return () => resizeObserver.disconnect();
   }, []);
 
-  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
-    setNumPages(numPages);
-  }
+  // Find the appropriate preview adapter for the current file
+  const adapter = viewerFile ? previewAdapterRegistry.findAdapter(viewerFile) : undefined;
+  const previewContent = adapter && viewerFile ? adapter.render(viewerFile, containerWidth) : null;
 
-  // Reset when file changes
-  useEffect(() => {
-    setNumPages(null);
-  }, [viewerFile?.previewUrl]);
-
-  // Generate array of page numbers for rendering all pages
-  const pages = numPages ? Array.from({ length: numPages }, (_, i) => i + 1) : [];
+  // Remove .json extension from email files for display (added for adapter detection)
+  const displayFileName = viewerFile?.name?.endsWith('.json') && viewerFile?.name?.length > 5
+    ? viewerFile.name.slice(0, -5) // Remove ".json"
+    : viewerFile?.name;
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden bg-background">
       {/* Top Banner */}
       <TopBanner
-        fileName={viewerFile?.name}
+        fileName={displayFileName}
         sourceUrl={viewerFile?.sourceUrl}
         openInNewWindowLabel="Open in New Window"
       />
-      
-      {/* PDF Controls */}
-      {viewerFile && numPages && (
-        <div className="flex items-center justify-center gap-4 py-2 border-b bg-muted/30 px-4">
-          <span className="text-sm text-muted-foreground">
-            {numPages} page{numPages !== 1 ? 's' : ''}
-          </span>
-          <div className="border-l pl-4 ml-2 flex items-center gap-2">
-            <button
-              onClick={() => setScale(prev => Math.max(prev - 0.1, 0.5))}
-              className="px-2 py-1 text-sm rounded bg-muted hover:bg-muted/80"
-              title="Zoom out"
-            >
-              -
-            </button>
-            <span className="text-sm w-12 text-center">{Math.round(scale * 100)}%</span>
-            <button
-              onClick={() => setScale(prev => Math.min(prev + 0.1, 2.0))}
-              className="px-2 py-1 text-sm rounded bg-muted hover:bg-muted/80"
-              title="Zoom in"
-            >
-              +
-            </button>
-          </div>
-        </div>
-      )}
-      
-      <div ref={containerRef} className="flex-1 overflow-auto">
+
+      {/* Preview Content */}
+      <div ref={containerRef} className="flex flex-col flex-1 overflow-hidden">
         {viewerFile ? (
-          <div className="flex flex-col items-center py-4 gap-2">
-            <Document
-              file={viewerFile.previewUrl}
-              onLoadSuccess={onDocumentLoadSuccess}
-              loading={
-                <div className="flex items-center justify-center h-64">
-                  <p className="text-muted-foreground">Loading PDF...</p>
-                </div>
-              }
-              error={
-                <div className="flex items-center justify-center h-64">
-                  <p className="text-destructive">Failed to load PDF</p>
-                </div>
-              }
-            >
-              {pages.map((pageNum) => (
-                <Page 
-                  key={pageNum}
-                  pageNumber={pageNum} 
-                  width={containerWidth * scale}
-                  renderTextLayer={true}
-                  renderAnnotationLayer={true}
-                  className="mb-2"
-                />
-              ))}
-            </Document>
-          </div>
+          previewContent ? (
+            previewContent
+          ) : (
+            <div className="flex items-center justify-center h-full text-muted-foreground">
+              <div className="text-center">
+                <p className="text-sm font-semibold mb-2">Unsupported File Type</p>
+                <p className="text-xs text-muted-foreground">
+                  No preview available for {viewerFile.mimeType || 'this file type'}
+                </p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Supported: PDF, Images, Text, Markdown
+                </p>
+              </div>
+            </div>
+          )
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground">
             <div className="text-center">
@@ -151,6 +104,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   const [servers, setServers] = React.useState<MCPServer[]>([]);
   const [predefinedServers, setPredefinedServers] = React.useState<PredefinedMCPServer[]>([]);
   const [adding, setAdding] = React.useState(false);
+  // @ts-ignore: selectedServerId is kept for state consistency, but logic uses selectedServerIdRef
   const [selectedServerId, setSelectedServerId] = React.useState<string | null>(null);
   const [authRequired, setAuthRequired] = React.useState(false);
   const [authProvider, setAuthProvider] = React.useState<string | null>(null);
@@ -245,116 +199,13 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     }
   };
 
-  // Start OAuth flow for any provider
-  const startOAuthFlow = async (provider: string): Promise<boolean> => {
-    try {
-      const endpoint = `/api/auth/${provider}/start`;
-      const authResponse = await apiFetch(endpoint, { excludeRoleId: true });
-
-      if (!authResponse.ok) {
-        console.error(`Failed to start ${provider} OAuth:`, authResponse.status);
-        return false;
-      }
-
-      const authData = await authResponse.json();
-
-      if (authData.data?.authUrl) {
-        const width = 500;
-        const height = 600;
-        const left = window.screenX + (window.outerWidth - width) / 2;
-        const top = window.screenY + (window.outerHeight - height) / 2;
-
-        const popup = window.open(
-          authData.data.authUrl,
-          `${provider}-auth`,
-          `width=${width},height=${height},left=${left},top=${top}`
-        );
-        
-        // Store popup reference for polling
-        if (popup) {
-          oauthPopupRef.current = popup;
-          
-          // Start polling for OAuth completion
-          startOAuthPolling(provider);
-        }
-        
-        return true;
-      }
-    } catch (error) {
-      console.error(`Error starting ${provider} OAuth:`, error);
-    }
-    return false;
-  };
-  
-  // Poll for OAuth completion as a fallback to postMessage
-  const startOAuthPolling = (provider: string) => {
-    // Clear any existing polling
-    if (oauthPollIntervalRef.current) {
-      clearInterval(oauthPollIntervalRef.current);
-    }
-    
-    console.log(`[OAuth] Starting polling for ${provider} token...`);
-    console.log(`[OAuth] Selected server ID: ${selectedServerIdRef.current}`);
-    
-    let attempts = 0;
-    const maxAttempts = 60; // 60 seconds max
-    
-    oauthPollIntervalRef.current = setInterval(async () => {
-      attempts++;
-      
-      // Check if popup is closed
-      const popupClosed = oauthPopupRef.current?.closed;
-      
-      // Check if token exists
-      const hasToken = await checkOAuthToken(provider);
-      
-      console.log(`[OAuth] Poll attempt ${attempts}: hasToken=${hasToken}, popupClosed=${popupClosed}`);
-      
-      if (hasToken) {
-        console.log(`[OAuth] Token found for ${provider} after ${attempts} attempts`);
-        clearInterval(oauthPollIntervalRef.current!);
-        oauthPollIntervalRef.current = null;
-        oauthPopupRef.current = null;
-        
-        // Add the server now that we have the token
-        const serverId = selectedServerIdRef.current;
-        if (serverId) {
-          console.log(`[OAuth] Adding server after auth: ${serverId}`);
-          addServerAfterAuth(serverId);
-        }
-        return;
-      }
-      
-      // If popup is closed and no token, show error
-      if (popupClosed && !hasToken) {
-        console.log(`[OAuth] Popup closed without token after ${attempts} attempts`);
-        clearInterval(oauthPollIntervalRef.current!);
-        oauthPollIntervalRef.current = null;
-        oauthPopupRef.current = null;
-        
-        // Don't show error immediately - user might have cancelled
-        // Just reset the auth state
-        setAuthRequired(false);
-        setSelectedServerId(null);
-        selectedServerIdRef.current = null;
-        setAuthProvider(null);
-        return;
-      }
-      
-      // Timeout after max attempts
-      if (attempts >= maxAttempts) {
-        console.log(`[OAuth] Polling timed out after ${maxAttempts} attempts`);
-        clearInterval(oauthPollIntervalRef.current!);
-        oauthPollIntervalRef.current = null;
-        oauthPopupRef.current = null;
-        setToast({ message: 'Authentication timed out. Please try again.', type: 'error' });
-        setAuthRequired(false);
-        setSelectedServerId(null);
-        selectedServerIdRef.current = null;
-        setAuthProvider(null);
-      }
-    }, 1000);
-  };
+  // Helper function to clear OAuth state
+  const clearOAuthState = React.useCallback(() => {
+    setAuthRequired(false);
+    setSelectedServerId(null);
+    selectedServerIdRef.current = null;
+    setAuthProvider(null);
+  }, []);
 
   // Add server after auth is complete (called after OAuth success)
   const addServerAfterAuth = React.useCallback(async (serverId: string) => {
@@ -405,6 +256,111 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     }
   }, [onClose, predefinedServers]);
 
+  // Start OAuth flow for any provider
+  const startOAuthFlow = async (provider: string): Promise<boolean> => {
+    try {
+      const endpoint = `/api/auth/${provider}/start`;
+      const authResponse = await apiFetch(endpoint, { excludeRoleId: true });
+
+      if (!authResponse.ok) {
+        console.error(`Failed to start ${provider} OAuth:`, authResponse.status);
+        return false;
+      }
+
+      const authData = await authResponse.json();
+
+      if (authData.data?.authUrl) {
+        const width = 500;
+        const height = 600;
+        const left = window.screenX + (window.outerWidth - width) / 2;
+        const top = window.screenY + (window.outerHeight - height) / 2;
+
+        const popup = window.open(
+          authData.data.authUrl,
+          `${provider}-auth`,
+          `width=${width},height=${height},left=${left},top=${top}`
+        );
+
+        // Store popup reference for polling
+        if (popup) {
+          oauthPopupRef.current = popup;
+
+          // Start polling for OAuth completion
+          startOAuthPolling(provider);
+        }
+
+        return true;
+      }
+    } catch (error) {
+      console.error(`Error starting ${provider} OAuth:`, error);
+    }
+    return false;
+  };
+
+  // Poll for OAuth completion as a fallback to postMessage
+  const startOAuthPolling = React.useCallback((provider: string) => {
+    // Clear any existing polling
+    if (oauthPollIntervalRef.current) {
+      clearInterval(oauthPollIntervalRef.current);
+    }
+
+    console.log(`[OAuth] Starting polling for ${provider} token...`);
+    console.log(`[OAuth] Selected server ID: ${selectedServerIdRef.current}`);
+
+    let attempts = 0;
+    const maxAttempts = 60; // 60 seconds max
+
+    oauthPollIntervalRef.current = setInterval(async () => {
+      attempts++;
+
+      // Check if popup is closed
+      const popupClosed = oauthPopupRef.current?.closed;
+
+      // Check if token exists
+      const hasToken = await checkOAuthToken(provider);
+
+      console.log(`[OAuth] Poll attempt ${attempts}: hasToken=${hasToken}, popupClosed=${popupClosed}`);
+
+      if (hasToken) {
+        console.log(`[OAuth] Token found for ${provider} after ${attempts} attempts`);
+        clearInterval(oauthPollIntervalRef.current!);
+        oauthPollIntervalRef.current = null;
+        oauthPopupRef.current = null;
+
+        // Add the server now that we have the token
+        const serverId = selectedServerIdRef.current;
+        if (serverId) {
+          console.log(`[OAuth] Adding server via polling: ${serverId}`);
+          addServerAfterAuth(serverId);
+        }
+        return;
+      }
+
+      // If popup is closed and no token, show error
+      if (popupClosed && !hasToken) {
+        console.log(`[OAuth] Popup closed without token after ${attempts} attempts`);
+        clearInterval(oauthPollIntervalRef.current!);
+        oauthPollIntervalRef.current = null;
+        oauthPopupRef.current = null;
+
+        // Don't show error immediately - user might have cancelled
+        // Just reset the auth state
+        clearOAuthState();
+        return;
+      }
+
+      // Timeout after max attempts
+      if (attempts >= maxAttempts) {
+        console.log(`[OAuth] Polling timed out after ${maxAttempts} attempts`);
+        clearInterval(oauthPollIntervalRef.current!);
+        oauthPollIntervalRef.current = null;
+        oauthPopupRef.current = null;
+        setToast({ message: 'Authentication timed out. Please try again.', type: 'error' });
+        clearOAuthState();
+      }
+    }, 1000);
+  }, [addServerAfterAuth, clearOAuthState]);
+
   // Listen for OAuth success messages from popup
   React.useEffect(() => {
     const handleOAuthMessage = (event: MessageEvent) => {
@@ -413,24 +369,27 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
 
       if (event.data?.type === 'oauth_success') {
         console.log(`[OAuth] Received success message for ${event.data.provider}`);
-        
+
         // Stop polling since we got the message
         if (oauthPollIntervalRef.current) {
           clearInterval(oauthPollIntervalRef.current);
           oauthPollIntervalRef.current = null;
         }
-        
-        // Try adding the server after OAuth completes
-        if (selectedServerId) {
-          console.log(`[OAuth] Adding server after auth: ${selectedServerId}`);
-          addServerAfterAuth(selectedServerId);
+
+        // Try adding the server after OAuth completes using the ref to avoid stale closure
+        const serverId = selectedServerIdRef.current;
+        if (serverId) {
+          console.log(`[OAuth] Adding server after auth: ${serverId}`);
+          addServerAfterAuth(serverId);
+        } else {
+          console.warn('[OAuth] No server ID found in ref, cannot complete OAuth flow');
         }
       }
     };
 
     window.addEventListener('message', handleOAuthMessage);
     return () => window.removeEventListener('message', handleOAuthMessage);
-  }, [selectedServerId, addServerAfterAuth]);
+  }, [addServerAfterAuth]);
 
   // Handle server selection - checks auth requirements proactively
   const handleAddServer = async (serverId: string) => {
@@ -569,10 +528,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
                 oauthPollIntervalRef.current = null;
               }
               oauthPopupRef.current = null;
-              setAuthRequired(false);
-              setSelectedServerId(null);
-              selectedServerIdRef.current = null;
-              setAuthProvider(null);
+              clearOAuthState();
             }}
             className="px-4 py-2 bg-muted rounded-lg hover:bg-muted/80"
           >
@@ -640,9 +596,13 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
       <div className="flex gap-2 mt-6 pt-4 border-t border-border">
         <button
           onClick={() => {
+            // Stop any ongoing OAuth polling when closing the dialog
+            if (oauthPollIntervalRef.current) {
+              clearInterval(oauthPollIntervalRef.current);
+              oauthPollIntervalRef.current = null;
+            }
+            clearOAuthState();
             onClose();
-            setAuthRequired(false);
-            setSelectedServerId(null);
           }}
           className="flex-1 px-4 py-2 bg-muted rounded-lg hover:bg-muted/80"
         >

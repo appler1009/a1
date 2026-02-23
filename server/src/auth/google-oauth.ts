@@ -13,10 +13,12 @@ export interface GoogleTokenResponse {
   token_type: string;
 }
 
-// Google OAuth scopes for Drive access
+// Google OAuth scopes for Drive and Gmail access
 // Note: Drive scope grants access to all Google Workspace files (Docs, Sheets, etc.)
+// Gmail scope grants full read/write access to Gmail (needed for sending, drafts, labels, etc.)
 const GOOGLE_OAUTH_SCOPES = [
-  'https://www.googleapis.com/auth/drive',  // Full Drive access (includes Docs, Sheets, etc.)
+  'https://www.googleapis.com/auth/drive',           // Full Drive access (includes Docs, Sheets, etc.)
+  'https://www.googleapis.com/auth/gmail.modify',   // Full read/write access to Gmail
 ];
 
 export class GoogleOAuthHandler {

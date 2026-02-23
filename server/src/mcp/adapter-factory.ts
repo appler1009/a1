@@ -213,7 +213,7 @@ async function loadServerConfig(serverKey: string): Promise<MCPServerConfig> {
  * 6. Connect and cache
  *
  * @param userId - The user ID requesting the adapter
- * @param serverKey - The MCP server key (e.g., 'google-drive-full')
+ * @param serverKey - The MCP server key (e.g., 'google-drive-mcp-lib', 'gmail-mcp-lib')
  * @returns A connected McpAdapter instance
  */
 export async function getMcpAdapter(userId: string, serverKey: string): Promise<McpAdapter> {
