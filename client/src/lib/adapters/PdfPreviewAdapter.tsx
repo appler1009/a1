@@ -4,7 +4,7 @@
  * Renders PDF files using react-pdf library with zoom and page controls
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { PreviewAdapter } from '../preview-adapters';
 import { ViewerFile } from '../../store';
@@ -21,10 +21,34 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/b
 function PdfPreviewComponent({ file, containerWidth }: { file: ViewerFile; containerWidth: number }) {
   const [numPages, setNumPages] = useState<number | null>(null);
   const [scale, setScale] = useState(1.0);
+  const pdfContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setNumPages(null);
   }, [file.previewUrl]);
+
+  // Configure all links in PDF to open in new windows
+  useEffect(() => {
+    if (!pdfContainerRef.current) return;
+
+    const handleLinkClick = (event: Event) => {
+      const target = event.target as HTMLElement;
+      if (target.tagName === 'A' || target.closest('a')) {
+        const link = target.tagName === 'A' ? (target as HTMLAnchorElement) : (target.closest('a') as HTMLAnchorElement);
+        if (link && link.href) {
+          event.preventDefault();
+          window.open(link.href, '_blank', 'noopener,noreferrer');
+        }
+      }
+    };
+
+    const container = pdfContainerRef.current;
+    container.addEventListener('click', handleLinkClick, true);
+
+    return () => {
+      container.removeEventListener('click', handleLinkClick, true);
+    };
+  }, []);
 
   function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
     setNumPages(numPages);
@@ -61,7 +85,7 @@ function PdfPreviewComponent({ file, containerWidth }: { file: ViewerFile; conta
       )}
 
       {/* PDF Viewer */}
-      <div className="flex-1 overflow-auto flex flex-col items-center py-4 gap-2">
+      <div ref={pdfContainerRef} className="flex-1 overflow-auto flex flex-col items-center py-4 gap-2">
         <Document
           file={file.previewUrl}
           onLoadSuccess={onDocumentLoadSuccess}

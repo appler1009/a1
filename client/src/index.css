@@ -33,7 +33,8 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: 'Mulish', sans-serif;
+    /* Mulish for Latin, Asta Sans for Korean */
+    font-family: 'Mulish', 'Asta Sans', sans-serif;
   }
 }
 
@@ -145,7 +146,22 @@
   @apply bg-muted font-bold;
 }
 
+/* System message styling (MCP tool commands) */
+.system-message {
+  padding: 2px 4px;
+}
+
+.system-message p {
+  margin: 0;
+  padding: 0;
+}
+
 /* Prose markdown styling for MessageItem component */
+.prose p {
+  @apply mb-1;
+  margin-bottom: 0.25rem;
+}
+
 .prose h1 {
   @apply text-2xl font-bold mb-4 mt-6;
   font-size: 1.75em;

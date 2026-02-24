@@ -212,6 +212,7 @@ export function ChatPane() {
   const isLoadingOlderRef = useRef(false);
   const loadMoreTriggeredRef = useRef(false);
   const prevScrollHeightRef = useRef(0);
+  const isRestoringScrollRef = useRef(false);
   const trimTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const MESSAGE_LIMIT = 10; // Keep only this many messages when trimming
 
@@ -283,65 +284,47 @@ export function ChatPane() {
   // Maintain scroll position when older messages are prepended
   useEffect(() => {
     if (containerRef.current && isLoadingOlderRef.current) {
-      // Wait for the scroll bounce to settle (scrollTop >= 0) before restoring position
-      const checkAndRestore = () => {
-        if (!containerRef.current) return;
-        
-        const { scrollTop } = containerRef.current;
-        
-        // If still in bounce (negative scrollTop), wait and check again
-        if (scrollTop < 0) {
-          requestAnimationFrame(checkAndRestore);
-          return;
-        }
-        
-        // Bounce has settled, now restore scroll position
-        const newScrollHeight = containerRef.current.scrollHeight;
-        const scrollDiff = newScrollHeight - prevScrollHeightRef.current;
-        containerRef.current.scrollTop = scrollDiff;
-        isLoadingOlderRef.current = false;
-      };
-      
-      // Start checking after a small delay to let the bounce start
-      const timeoutId = setTimeout(() => {
-        requestAnimationFrame(checkAndRestore);
-      }, 50);
-      
-      return () => clearTimeout(timeoutId);
-    }
-  }, [roleMessages.length]);
+      isRestoringScrollRef.current = true;
 
-  // Scroll to bottom when new messages arrive (not when loading older)
-  useEffect(() => {
-    if (containerRef.current && !isLoadingOlderRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [currentContent]);
-
-  // Scroll to bottom when any new message is added (user, assistant, or system/MCP)
-  useEffect(() => {
-    if (containerRef.current && !isLoadingOlderRef.current && roleMessages.length > 0) {
-      // Small delay to ensure DOM is updated with the new message
+      // Wait for DOM to fully render new messages before restoring scroll
+      // Use multiple requestAnimationFrame calls to ensure DOM is painted
       requestAnimationFrame(() => {
-        if (containerRef.current) {
-          containerRef.current.scrollTop = containerRef.current.scrollHeight;
-        }
+        requestAnimationFrame(() => {
+          if (!containerRef.current) {
+            isRestoringScrollRef.current = false;
+            isLoadingOlderRef.current = false;
+            return;
+          }
+
+          // Calculate how much the scroll height increased
+          const newScrollHeight = containerRef.current.scrollHeight;
+          const scrollDiff = newScrollHeight - prevScrollHeightRef.current;
+
+          // Restore scroll position: old scroll position + the height of new content
+          containerRef.current.scrollTop = scrollDiff;
+
+          // Clean up refs after scroll is restored
+          setTimeout(() => {
+            isLoadingOlderRef.current = false;
+            isRestoringScrollRef.current = false;
+          }, 0);
+        });
       });
     }
   }, [roleMessages.length]);
 
-  // Scroll to bottom when search mode changes or search results update
+  // Consolidated scroll-to-bottom effect
+  // Fires when: new messages, streaming content, or search mode changes
+  // Skips when: loading older messages or restoring scroll position
   useEffect(() => {
-    if (containerRef.current) {
-      // Small delay to ensure DOM is updated
-      const timer = setTimeout(() => {
-        if (containerRef.current) {
+    if (containerRef.current && !isLoadingOlderRef.current && !isRestoringScrollRef.current) {
+      requestAnimationFrame(() => {
+        if (containerRef.current && !isLoadingOlderRef.current && !isRestoringScrollRef.current) {
           containerRef.current.scrollTop = containerRef.current.scrollHeight;
         }
-      }, 50);
-      return () => clearTimeout(timer);
+      });
     }
-  }, [searchResults, isSearchMode]);
+  }, [currentContent, roleMessages.length, searchResults, isSearchMode]);
 
   // Handle scroll to detect when user scrolls to top and auto-load more messages
   // Also detect when user is at bottom to trigger message trimming
@@ -663,7 +646,7 @@ export function ChatPane() {
       />
 
       {/* Messages */}
-      <div ref={containerRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
+      <div ref={containerRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2">
         {/* Search Mode - Show search results */}
         {isSearchMode && (
           <>

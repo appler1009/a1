@@ -636,13 +636,14 @@ fastify.addHook('onRequest', async (request) => {
 async function executeToolWithAdapters(
   userId: string,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  roleId?: string
 ): Promise<string> {
   try {
     console.log(`\n[ToolExecution] ========================================`);
     console.log(`[ToolExecution] Tool Request: ${toolName}`);
     console.log(`[ToolExecution] Arguments: ${JSON.stringify(args, null, 2)}`);
-    console.log(`[ToolExecution] User: ${userId}`);
+    console.log(`[ToolExecution] User: ${userId}, Role: ${roleId || 'global'}`);
 
     // Import tool cache
     const { toolCache } = await import('./mcp/tool-cache.js');
@@ -652,10 +653,10 @@ async function executeToolWithAdapters(
     
     if (cachedTool) {
       console.log(`[ToolExecution] Cache HIT: Tool "${toolName}" found on server: ${cachedTool.serverId}`);
-      
+
       try {
         // Connect only to the specific server that has the tool
-        const adapter = await getMcpAdapter(userId, cachedTool.serverId);
+        const adapter = await getMcpAdapter(userId, cachedTool.serverId, roleId);
         
         // Resolve any URIs/filenames in the arguments to local file URIs
         const resolvedArgs = await resolveUrisInArgs(args, userId);
@@ -700,7 +701,7 @@ async function executeToolWithAdapters(
     for (const server of servers) {
       try {
         console.log(`[ToolExecution] Checking server: ${server.id}`);
-        const adapter = await getMcpAdapter(userId, server.id);
+        const adapter = await getMcpAdapter(userId, server.id, roleId);
         const tools = await adapter.listTools();
         console.log(`[ToolExecution] Server ${server.id} has ${tools.length} tools available`);
         
@@ -1788,7 +1789,7 @@ You have access to a knowledge graph memory system with the following tools:
             consecutiveIdenticalCallCount = 1;
           }
 
-          const toolResult = await executeToolWithAdapters(request.user!.id, toolCall.name, toolCall.arguments);
+          const toolResult = await executeToolWithAdapters(request.user!.id, toolCall.name, toolCall.arguments, body.roleId);
 
           // PHASE 2: After search_tool returns, dynamically load the relevant tools
           if (toolCall.name === 'search_tool' && !hasLoadedPhase2Tools) {

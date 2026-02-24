@@ -4,6 +4,7 @@ import type { IndividualSignup, CreateOrgSignup, JoinOrg } from '@local-agent/sh
 import { authService } from '../auth/index.js';
 import { GoogleOAuthHandler } from '../auth/google-oauth.js';
 import { GitHubOAuthHandler } from '../auth/github-oauth.js';
+import { getRoleStorageService, getMainDatabase } from '../storage/index.js';
 
 export async function authRoutes(fastify: FastifyInstance) {
   // Check if email exists
@@ -326,6 +327,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (request.user) {
         const expiryDate = tokenResponse.expires_in ? Date.now() + tokenResponse.expires_in * 1000 : undefined;
 
+        // Store global token
         await authService.storeOAuthToken(request.user.id, {
           provider: 'google',
           accessToken: tokenResponse.access_token,
@@ -334,7 +336,28 @@ export async function authRoutes(fastify: FastifyInstance) {
           userId: request.user.id,
         });
 
-        console.log(`[GoogleOAuth] Stored token for user ${request.user.id}`);
+        console.log(`[GoogleOAuth] Stored global token for user ${request.user.id}`);
+
+        // Also store in each role's database for role-specific access
+        try {
+          const mainDb = getMainDatabase();
+          const userRoles = mainDb.getUserRoles(request.user.id);
+          const roleStorage = getRoleStorageService();
+
+          for (const role of userRoles) {
+            await roleStorage.storeRoleOAuthToken(
+              role.id,
+              'google',
+              tokenResponse.access_token,
+              tokenResponse.refresh_token,
+              expiryDate
+            );
+            console.log(`[GoogleOAuth] Stored role-specific token for role ${role.id} (${role.name})`);
+          }
+        } catch (error) {
+          console.error(`[GoogleOAuth] Failed to store role-specific tokens:`, error);
+          // Don't fail the OAuth flow if role storage fails
+        }
       }
 
       // Redirect to the frontend callback page with provider info
@@ -484,7 +507,28 @@ export async function authRoutes(fastify: FastifyInstance) {
           userId: request.user.id,
         });
 
-        console.log(`[GitHubOAuth] Stored token for user ${request.user.id}`);
+        console.log(`[GitHubOAuth] Stored global token for user ${request.user.id}`);
+
+        // Also store in each role's database for role-specific access
+        try {
+          const mainDb = getMainDatabase();
+          const userRoles = mainDb.getUserRoles(request.user.id);
+          const roleStorage = getRoleStorageService();
+
+          for (const role of userRoles) {
+            await roleStorage.storeRoleOAuthToken(
+              role.id,
+              'github',
+              tokenResponse.access_token,
+              undefined, // GitHub tokens typically don't have refresh tokens
+              undefined  // No expiry for GitHub tokens
+            );
+            console.log(`[GitHubOAuth] Stored role-specific token for role ${role.id} (${role.name})`);
+          }
+        } catch (error) {
+          console.error(`[GitHubOAuth] Failed to store role-specific tokens:`, error);
+          // Don't fail the OAuth flow if role storage fails
+        }
       }
 
       // Redirect to the frontend callback page with provider info

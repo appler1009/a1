@@ -781,11 +781,14 @@ export class MCPManager {
     if (client) {
       await client.disconnect();
       this.clients.delete(serverId);
-      this.configs.delete(serverId);
-
-      // Delete from database
-      await this.deletePersistedConfig(serverId);
     }
+
+    // Always delete from cache and database, regardless of whether client exists
+    this.configs.delete(serverId);
+    this.inProcessAdapters.delete(serverId);
+
+    // Delete from database
+    await this.deletePersistedConfig(serverId);
   }
 
   /**

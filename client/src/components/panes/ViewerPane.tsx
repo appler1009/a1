@@ -108,6 +108,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   const [selectedServerId, setSelectedServerId] = React.useState<string | null>(null);
   const [authRequired, setAuthRequired] = React.useState(false);
   const [authProvider, setAuthProvider] = React.useState<string | null>(null);
+  const [connecting, setConnecting] = React.useState(false);
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Prevent duplicate add calls during OAuth flow
@@ -202,6 +203,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   // Helper function to clear OAuth state
   const clearOAuthState = React.useCallback(() => {
     setAuthRequired(false);
+    setConnecting(false);
     setSelectedServerId(null);
     selectedServerIdRef.current = null;
     setAuthProvider(null);
@@ -217,7 +219,14 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
 
     pendingAddRef.current = serverId;
     console.log(`[addServerAfterAuth] Adding server: ${serverId}`);
+
+    // Immediately clear "Authentication Required" and show "Connecting..." so the
+    // user knows OAuth succeeded even while the API call is still in progress
+    setAuthRequired(false);
+    setAuthProvider(null);
+    setConnecting(true);
     setAdding(true);
+
     try {
       const response = await apiFetch('/api/mcp/servers/add-predefined', {
         method: 'POST',
@@ -227,31 +236,33 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
       const data = await response.json();
 
       if (response.ok) {
-        // Success - clear auth state and close dialog
+        // Success - clear state and close dialog
         console.log(`[addServerAfterAuth] Server added successfully: ${serverId}`);
         const server = predefinedServers.find(s => s.id === serverId);
         setToast({ message: `✅ Successfully added ${server?.name || 'MCP server'}!`, type: 'success' });
-        setAuthRequired(false);
         setSelectedServerId(null);
         selectedServerIdRef.current = null;
-        setAuthProvider(null);
         onClose();
       } else {
         console.error(`[addServerAfterAuth] Failed to add server:`, data.error);
         setToast({ message: `Failed to add server: ${data.error?.message || 'Unknown error'}`, type: 'error' });
-        // Clear auth state but don't close dialog so user can retry
-        setAuthRequired(false);
         setSelectedServerId(null);
         selectedServerIdRef.current = null;
+        // Clear auth state even on failure so "Authentication Required" message goes away
+        setAuthRequired(false);
+        setAuthProvider(null);
       }
     } catch (error) {
       console.error(`[addServerAfterAuth] Error:`, error);
       setToast({ message: `Error adding server: ${error instanceof Error ? error.message : 'Unknown error'}`, type: 'error' });
-      setAuthRequired(false);
       setSelectedServerId(null);
       selectedServerIdRef.current = null;
+      // Clear auth state even on error so "Authentication Required" message goes away
+      setAuthRequired(false);
+      setAuthProvider(null);
     } finally {
       setAdding(false);
+      setConnecting(false);
       pendingAddRef.current = null;
     }
   }, [onClose, predefinedServers]);
@@ -308,7 +319,12 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     console.log(`[OAuth] Selected server ID: ${selectedServerIdRef.current}`);
 
     let attempts = 0;
+    let attemptsAfterClose = 0;
     const maxAttempts = 60; // 60 seconds max
+    // After the popup closes, keep polling a few more seconds before giving up.
+    // This prevents a race where the token is stored but the first check after
+    // close returns false due to a slow network or async DB write.
+    const maxAttemptsAfterClose = 5;
 
     oauthPollIntervalRef.current = setInterval(async () => {
       attempts++;
@@ -336,16 +352,19 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
         return;
       }
 
-      // If popup is closed and no token, show error
-      if (popupClosed && !hasToken) {
-        console.log(`[OAuth] Popup closed without token after ${attempts} attempts`);
-        clearInterval(oauthPollIntervalRef.current!);
-        oauthPollIntervalRef.current = null;
-        oauthPopupRef.current = null;
-
-        // Don't show error immediately - user might have cancelled
-        // Just reset the auth state
-        clearOAuthState();
+      // If popup is closed and still no token, keep retrying briefly before giving up.
+      // This guards against the race condition where the token is being written to the
+      // DB at the same moment the popup closes.
+      if (popupClosed) {
+        attemptsAfterClose++;
+        console.log(`[OAuth] Popup closed, no token yet (retry ${attemptsAfterClose}/${maxAttemptsAfterClose})`);
+        if (attemptsAfterClose >= maxAttemptsAfterClose) {
+          console.log(`[OAuth] Giving up after ${attemptsAfterClose} retries post-close`);
+          clearInterval(oauthPollIntervalRef.current!);
+          oauthPollIntervalRef.current = null;
+          oauthPopupRef.current = null;
+          clearOAuthState();
+        }
         return;
       }
 
@@ -506,7 +525,19 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
         </button>
       </div>
 
-      {authRequired && authProvider ? (
+      {connecting ? (
+        <div className="text-center py-8">
+          <div className="mb-4">
+            <div className="inline-block p-3 rounded-full bg-green-500/20 mb-4">
+              <div className="text-2xl animate-spin">⚙️</div>
+            </div>
+            <h3 className="text-lg font-semibold mb-2">Connecting...</h3>
+            <p className="text-muted-foreground">
+              Authentication successful. Setting up the server, please wait.
+            </p>
+          </div>
+        </div>
+      ) : authRequired && authProvider ? (
         <div className="text-center py-8">
           <div className="mb-4">
             <div className="inline-block p-3 rounded-full bg-blue-500/20 mb-4">

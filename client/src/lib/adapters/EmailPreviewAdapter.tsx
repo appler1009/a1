@@ -102,6 +102,22 @@ function EmailBody({ email }: { email: EmailMessage }) {
     //
     // This implementation renders HTML as-is. Only use with trusted email sources!
 
+    // Post-process HTML to add target="_blank" to all links
+    const processedHtml = email.body.replace(
+      /<a\s+([^>]*?)href\s*=\s*['"]([^'"]+)['"](.*?)>/gi,
+      (match, before, href, after) => {
+        // Only add target="_blank" if it doesn't already have a target attribute
+        if (!/\btarget\s*=/i.test(match)) {
+          return `<a ${before}href="${href}" target="_blank" rel="noopener noreferrer"${after}>`;
+        }
+        // If it already has a target, ensure rel="noopener noreferrer" for external links
+        if (!/\brel\s*=/i.test(match)) {
+          return `<a ${before}href="${href}"${after} rel="noopener noreferrer">`;
+        }
+        return match;
+      }
+    );
+
     return (
       <>
         <style>{`
@@ -112,8 +128,8 @@ function EmailBody({ email }: { email: EmailMessage }) {
           }
         `}</style>
         <div
-          className="email-html-body prose prose-sm dark:prose-invert max-w-none p-4"
-          dangerouslySetInnerHTML={{ __html: email.body }}
+          className="email-html-body prose prose-sm dark:prose-invert max-w-none p-4 leading-[2]"
+          dangerouslySetInnerHTML={{ __html: processedHtml }}
           // WARNING: dangerouslySetInnerHTML can be a security risk
           // Only use if email content is from a trusted source
         />
@@ -123,7 +139,7 @@ function EmailBody({ email }: { email: EmailMessage }) {
 
   // Plain text - render as markdown for formatting
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none p-4">
+    <div className="prose prose-sm dark:prose-invert max-w-none p-4 leading-[2]">
       <ReactMarkdown
         components={{
           a: ({ href, children }) => (
