@@ -323,41 +323,42 @@ export async function authRoutes(fastify: FastifyInstance) {
       // Exchange code for tokens
       const tokenResponse = await googleOAuth.exchangeCodeForTokens(code);
 
+      // Hoist accountEmail so it's available for the redirect URL below
+      let accountEmail = '';
+
       // Store the token if user is authenticated
       if (request.user) {
         const expiryDate = tokenResponse.expires_in ? Date.now() + tokenResponse.expires_in * 1000 : undefined;
 
-        // Store global token
+        // Get the Google account email from userinfo endpoint
+        try {
+          const userinfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+            headers: {
+              'Authorization': `Bearer ${tokenResponse.access_token}`,
+            },
+          });
+
+          if (userinfoResponse.ok) {
+            const userinfo = (await userinfoResponse.json()) as { email?: string };
+            accountEmail = userinfo.email || '';
+            console.log(`[GoogleOAuth] Got account email from userinfo: ${accountEmail}`);
+          } else {
+            console.warn(`[GoogleOAuth] Failed to fetch userinfo: ${userinfoResponse.status}`);
+          }
+        } catch (error) {
+          console.warn(`[GoogleOAuth] Error fetching userinfo:`, error);
+        }
+
+        // Store global token with account email
         await authService.storeOAuthToken(request.user.id, {
           provider: 'google',
           accessToken: tokenResponse.access_token,
           refreshToken: tokenResponse.refresh_token,
           expiryDate,
-          userId: request.user.id,
+          accountEmail,
         });
 
-        console.log(`[GoogleOAuth] Stored global token for user ${request.user.id}`);
-
-        // Also store in each role's database for role-specific access
-        try {
-          const mainDb = getMainDatabase();
-          const userRoles = mainDb.getUserRoles(request.user.id);
-          const roleStorage = getRoleStorageService();
-
-          for (const role of userRoles) {
-            await roleStorage.storeRoleOAuthToken(
-              role.id,
-              'google',
-              tokenResponse.access_token,
-              tokenResponse.refresh_token,
-              expiryDate
-            );
-            console.log(`[GoogleOAuth] Stored role-specific token for role ${role.id} (${role.name})`);
-          }
-        } catch (error) {
-          console.error(`[GoogleOAuth] Failed to store role-specific tokens:`, error);
-          // Don't fail the OAuth flow if role storage fails
-        }
+        console.log(`[GoogleOAuth] Stored global token for user ${request.user.id} (account: ${accountEmail})`);
       }
 
       // Redirect to the frontend callback page with provider info
@@ -367,6 +368,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       callbackUrl.searchParams.set('code', code);
       callbackUrl.searchParams.set('state', state);
       callbackUrl.searchParams.set('provider', 'google');
+      if (accountEmail) {
+        callbackUrl.searchParams.set('accountEmail', accountEmail);
+      }
 
       return reply.redirect(callbackUrl.toString());
     } catch (error) {
@@ -504,31 +508,10 @@ export async function authRoutes(fastify: FastifyInstance) {
           accessToken: tokenResponse.access_token,
           refreshToken: undefined,
           expiryDate: undefined,
-          userId: request.user.id,
+          accountEmail: '', // GitHub doesn't require email for token storage
         });
 
         console.log(`[GitHubOAuth] Stored global token for user ${request.user.id}`);
-
-        // Also store in each role's database for role-specific access
-        try {
-          const mainDb = getMainDatabase();
-          const userRoles = mainDb.getUserRoles(request.user.id);
-          const roleStorage = getRoleStorageService();
-
-          for (const role of userRoles) {
-            await roleStorage.storeRoleOAuthToken(
-              role.id,
-              'github',
-              tokenResponse.access_token,
-              undefined, // GitHub tokens typically don't have refresh tokens
-              undefined  // No expiry for GitHub tokens
-            );
-            console.log(`[GitHubOAuth] Stored role-specific token for role ${role.id} (${role.name})`);
-          }
-        } catch (error) {
-          console.error(`[GitHubOAuth] Failed to store role-specific tokens:`, error);
-          // Don't fail the OAuth flow if role storage fails
-        }
       }
 
       // Redirect to the frontend callback page with provider info

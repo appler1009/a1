@@ -21,10 +21,12 @@ export interface RoleDefinition {
 
 /**
  * OAuth token stored in main database (user-level)
+ * Each user can have multiple OAuth tokens for the same provider (e.g., multiple Google accounts)
  */
 export interface OAuthTokenEntry {
   provider: string;
   userId: string;
+  accountEmail: string;
   accessToken: string;
   refreshToken: string | null;
   expiryDate: number | null;
@@ -62,9 +64,9 @@ export class MainDatabase {
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL
       );
-      
+
       CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-      
+
       -- Sessions table
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
@@ -73,9 +75,9 @@ export class MainDatabase {
         createdAt TEXT NOT NULL,
         FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
       );
-      
+
       CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(userId);
-      
+
       -- Groups table
       CREATE TABLE IF NOT EXISTS groups (
         id TEXT PRIMARY KEY,
@@ -83,9 +85,9 @@ export class MainDatabase {
         url TEXT,
         createdAt TEXT NOT NULL
       );
-      
+
       CREATE INDEX IF NOT EXISTS idx_groups_url ON groups(url);
-      
+
       -- Group memberships table
       CREATE TABLE IF NOT EXISTS memberships (
         id TEXT PRIMARY KEY,
@@ -97,10 +99,10 @@ export class MainDatabase {
         FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
         UNIQUE(groupId, userId)
       );
-      
+
       CREATE INDEX IF NOT EXISTS idx_memberships_group ON memberships(groupId);
       CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(userId);
-      
+
       -- Invitations table
       CREATE TABLE IF NOT EXISTS invitations (
         id TEXT PRIMARY KEY,
@@ -116,10 +118,10 @@ export class MainDatabase {
         FOREIGN KEY (groupId) REFERENCES groups(id) ON DELETE CASCADE,
         FOREIGN KEY (createdBy) REFERENCES users(id)
       );
-      
+
       CREATE INDEX IF NOT EXISTS idx_invitations_code ON invitations(code);
       CREATE INDEX IF NOT EXISTS idx_invitations_group ON invitations(groupId);
-      
+
       -- Roles table (maps users to their role databases)
       CREATE TABLE IF NOT EXISTS roles (
         id TEXT PRIMARY KEY,
@@ -134,27 +136,28 @@ export class MainDatabase {
         FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (groupId) REFERENCES groups(id) ON DELETE SET NULL
       );
-      
+
       CREATE INDEX IF NOT EXISTS idx_roles_user ON roles(userId);
       CREATE INDEX IF NOT EXISTS idx_roles_group ON roles(groupId);
-      
-      -- OAuth tokens table (user-level tokens)
+
+      -- OAuth tokens table (user-level tokens, supports multiple accounts per provider)
       CREATE TABLE IF NOT EXISTS oauth_tokens (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         provider TEXT NOT NULL,
         userId TEXT NOT NULL,
+        accountEmail TEXT NOT NULL,
         accessToken TEXT NOT NULL,
         refreshToken TEXT,
         expiryDate INTEGER,
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL,
         FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
-        UNIQUE(provider, userId)
+        UNIQUE(provider, userId, accountEmail)
       );
-      
+
       CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_tokens(userId);
       CREATE INDEX IF NOT EXISTS idx_oauth_provider ON oauth_tokens(provider);
-      
+
       -- MCP Servers table (persisted server configs)
       CREATE TABLE IF NOT EXISTS mcp_servers (
         id TEXT PRIMARY KEY,
@@ -166,6 +169,72 @@ export class MainDatabase {
 
     // Migrate old MCP server IDs to new package names
     this.migrateMCPServerIds();
+
+    // Migrate oauth_tokens table to add accountEmail column if needed
+    this.migrateOAuthTokensSchema();
+  }
+
+  /**
+   * Add accountEmail column to oauth_tokens table if it doesn't exist
+   * This handles existing databases that don't have the column yet
+   */
+  private migrateOAuthTokensSchema(): void {
+    try {
+      // Check if accountEmail column exists
+      const tableInfo = this.db.prepare(`PRAGMA table_info(oauth_tokens)`).all() as Array<{
+        name: string;
+        type: string;
+      }>;
+
+      const hasAccountEmail = tableInfo.some(col => col.name === 'accountEmail');
+
+      if (!hasAccountEmail) {
+        console.log('[MainDatabase] Adding accountEmail column to oauth_tokens table...');
+        this.db.exec(`
+          ALTER TABLE oauth_tokens ADD COLUMN accountEmail TEXT NOT NULL DEFAULT '';
+        `);
+        console.log('[MainDatabase] accountEmail column added successfully');
+
+        // Update UNIQUE constraint by recreating the table
+        this.db.exec(`
+          PRAGMA foreign_keys=OFF;
+
+          -- Create new table with correct schema
+          CREATE TABLE oauth_tokens_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL,
+            userId TEXT NOT NULL,
+            accountEmail TEXT NOT NULL,
+            accessToken TEXT NOT NULL,
+            refreshToken TEXT,
+            expiryDate INTEGER,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL,
+            FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(provider, userId, accountEmail)
+          );
+
+          -- Copy data from old table
+          INSERT INTO oauth_tokens_new SELECT * FROM oauth_tokens;
+
+          -- Drop old table
+          DROP TABLE oauth_tokens;
+
+          -- Rename new table
+          ALTER TABLE oauth_tokens_new RENAME TO oauth_tokens;
+
+          -- Recreate indices
+          CREATE INDEX idx_oauth_user ON oauth_tokens(userId);
+          CREATE INDEX idx_oauth_provider ON oauth_tokens(provider);
+
+          PRAGMA foreign_keys=ON;
+        `);
+        console.log('[MainDatabase] oauth_tokens schema migration completed');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during oauth_tokens schema migration:', error);
+      // Don't fail initialization if migration fails - the token migration will handle missing data
+    }
   }
 
   close(): void {
@@ -798,18 +867,28 @@ export class MainDatabase {
     provider: string,
     accessToken: string,
     refreshToken?: string,
-    expiryDate?: number
+    expiryDate?: number,
+    accountEmail: string = ''
   ): OAuthTokenEntry {
     const now = new Date().toISOString();
 
+    // If email is empty and we're storing a new token, delete old empty-email tokens first
+    // This ensures we don't get stuck with stale empty-email entries
+    if (!accountEmail) {
+      this.db.prepare(`
+        DELETE FROM oauth_tokens WHERE provider = ? AND userId = ? AND accountEmail = ''
+      `).run(provider, userId);
+    }
+
     this.db.prepare(`
-      INSERT OR REPLACE INTO oauth_tokens (provider, userId, accessToken, refreshToken, expiryDate, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, COALESCE((SELECT createdAt FROM oauth_tokens WHERE provider = ? AND userId = ?), ?), ?)
-    `).run(provider, userId, accessToken, refreshToken || null, expiryDate || null, provider, userId, now, now);
+      INSERT OR REPLACE INTO oauth_tokens (provider, userId, accountEmail, accessToken, refreshToken, expiryDate, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT createdAt FROM oauth_tokens WHERE provider = ? AND userId = ? AND accountEmail = ?), ?), ?)
+    `).run(provider, userId, accountEmail, accessToken, refreshToken || null, expiryDate || null, provider, userId, accountEmail, now, now);
 
     return {
       provider,
       userId,
+      accountEmail,
       accessToken,
       refreshToken: refreshToken || null,
       expiryDate: expiryDate || null,
@@ -818,12 +897,19 @@ export class MainDatabase {
     };
   }
 
-  getOAuthToken(userId: string, provider: string): OAuthTokenEntry | null {
-    const row = this.db.prepare(`
-      SELECT * FROM oauth_tokens WHERE userId = ? AND provider = ?
-    `).get(userId, provider) as {
+  getOAuthToken(userId: string, provider: string, accountEmail?: string): OAuthTokenEntry | null {
+    let query = `SELECT * FROM oauth_tokens WHERE userId = ? AND provider = ?`;
+    const params: (string | number)[] = [userId, provider];
+
+    if (accountEmail) {
+      query += ` AND accountEmail = ?`;
+      params.push(accountEmail);
+    }
+
+    const row = this.db.prepare(query).get(...params) as {
       provider: string;
       userId: string;
+      accountEmail: string;
       accessToken: string;
       refreshToken: string | null;
       expiryDate: number | null;
@@ -836,6 +922,7 @@ export class MainDatabase {
     return {
       provider: row.provider,
       userId: row.userId,
+      accountEmail: row.accountEmail,
       accessToken: row.accessToken,
       refreshToken: row.refreshToken,
       expiryDate: row.expiryDate,
@@ -844,11 +931,42 @@ export class MainDatabase {
     };
   }
 
-  revokeOAuthToken(userId: string, provider: string): boolean {
-    const result = this.db.prepare(`
-      DELETE FROM oauth_tokens WHERE userId = ? AND provider = ?
-    `).run(userId, provider);
+  getAllUserOAuthTokens(userId: string, provider: string): OAuthTokenEntry[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM oauth_tokens WHERE userId = ? AND provider = ? ORDER BY accountEmail
+    `).all(userId, provider) as Array<{
+      provider: string;
+      userId: string;
+      accountEmail: string;
+      accessToken: string;
+      refreshToken: string | null;
+      expiryDate: number | null;
+      createdAt: string;
+      updatedAt: string;
+    }>;
 
+    return rows.map(row => ({
+      provider: row.provider,
+      userId: row.userId,
+      accountEmail: row.accountEmail,
+      accessToken: row.accessToken,
+      refreshToken: row.refreshToken,
+      expiryDate: row.expiryDate,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    }));
+  }
+
+  revokeOAuthToken(userId: string, provider: string, accountEmail?: string): boolean {
+    let query = `DELETE FROM oauth_tokens WHERE userId = ? AND provider = ?`;
+    const params: (string | number)[] = [userId, provider];
+
+    if (accountEmail) {
+      query += ` AND accountEmail = ?`;
+      params.push(accountEmail);
+    }
+
+    const result = this.db.prepare(query).run(...params);
     return result.changes > 0;
   }
 

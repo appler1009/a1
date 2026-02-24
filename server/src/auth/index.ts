@@ -1,6 +1,7 @@
 // Re-export types for backward compatibility
 export interface OAuthToken {
   provider: string;
+  accountEmail: string;
   accessToken: string;
   refreshToken?: string;
   expiryDate?: number;
@@ -85,15 +86,17 @@ export const authService = {
   ) => authServiceInstance.createOrgUser(email, name, groupId, role),
   
   // OAuth token methods - convert to old format for backward compatibility
-  storeOAuthToken: async (userId: string, token: Omit<OAuthToken, 'createdAt' | 'updatedAt'>): Promise<OAuthToken> => {
+  storeOAuthToken: async (userId: string, token: Omit<OAuthToken, 'createdAt' | 'updatedAt' | 'userId'>): Promise<OAuthToken> => {
     const result = await authServiceInstance.storeOAuthToken(userId, {
       provider: token.provider,
       accessToken: token.accessToken,
       refreshToken: token.refreshToken,
       expiryDate: token.expiryDate,
+      accountEmail: token.accountEmail,
     });
     return {
       provider: result.provider,
+      accountEmail: result.accountEmail,
       accessToken: result.accessToken,
       refreshToken: result.refreshToken || undefined,
       expiryDate: result.expiryDate || undefined,
@@ -102,11 +105,12 @@ export const authService = {
       updatedAt: result.updatedAt,
     };
   },
-  getOAuthToken: async (userId: string, provider: string): Promise<OAuthToken | null> => {
-    const result = await authServiceInstance.getOAuthToken(userId, provider);
+  getOAuthToken: async (userId: string, provider: string, accountEmail?: string): Promise<OAuthToken | null> => {
+    const result = await authServiceInstance.getOAuthToken(userId, provider, accountEmail);
     if (!result) return null;
     return {
       provider: result.provider,
+      accountEmail: result.accountEmail,
       accessToken: result.accessToken,
       refreshToken: result.refreshToken || undefined,
       expiryDate: result.expiryDate || undefined,

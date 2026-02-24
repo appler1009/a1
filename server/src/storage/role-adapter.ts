@@ -38,17 +38,6 @@ export interface McpServerConfig {
   updatedAt: Date;
 }
 
-/**
- * Role-specific OAuth token (e.g., Google Drive for this role)
- */
-export interface RoleOAuthToken {
-  provider: string;
-  accessToken: string;
-  refreshToken?: string;
-  expiryDate?: number;
-  createdAt: Date;
-  updatedAt: Date;
-}
 
 /**
  * Role-specific SQLite storage adapter
@@ -138,19 +127,9 @@ export class RoleStorageAdapter extends BaseStorage implements IMessageStorage {
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL
       );
-      
+
       CREATE INDEX IF NOT EXISTS idx_mcp_enabled ON mcp_servers(enabled);
-      
-      -- OAuth tokens for this role (separate from user-level tokens)
-      CREATE TABLE IF NOT EXISTS oauth_tokens (
-        provider TEXT PRIMARY KEY,
-        accessToken TEXT NOT NULL,
-        refreshToken TEXT,
-        expiryDate INTEGER,
-        createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL
-      );
-      
+
       -- Metadata table for generic key-value storage
       CREATE TABLE IF NOT EXISTS metadata (
         table_name TEXT NOT NULL,
@@ -660,59 +639,4 @@ export class RoleStorageAdapter extends BaseStorage implements IMessageStorage {
     return result.changes > 0;
   }
 
-  // ============================================
-  // Role-specific OAuth Token Operations
-  // ============================================
-
-  async storeRoleOAuthToken(
-    provider: string,
-    accessToken: string,
-    refreshToken?: string,
-    expiryDate?: number
-  ): Promise<RoleOAuthToken> {
-    const now = new Date().toISOString();
-
-    this.db.prepare(`
-      INSERT OR REPLACE INTO oauth_tokens (provider, accessToken, refreshToken, expiryDate, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, COALESCE((SELECT createdAt FROM oauth_tokens WHERE provider = ?), ?), ?)
-    `).run(provider, accessToken, refreshToken || null, expiryDate || null, provider, now, now);
-
-    return {
-      provider,
-      accessToken,
-      refreshToken,
-      expiryDate,
-      createdAt: new Date(now),
-      updatedAt: new Date(now),
-    };
-  }
-
-  getRoleOAuthToken(provider: string): RoleOAuthToken | null {
-    const row = this.db.prepare(`
-      SELECT * FROM oauth_tokens WHERE provider = ?
-    `).get(provider) as {
-      provider: string;
-      accessToken: string;
-      refreshToken: string | null;
-      expiryDate: number | null;
-      createdAt: string;
-      updatedAt: string;
-    } | undefined;
-
-    if (!row) return null;
-
-    return {
-      provider: row.provider,
-      accessToken: row.accessToken,
-      refreshToken: row.refreshToken || undefined,
-      expiryDate: row.expiryDate || undefined,
-      createdAt: new Date(row.createdAt),
-      updatedAt: new Date(row.updatedAt),
-    };
-  }
-
-  deleteRoleOAuthToken(provider: string): boolean {
-    const result = this.db.prepare('DELETE FROM oauth_tokens WHERE provider = ?').run(provider);
-    return result.changes > 0;
-  }
 }

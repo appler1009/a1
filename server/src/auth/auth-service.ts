@@ -157,15 +157,15 @@ export class AuthService {
 
   async storeOAuthToken(
     userId: string,
-    token: { provider: string; accessToken: string; refreshToken?: string; expiryDate?: number }
+    token: { provider: string; accessToken: string; refreshToken?: string; expiryDate?: number; accountEmail?: string }
   ): Promise<OAuthTokenEntry> {
     const mainDb = getMainDatabase(this.dataDir);
-    return mainDb.storeOAuthToken(userId, token.provider, token.accessToken, token.refreshToken, token.expiryDate);
+    return mainDb.storeOAuthToken(userId, token.provider, token.accessToken, token.refreshToken, token.expiryDate, token.accountEmail);
   }
 
-  async getOAuthToken(userId: string, provider: string): Promise<OAuthTokenEntry | null> {
+  async getOAuthToken(userId: string, provider: string, accountEmail?: string): Promise<OAuthTokenEntry | null> {
     const mainDb = getMainDatabase(this.dataDir);
-    return mainDb.getOAuthToken(userId, provider);
+    return mainDb.getOAuthToken(userId, provider, accountEmail);
   }
 
   async revokeOAuthToken(userId: string, provider: string): Promise<boolean> {

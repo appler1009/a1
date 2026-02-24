@@ -7,6 +7,15 @@ import { getMainDatabase } from '../storage/main-db.js';
 import { mcpManager } from './manager.js';
 
 /**
+ * Extract the base server ID from a potentially unique instance ID.
+ * Instance IDs use the format: baseId~accountEmail (e.g., gmail-mcp-lib~user@gmail.com)
+ */
+function getBaseServerId(id: string): string {
+  const i = id.indexOf('~');
+  return i >= 0 ? id.substring(0, i) : id;
+}
+
+/**
  * Cache for adapter instances
  * Key: `${userId}:${serverKey}`
  */
@@ -44,32 +53,21 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 /**
  * Get and refresh Google OAuth token if needed
- * Shared helper for both in-process and stdio adapters
+ * Uses user-level tokens only (no role-specific tokens)
  *
  * @param userId - The user ID
- * @param roleId - Optional role ID for role-specific tokens
  * @param credentialsPath - Optional credentials path for stdio adapters
  * @returns Token data for Google API calls
  * @throws Error if token not found or cannot be refreshed
  */
-async function getGoogleTokenData(userId: string, roleId?: string, credentialsPath?: string): Promise<TokenData> {
-  let oauthToken: any;
-
-  // If roleId is provided, get role-specific token; otherwise get global user token
-  if (roleId) {
-    const { getRoleStorageService } = await import('../storage/role-storage-service.js');
-    const roleStorage = getRoleStorageService();
-    oauthToken = await roleStorage.getRoleOAuthToken(roleId, 'google');
-    console.log(`[getGoogleTokenData] Attempting to retrieve role-specific token for role ${roleId}`);
-  } else {
-    oauthToken = await authService.getOAuthToken(userId, 'google');
-    console.log(`[getGoogleTokenData] Attempting to retrieve global user token for user ${userId}`);
-  }
+async function getGoogleTokenData(userId: string, credentialsPath?: string): Promise<TokenData> {
+  // Always use user-level tokens (no role-specific tokens anymore)
+  let oauthToken = await authService.getOAuthToken(userId, 'google');
+  console.log(`[getGoogleTokenData] Attempting to retrieve user-level token for user ${userId}`);
 
   if (!oauthToken) {
-    const context = roleId ? `role ${roleId}` : `user ${userId}`;
-    console.warn(`[getGoogleTokenData] No OAuth token found for ${context}`);
-    throw new Error(`Google OAuth token not found for ${context}. Please authenticate first.`);
+    console.warn(`[getGoogleTokenData] No OAuth token found for user ${userId}`);
+    throw new Error(`Google OAuth token not found for user ${userId}. Please authenticate first.`);
   }
 
   const now = Date.now();
@@ -91,28 +89,21 @@ async function getGoogleTokenData(userId: string, roleId?: string, credentialsPa
 
       const newTokens = await googleOAuth.refreshAccessToken(oauthToken.refreshToken);
 
-      // Store refreshed token
-      if (roleId) {
-        const { getRoleStorageService } = await import('../storage/role-storage-service.js');
-        const roleStorage = getRoleStorageService();
-        await roleStorage.storeRoleOAuthToken(roleId, 'google', newTokens.access_token, newTokens.refresh_token || oauthToken.refreshToken, Date.now() + (newTokens.expires_in * 1000));
-        console.log(`[getGoogleTokenData] Token refreshed and stored in role ${roleId}. New expiry: ${new Date(Date.now() + (newTokens.expires_in * 1000)).toISOString()}`);
-      } else {
-        oauthToken = await authService.storeOAuthToken(userId, {
-          provider: 'google',
-          accessToken: newTokens.access_token,
-          refreshToken: newTokens.refresh_token || oauthToken.refreshToken,
-          expiryDate: Date.now() + (newTokens.expires_in * 1000),
-        } as any);
-        console.log(`[getGoogleTokenData] Token refreshed successfully. New expiry: ${new Date(oauthToken.expiryDate!).toISOString()}`);
-      }
+      // Store refreshed token at user-level
+      oauthToken = await authService.storeOAuthToken(userId, {
+        provider: 'google',
+        accessToken: newTokens.access_token,
+        refreshToken: newTokens.refresh_token || oauthToken.refreshToken,
+        expiryDate: Date.now() + (newTokens.expires_in * 1000),
+        accountEmail: oauthToken.accountEmail, // Preserve the account email
+      } as any);
+      console.log(`[getGoogleTokenData] Token refreshed successfully. New expiry: ${new Date(oauthToken.expiryDate!).toISOString()}`);
     } catch (refreshError) {
       console.error(`[getGoogleTokenData] Failed to refresh token:`, refreshError);
 
       // If token is expired and refresh failed, throw error
       if (isExpired) {
-        const context = roleId ? `role ${roleId}` : `user ${userId}`;
-        throw new Error(`Google OAuth token has expired and cannot be refreshed for ${context}. Please re-authenticate.`);
+        throw new Error(`Google OAuth token has expired and cannot be refreshed for user ${userId}. Please re-authenticate.`);
       }
       // If token is still valid, continue with existing token
       console.log(`[getGoogleTokenData] Proceeding with existing token despite refresh failure`);
@@ -264,9 +255,12 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
 
   console.log(`[MCPAdapterFactory:getMcpAdapter] No cached adapter, creating new one...`);
 
+  // Use base server ID (strip ~accountEmail suffix) for predefined lookup
+  const baseServerId = getBaseServerId(serverKey);
+
   // Check if this server has an in-process adapter registered FIRST
-  if (adapterRegistry.isInProcess(serverKey)) {
-    console.log(`[MCPAdapterFactory:getMcpAdapter] Using in-process adapter for ${serverKey}`);
+  if (adapterRegistry.isInProcess(baseServerId)) {
+    console.log(`[MCPAdapterFactory:getMcpAdapter] Using in-process adapter for ${serverKey} (base: ${baseServerId})`);
 
     // For in-process adapters that need OAuth tokens (like Google Drive),
     // we need to retrieve the token data before creating the adapter
@@ -274,16 +268,16 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
 
     // Check if this server requires Google OAuth by looking at predefined servers
     const { getPredefinedServer } = await import('./predefined-servers.js');
-    const predefinedServer = getPredefinedServer(serverKey);
+    const predefinedServer = getPredefinedServer(baseServerId);
 
     if (predefinedServer?.auth?.provider === 'google') {
       console.log(`[MCPAdapterFactory:getMcpAdapter] In-process adapter requires Google OAuth, retrieving token...`);
-      tokenData = await getGoogleTokenData(userId, roleId);
+      tokenData = await getGoogleTokenData(userId);
       console.log(`[MCPAdapterFactory:getMcpAdapter] Token data prepared for in-process adapter`);
     }
-    
+
     const adapter = await adapterRegistry.createInProcess(
-      serverKey,
+      baseServerId,
       userId,
       `mcp-${serverKey}`,
       tokenData
@@ -325,7 +319,7 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
   let tokenData: any;
   if (serverConfig.auth?.provider === 'google') {
     console.log(`[MCPAdapterFactory:getMcpAdapter] Google auth required, retrieving OAuth token...`);
-    tokenData = await getGoogleTokenData(userId, roleId, credentialsPath);
+    tokenData = await getGoogleTokenData(userId, credentialsPath);
     console.log(`[MCPAdapterFactory:getMcpAdapter] Token data prepared and validated:`, {
       has_access_token: !!tokenData.access_token,
       access_token_length: tokenData.access_token?.length,

@@ -9,6 +9,7 @@ interface MCPServer {
   name?: string;
   command?: string;
   enabled?: boolean;
+  config?: any; // Full server config including accountEmail
 }
 
 interface PredefinedMCPServer {
@@ -113,13 +114,17 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
 
   // Prevent duplicate add calls during OAuth flow
   const pendingAddRef = React.useRef<string | null>(null);
-  
+
   // Track OAuth popup window for polling
   const oauthPopupRef = React.useRef<Window | null>(null);
   const oauthPollIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
-  
+
   // Track selected server ID for polling callback (avoids closure issues)
   const selectedServerIdRef = React.useRef<string | null>(null);
+
+  // Snapshot of Google accounts that existed BEFORE OAuth started
+  // Polling only triggers addServerAfterAuth when a NEW account appears
+  const knownAccountEmailsRef = React.useRef<Set<string>>(new Set());
 
   // Auto-dismiss toast after 3 seconds
   React.useEffect(() => {
@@ -152,6 +157,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
             name: server.config?.name || server.name,
             command: server.config?.command || '',
             enabled: server.config?.enabled !== false,
+            config: server.config, // Preserve full config for accountEmail display
           }));
         } else if (data.data && typeof data.data === 'object') {
           // Handle case where data.data might be an object with servers as properties
@@ -162,6 +168,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
               name: server.config?.name || server.name,
               command: server.config?.command || '',
               enabled: server.config?.enabled !== false,
+              config: server.config, // Preserve full config for accountEmail display
             }));
           }
         }
@@ -185,18 +192,24 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     }
   }, []);
 
+  // Fetch available OAuth connections (user-level, shared across roles)
   React.useEffect(() => {
     fetchServers();
     fetchPredefinedServers();
   }, [fetchServers, fetchPredefinedServers]);
 
-  // Check if OAuth token exists for a provider
-  const checkOAuthToken = async (provider: string): Promise<boolean> => {
+  // Check for a NEW OAuth account that didn't exist before OAuth started.
+  // Returns the new account email, or null if no new account found.
+  const checkForNewOAuthAccount = async (provider: string): Promise<string | null> => {
     try {
-      const response = await apiFetch(`/api/auth/oauth/token/${provider}`, { excludeRoleId: true });
-      return response.ok;
+      const response = await apiFetch(`/api/mcp/oauth/connections`);
+      if (!response.ok) return null;
+      const data = await response.json();
+      const accounts: { accountEmail: string }[] = data.data?.[provider] || [];
+      const newAccount = accounts.find(a => !knownAccountEmailsRef.current.has(a.accountEmail));
+      return newAccount?.accountEmail ?? null;
     } catch {
-      return false;
+      return null;
     }
   };
 
@@ -210,7 +223,8 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   }, []);
 
   // Add server after auth is complete (called after OAuth success)
-  const addServerAfterAuth = React.useCallback(async (serverId: string) => {
+  // accountEmail is passed directly from postMessage or polling - no need to re-fetch
+  const addServerAfterAuth = React.useCallback(async (serverId: string, accountEmail?: string) => {
     // Prevent duplicate calls during OAuth flow
     if (pendingAddRef.current === serverId) {
       console.log(`[addServerAfterAuth] Duplicate call prevented for serverId: ${serverId}`);
@@ -218,7 +232,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     }
 
     pendingAddRef.current = serverId;
-    console.log(`[addServerAfterAuth] Adding server: ${serverId}`);
+    console.log(`[addServerAfterAuth] Adding server: ${serverId} (account: ${accountEmail})`);
 
     // Immediately clear "Authentication Required" and show "Connecting..." so the
     // user knows OAuth succeeded even while the API call is still in progress
@@ -230,19 +244,21 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     try {
       const response = await apiFetch('/api/mcp/servers/add-predefined', {
         method: 'POST',
-        body: JSON.stringify({ serverId }),
+        body: JSON.stringify({ serverId, accountEmail }),
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        // Success - clear state and close dialog
+        // Success - refresh servers list and keep dialog open
         console.log(`[addServerAfterAuth] Server added successfully: ${serverId}`);
-        const server = predefinedServers.find(s => s.id === serverId);
-        setToast({ message: `✅ Successfully added ${server?.name || 'MCP server'}!`, type: 'success' });
+        const serverInfo = predefinedServers.find(s => s.id === serverId);
+        const displayName = accountEmail ? `${serverInfo?.name} (${accountEmail})` : serverInfo?.name;
+        setToast({ message: `✅ Successfully added ${displayName || 'MCP server'}!`, type: 'success' });
         setSelectedServerId(null);
         selectedServerIdRef.current = null;
-        onClose();
+        clearOAuthState();
+        fetchServers(); // Refresh the servers list to show the newly added server
       } else {
         console.error(`[addServerAfterAuth] Failed to add server:`, data.error);
         setToast({ message: `Failed to add server: ${data.error?.message || 'Unknown error'}`, type: 'error' });
@@ -332,22 +348,22 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
       // Check if popup is closed
       const popupClosed = oauthPopupRef.current?.closed;
 
-      // Check if token exists
-      const hasToken = await checkOAuthToken(provider);
+      // Only trigger when a NEW account appears (not an already-known one)
+      const newAccountEmail = await checkForNewOAuthAccount(provider);
 
-      console.log(`[OAuth] Poll attempt ${attempts}: hasToken=${hasToken}, popupClosed=${popupClosed}`);
+      console.log(`[OAuth] Poll attempt ${attempts}: newAccount=${newAccountEmail}, popupClosed=${popupClosed}`);
 
-      if (hasToken) {
-        console.log(`[OAuth] Token found for ${provider} after ${attempts} attempts`);
+      if (newAccountEmail) {
+        console.log(`[OAuth] New ${provider} account detected: ${newAccountEmail}`);
         clearInterval(oauthPollIntervalRef.current!);
         oauthPollIntervalRef.current = null;
         oauthPopupRef.current = null;
 
-        // Add the server now that we have the token
+        // Add the server using the newly authenticated account
         const serverId = selectedServerIdRef.current;
         if (serverId) {
-          console.log(`[OAuth] Adding server via polling: ${serverId}`);
-          addServerAfterAuth(serverId);
+          console.log(`[OAuth] Adding server via polling: ${serverId} (account: ${newAccountEmail})`);
+          addServerAfterAuth(serverId, newAccountEmail);
         }
         return;
       }
@@ -387,7 +403,8 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
       if (event.origin !== window.location.origin) return;
 
       if (event.data?.type === 'oauth_success') {
-        console.log(`[OAuth] Received success message for ${event.data.provider}`);
+        const { provider, accountEmail } = event.data;
+        console.log(`[OAuth] Received success message for ${provider} (account: ${accountEmail})`);
 
         // Stop polling since we got the message
         if (oauthPollIntervalRef.current) {
@@ -395,11 +412,11 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
           oauthPollIntervalRef.current = null;
         }
 
-        // Try adding the server after OAuth completes using the ref to avoid stale closure
+        // Add the server using the email from the postMessage (authoritative)
         const serverId = selectedServerIdRef.current;
         if (serverId) {
-          console.log(`[OAuth] Adding server after auth: ${serverId}`);
-          addServerAfterAuth(serverId);
+          console.log(`[OAuth] Adding server after auth: ${serverId} (account: ${accountEmail})`);
+          addServerAfterAuth(serverId, accountEmail);
         } else {
           console.warn('[OAuth] No server ID found in ref, cannot complete OAuth flow');
         }
@@ -422,6 +439,17 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     const requiresAuth = server.auth?.provider && server.auth.provider !== 'none';
 
     if (requiresAuth && server.auth?.provider) {
+      // Snapshot existing accounts before OAuth so polling only fires on NEW accounts
+      try {
+        const connResp = await apiFetch('/api/mcp/oauth/connections');
+        const connData = await connResp.json();
+        const existing: { accountEmail: string }[] = connData.data?.[server.auth.provider] || [];
+        knownAccountEmailsRef.current = new Set(existing.map(a => a.accountEmail));
+        console.log(`[OAuth] Snapshot of known ${server.auth.provider} accounts:`, [...knownAccountEmailsRef.current]);
+      } catch {
+        knownAccountEmailsRef.current = new Set();
+      }
+
       // Trigger OAuth immediately for this provider
       setSelectedServerId(serverId);
       selectedServerIdRef.current = serverId; // Set ref for polling callback
@@ -439,19 +467,62 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     }
 
     // No auth required, proceed with adding the server immediately
+    await addServerWithOptions(serverId);
+  };
+
+  const addServerWithOptions = async (serverId: string, accountEmail?: string) => {
+    const server = predefinedServers.find(s => s.id === serverId);
+    if (!server) {
+      setToast({ message: 'Server not found', type: 'error' });
+      return;
+    }
+
+    // If this is a Google service and account not specified, fetch available accounts and prompt
+    if (server.auth?.provider === 'google' && !accountEmail) {
+      try {
+        const response = await apiFetch('/api/mcp/oauth/connections');
+        const data = await response.json();
+        if (data.success && data.data?.google && data.data.google.length > 0) {
+          if (data.data.google.length === 1) {
+            // Only one account, use it automatically
+            accountEmail = data.data.google[0].accountEmail;
+          } else if (data.data.google.length > 1) {
+            // Multiple accounts, prompt user to select
+            const selectedAccount = data.data.google[0].accountEmail;
+            const userChoice = prompt(
+              `Select Google account:\n${data.data.google.map((acc: any) => acc.accountEmail).join('\n')}`,
+              selectedAccount
+            );
+            if (!userChoice) {
+              setToast({ message: 'Account selection cancelled', type: 'error' });
+              return;
+            }
+            accountEmail = userChoice;
+          }
+        } else {
+          setToast({ message: 'No Google accounts connected', type: 'error' });
+          return;
+        }
+      } catch (error) {
+        setToast({ message: 'Failed to fetch available accounts', type: 'error' });
+        return;
+      }
+    }
+
     setAdding(true);
     try {
       const response = await apiFetch('/api/mcp/servers/add-predefined', {
         method: 'POST',
-        body: JSON.stringify({ serverId }),
+        body: JSON.stringify({ serverId, accountEmail }),
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        // Success - show toast and close dialog
-        setToast({ message: `✅ Successfully added ${server.name}!`, type: 'success' });
-        onClose();
+        // Success - show toast and refresh servers list (keep dialog open)
+        const displayName = accountEmail ? `${server.name} (${accountEmail})` : server.name;
+        setToast({ message: `✅ Successfully added ${displayName}!`, type: 'success' });
+        fetchServers(); // Refresh to show newly added server
       } else {
         setToast({ message: `Failed to add server: ${data.error?.message || 'Unknown error'}`, type: 'error' });
       }
@@ -573,27 +644,38 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
             <div className="mb-6">
               <h3 className="text-sm font-semibold mb-3">Active Features</h3>
               <div className="space-y-2">
-                {servers.map((server) => (
-                  <div key={server.id} className="p-3 border border-border rounded-lg bg-muted/30 flex items-center justify-between">
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-semibold text-sm">{server.name}</h4>
-                    </div>
-                    <div className="flex gap-2 ml-2">
-                      <button
-                        onClick={() => handleToggleServer(server.id!)}
-                        className="px-2 py-1 text-xs bg-blue-500/20 text-blue-600 rounded hover:bg-blue-500/30 whitespace-nowrap"
-                      >
-                        {server.enabled ? 'Disable' : 'Enable'}
-                      </button>
-                      <button
-                        onClick={() => handleRemoveServer(server.id!)}
-                        className="px-2 py-1 text-xs bg-red-500/20 text-red-600 rounded hover:bg-red-500/30 whitespace-nowrap"
-                      >
-                        Remove
-                      </button>
+                {servers.map((server) => {
+                  const serverConfig = (server as any).config;
+                  const accountEmail = serverConfig?.accountEmail || (server as any).connectedEmail;
+                  return (
+                  <div key={`${server.id}:${accountEmail || 'default'}`} className="p-3 border border-border rounded-lg bg-muted/30">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <h4 className="font-semibold text-sm whitespace-nowrap">{server.name}</h4>
+                          {accountEmail && (
+                            <p className="text-xs text-muted-foreground italic truncate">{accountEmail}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex gap-2 ml-2">
+                        <button
+                          onClick={() => handleToggleServer(server.id!)}
+                          className="px-2 py-1 text-xs bg-blue-500/20 text-blue-600 rounded hover:bg-blue-500/30 whitespace-nowrap"
+                        >
+                          {server.enabled ? 'Disable' : 'Enable'}
+                        </button>
+                        <button
+                          onClick={() => handleRemoveServer(server.id!)}
+                          className="px-2 py-1 text-xs bg-red-500/20 text-red-600 rounded hover:bg-red-500/30 whitespace-nowrap"
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </div>
                   </div>
-                ))}
+                );
+                })}
               </div>
               <hr className="my-4" />
             </div>

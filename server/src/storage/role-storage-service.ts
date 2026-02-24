@@ -6,7 +6,7 @@ import path from 'path';
 
 /**
  * Role storage manager
- * 
+ *
  * Manages role-specific storage adapters and provides a unified interface
  * for accessing role-specific data. Each role has its own isolated SQLite
  * database for complete separation of:
@@ -14,7 +14,8 @@ import path from 'path';
  * - Chat messages
  * - Settings
  * - MCP server configurations
- * - OAuth tokens (role-specific)
+ *
+ * Note: OAuth tokens are stored at the user level (main.db), not per-role
  */
 export class RoleStorageService implements IStorage, IMessageStorage {
   private dataDir: string;
@@ -374,41 +375,6 @@ export class RoleStorageService implements IStorage, IMessageStorage {
     return adapter.deleteMcpServer(serverId);
   }
 
-  /**
-   * Store role-specific OAuth token
-   */
-  async storeRoleOAuthToken(
-    roleId: string,
-    provider: string,
-    accessToken: string,
-    refreshToken?: string,
-    expiryDate?: number
-  ): Promise<void> {
-    const adapter = await this.getRoleAdapter(roleId);
-    await adapter.storeRoleOAuthToken(provider, accessToken, refreshToken, expiryDate);
-  }
-
-  /**
-   * Get role-specific OAuth token
-   */
-  async getRoleOAuthToken(roleId: string, provider: string): Promise<{ accessToken: string; refreshToken?: string; expiryDate?: number } | null> {
-    const adapter = await this.getRoleAdapter(roleId);
-    const token = adapter.getRoleOAuthToken(provider);
-    if (!token) return null;
-    return {
-      accessToken: token.accessToken,
-      refreshToken: token.refreshToken,
-      expiryDate: token.expiryDate,
-    };
-  }
-
-  /**
-   * Delete role-specific OAuth token
-   */
-  async deleteRoleOAuthToken(roleId: string, provider: string): Promise<boolean> {
-    const adapter = await this.getRoleAdapter(roleId);
-    return adapter.deleteRoleOAuthToken(provider);
-  }
 
   // ============================================
   // IMessageStorage interface compatibility

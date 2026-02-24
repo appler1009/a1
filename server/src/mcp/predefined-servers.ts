@@ -18,7 +18,6 @@ export interface PredefinedMCPServer {
   };
   icon?: string; // e.g., 'drive', 'book', 'github'
   hidden?: boolean; // If true, won't show in UI feature list but can still be used
-  global?: boolean; // If true, server is not affected by role switches (stays running)
   inProcess?: boolean; // If true, use InProcessAdapter instead of stdio
 }
 
@@ -79,7 +78,6 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     },
     icon: 'file-text',
     hidden: true, // Hidden from UI - automatically available for PDF processing
-    global: true, // Global: not affected by role switches
   },
 
   {
@@ -96,7 +94,6 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     },
     icon: 'brain',
     hidden: true, // Hidden from UI - automatically enabled for all users
-    global: false, // Per-role: restarts with role-specific database on role switch
     inProcess: true, // Use InProcessAdapter for direct function calls
   },
 
@@ -111,7 +108,6 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     },
     icon: 'cloud',
     hidden: true, // Hidden from UI - automatically available
-    global: true, // Global: not affected by role switches
     inProcess: true, // Use InProcessAdapter for direct function calls
   },
 
@@ -126,7 +122,6 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     },
     icon: 'search',
     hidden: true, // Hidden from UI - automatically available
-    global: true, // Global: not affected by role switches
     inProcess: true, // Use InProcessAdapter for direct function calls
   },
 

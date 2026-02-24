@@ -126,38 +126,26 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
         auth: body.auth, // Include auth config if provided
       };
 
-      // If auth config includes Google OAuth, fetch the appropriate token
+      // If auth config includes Google OAuth, fetch the user-level token
       let userToken: any;
       if (config.auth?.provider === 'google') {
-        // First try role-specific OAuth token
-        const roleToken = await roleStorage.getRoleOAuthToken(roleId, 'google');
-        if (roleToken) {
-          userToken = {
-            access_token: roleToken.accessToken,
-            refresh_token: roleToken.refreshToken,
-            expiry_date: roleToken.expiryDate,
-            token_type: 'Bearer',
-          };
-          console.log(`[MCP] Using role-specific Google OAuth token for server ${config.name}`);
-        } else {
-          // Fall back to user-level OAuth token
-          const oauthToken = await authService.getOAuthToken(request.user.id, 'google');
-          if (!oauthToken) {
-            return reply.status(400).send({
-              success: false,
-              error: { code: 'NO_AUTH_TOKEN', message: 'No Google OAuth token found. Please authenticate with Google first.' },
-            });
-          }
-
-          userToken = {
-            access_token: oauthToken.accessToken,
-            refresh_token: oauthToken.refreshToken,
-            expiry_date: oauthToken.expiryDate,
-            token_type: 'Bearer',
-          };
-
-          console.log(`[MCP] Using user-level Google OAuth token for server ${config.name}`);
+        // Always use user-level OAuth token (role-specific tokens have been migrated)
+        const oauthToken = await authService.getOAuthToken(request.user.id, 'google');
+        if (!oauthToken) {
+          return reply.status(400).send({
+            success: false,
+            error: { code: 'NO_AUTH_TOKEN', message: 'No Google OAuth token found. Please authenticate with Google first.' },
+          });
         }
+
+        userToken = {
+          access_token: oauthToken.accessToken,
+          refresh_token: oauthToken.refreshToken,
+          expiry_date: oauthToken.expiryDate,
+          token_type: 'Bearer',
+        };
+
+        console.log(`[MCP] Using user-level Google OAuth token for server ${config.name} (account: ${oauthToken.accountEmail})`);
       }
 
       // Make sure the manager's current role is set

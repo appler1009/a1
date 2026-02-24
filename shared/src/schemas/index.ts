@@ -147,6 +147,7 @@ export const MCPServerConfigSchema = z.object({
   restartOnExit: z.boolean().optional().default(false),
   enabled: z.boolean().optional().default(true),
   hidden: z.boolean().optional(), // If true, won't show in UI but can still be used
+  accountEmail: z.string().optional(), // For multi-account OAuth services (Gmail, Google Drive, etc.)
   auth: z.object({
     provider: z.string().optional(),
     tokenFilename: z.string().optional(),

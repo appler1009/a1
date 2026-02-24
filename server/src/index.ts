@@ -16,7 +16,7 @@ import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import { v4 as uuidv4 } from 'uuid';
 import type { User, Session } from '@local-agent/shared';
-import { createStorage, getRoleStorageService, closeRoleStorageService, autoMigrate } from './storage/index.js';
+import { createStorage, getRoleStorageService, closeRoleStorageService, autoMigrate, getMainDatabase } from './storage/index.js';
 import type { RoleDefinition } from './storage/index.js';
 import { createLLMRouter } from './ai/router.js';
 import { mcpManager, getMcpAdapter, closeUserAdapters, listPredefinedServers, getPredefinedServer, requiresAuth, PREDEFINED_MCP_SERVERS } from './mcp/index.js';
@@ -1639,6 +1639,37 @@ This document is immediately available for the user to ask questions about or re
 If the user asks about "this document" or "the file" without specifying, they are referring to this previewed document.`;
       }
 
+      // Load role and available Google accounts for dynamic system prompt injection
+      let roleSection = '';
+      let accountsSection = '';
+
+      if (body.roleId) {
+        const mainDb = getMainDatabase();
+        const role = mainDb.getRole(body.roleId);
+        if (role) {
+          // Build role context section
+          roleSection = `## Current Role: ${role.name}`;
+          if (role.jobDesc) {
+            roleSection += `\n${role.jobDesc}`;
+          }
+          if (role.systemPrompt) {
+            roleSection += `\n${role.systemPrompt}`;
+          }
+          roleSection += '\n';
+        }
+      }
+
+      // Load user's Google accounts
+      const mainDb = getMainDatabase();
+      const googleAccounts = mainDb.getAllUserOAuthTokens(request.user.id, 'google');
+      if (googleAccounts.length > 0) {
+        const accountList = googleAccounts.map((acc: typeof googleAccounts[0]) => `- ${acc.accountEmail}`).join('\n');
+        accountsSection = `## Available Google Accounts
+${accountList}
+
+`;
+      }
+
       // Keep track of conversation for tool execution
       // Add system message about file tagging for preview
       const systemMessage = {
@@ -1650,6 +1681,14 @@ If the user asks about "this document" or "the file" without specifying, they ar
 - For all cached files (PDFs, Google Drive files, emails): Use [preview-file:Filename](cache-id) format for preview pane display. Never mention cache IDs in plain text.
 - For Google Drive files: Format as [preview-file:Filename](cache-id) where cache-id is from the downloaded/cached file, not the Google Drive ID.
 - When retrieving emails with gmailGetMessage or gmailGetThread: NEVER include email bodies in your response text. The email will be displayed in the preview pane automatically. Format cached emails as: [preview-file:Email Subject.json](cache-id-from-response). Include .json extension so preview pane correctly detects it as email. Just acknowledge that you retrieved it and provide a brief summary (subject, sender, key details).
+
+## PROCESSING MULTIPLE ITEMS
+**IMPORTANT**: When the user asks you to process multiple items (emails, files, documents, etc.):
+- Process **ONE item at a time**, not all at once
+- For each item: retrieve it, analyze it, show the result to the user
+- Move to the next item only after completing the current one
+- This prevents hitting token limits and ensures each item receives proper attention
+- Example: If user asks "summarize 10 emails", handle them sequentially—retrieve email 1, summarize it, then email 2, etc.
 
 ## GMAIL EMAIL SEARCH RESULTS
 When showing email search results from gmailSearchMessages:
@@ -1666,7 +1705,7 @@ When showing email search results from gmailSearchMessages:
 - This makes it easy for users to scan results and click on emails they want to view
 - **IMPORTANT**: Any emails shown as links in your response MUST be downloaded using gmailGetMessage - never show raw email data or message IDs as links. Always use the cache-id from gmailGetMessage responses.
 
-## MEMORY SYSTEM
+${roleSection}${accountsSection}## MEMORY SYSTEM
 You have access to a knowledge graph memory system with the following tools:
 - **memory_search_nodes**: Search for relevant entities, relationships, and observations by query (e.g., "customer preferences", "project decisions")
 - **memory_read_graph**: Read the entire knowledge graph to get a complete overview of all learned information
@@ -2471,14 +2510,18 @@ fastify.register(async (instance) => {
 
     // Return full server objects with { id, config, info }, filtering out hidden servers
     // Check both the config.hidden flag AND if the server ID matches a hidden predefined server
-    const servers = mcpManager.getServers().filter(s =>
+    let servers = mcpManager.getServers().filter(s =>
       !s.config.hidden && !hiddenServerIds.has(s.id)
     );
-    
+
+    // Note: accountEmail is already in server.config for multi-account support
+    // No need to fetch it separately - the config contains it
+    const enhancedServers = servers;
+
     // Include current role ID in response
     const currentRoleId = mcpManager.getCurrentRoleId();
-    
-    return reply.send({ success: true, data: { servers, currentRoleId } });
+
+    return reply.send({ success: true, data: { servers: enhancedServers, currentRoleId } });
   });
 
   instance.post('/mcp/servers', async (request, reply) => {
@@ -2514,39 +2557,23 @@ fastify.register(async (instance) => {
     };
 
     try {
-      // If auth config includes Google OAuth, fetch the appropriate token
+      // If auth config includes Google OAuth, fetch the user-level token
       let userToken: any;
       if (config.auth?.provider === 'google') {
-        // First try role-specific OAuth token
-        const roleToken = await roleStorage.getRoleOAuthToken(currentRoleId, 'google');
-        if (roleToken) {
+        // Always use user-level OAuth token (role-specific tokens have been migrated)
+        const oauthToken = await authService.getOAuthToken(request.user.id, 'google');
+        if (oauthToken) {
           userToken = {
-            access_token: roleToken.accessToken,
-            refresh_token: roleToken.refreshToken,
-            expiry_date: roleToken.expiryDate,
+            access_token: oauthToken.accessToken,
+            refresh_token: oauthToken.refreshToken,
+            expiry_date: oauthToken.expiryDate,
             token_type: 'Bearer',
           };
-          console.log(`[MCP] Using role-specific Google OAuth token for server ${config.name}`);
-        } else {
-          // Fall back to user-level OAuth token
-          const oauthToken = await authService.getOAuthToken(request.user.id, 'google');
-          if (oauthToken) {
-            userToken = {
-              access_token: oauthToken.accessToken,
-              refresh_token: oauthToken.refreshToken,
-              expiry_date: oauthToken.expiryDate,
-              token_type: 'Bearer',
-            };
-            console.log(`[MCP] Using user-level Google OAuth token for server ${config.name}`);
-          }
+          console.log(`[MCP] Using user-level Google OAuth token for server ${config.name} (account: ${oauthToken.accountEmail})`);
         }
       }
 
-      // Ensure manager's role is set
-      if (mcpManager.getCurrentRoleId() !== currentRoleId) {
-        await mcpManager.switchRole(currentRoleId, request.user.id);
-      }
-
+      // Add server (MCP servers are user-level, not role-specific)
       await mcpManager.addServer(config, userToken);
       return reply.send({ success: true, data: { name: body.name, connected: true, roleId: currentRoleId } });
     } catch (error) {
@@ -2620,8 +2647,8 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
-    const { serverId } = request.body as { serverId: string };
-    console.log(`[AddPredefinedServer:${requestId}] serverId: ${serverId}`);
+    const { serverId, accountEmail } = request.body as { serverId: string; accountEmail?: string };
+    console.log(`[AddPredefinedServer:${requestId}] serverId: ${serverId}, accountEmail: ${accountEmail || 'auto'}`);
 
     if (!serverId) {
       console.log(`[AddPredefinedServer:${requestId}] serverId is missing`);
@@ -2655,35 +2682,34 @@ fastify.register(async (instance) => {
       // Check if auth is required and available
       if (requiresAuth(serverId)) {
         if (predefinedServer.auth?.provider === 'google') {
-          console.log(`[AddPredefinedServer:${requestId}] Google auth required, checking token...`);
-          
-          // First try role-specific OAuth token
-          const roleToken = await roleStorage.getRoleOAuthToken(currentRoleId, 'google');
-          if (!roleToken) {
-            // Fall back to user-level token
-            const oauthToken = await authService.getOAuthToken(request.user.id, 'google');
-            if (!oauthToken) {
-              console.log(`[AddPredefinedServer:${requestId}] No OAuth token found`);
-              return reply.code(403).send({
-                success: false,
-                error: {
-                  code: 'NO_AUTH',
-                  message: `${predefinedServer.name} requires Google authentication. Please authenticate first.`,
-                  authRequired: true,
-                  authProvider: 'google',
-                },
-              });
-            }
+          console.log(`[AddPredefinedServer:${requestId}] Google auth required, checking token for account: ${accountEmail || 'any'}...`);
+
+          // Always use user-level OAuth token (role-specific tokens have been migrated)
+          // If accountEmail is specified, use that specific account; otherwise get the first one
+          const oauthToken = await authService.getOAuthToken(request.user.id, 'google', accountEmail);
+          if (!oauthToken) {
+            console.log(`[AddPredefinedServer:${requestId}] No OAuth token found for account: ${accountEmail || 'any'}`);
+            return reply.code(403).send({
+              success: false,
+              error: {
+                code: 'NO_AUTH',
+                message: `${predefinedServer.name} requires Google authentication. Please authenticate first.`,
+                authRequired: true,
+                authProvider: 'google',
+              },
+            });
           }
-          console.log(`[AddPredefinedServer:${requestId}] OAuth token found`);
+          console.log(`[AddPredefinedServer:${requestId}] OAuth token found (account: ${oauthToken.accountEmail})`);
         }
         // Add other auth providers as needed
       }
 
       // Create config from predefined server
       console.log(`[AddPredefinedServer:${requestId}] Creating server config...`);
+      // Generate unique instance ID for multi-account support (e.g., gmail-mcp-lib~user@gmail.com)
+      const instanceId = accountEmail ? `${predefinedServer.id}~${accountEmail}` : predefinedServer.id;
       const config = {
-        id: predefinedServer.id, // Use canonical ID (e.g., 'gmail-mcp-lib') so adapter registry can find it
+        id: instanceId,
         name: predefinedServer.name,
         transport: 'stdio' as const,
         command: predefinedServer.command,
@@ -2694,45 +2720,32 @@ fastify.register(async (instance) => {
         autoStart: false,
         restartOnExit: false,
         auth: predefinedServer.auth,
+        accountEmail, // Store the selected account email for multi-account support
         env: predefinedServer.env || {},
       };
 
       // Prepare token if needed
       let userToken: any;
       if (config.auth?.provider === 'google') {
-        console.log(`[AddPredefinedServer:${requestId}] Preparing Google token...`);
-        
-        // First try role-specific OAuth token
-        const roleToken = await roleStorage.getRoleOAuthToken(currentRoleId, 'google');
-        if (roleToken) {
+        console.log(`[AddPredefinedServer:${requestId}] Preparing Google token for account: ${accountEmail || 'auto'}...`);
+
+        // Always use user-level OAuth token (role-specific tokens have been migrated)
+        // If accountEmail is specified, use that specific account; otherwise get the first one
+        const oauthToken = await authService.getOAuthToken(request.user.id, 'google', accountEmail);
+        if (oauthToken) {
           userToken = {
-            access_token: roleToken.accessToken,
-            refresh_token: roleToken.refreshToken,
-            expiry_date: roleToken.expiryDate,
+            access_token: oauthToken.accessToken,
+            refresh_token: oauthToken.refreshToken,
+            expiry_date: oauthToken.expiryDate,
             token_type: 'Bearer',
           };
-          console.log(`[AddPredefinedServer:${requestId}] Using role-specific token`);
-        } else {
-          // Fall back to user-level token
-          const oauthToken = await authService.getOAuthToken(request.user.id, 'google');
-          if (oauthToken) {
-            userToken = {
-              access_token: oauthToken.accessToken,
-              refresh_token: oauthToken.refreshToken,
-              expiry_date: oauthToken.expiryDate,
-              token_type: 'Bearer',
-            };
-            console.log(`[AddPredefinedServer:${requestId}] Using user-level token`);
-          }
+          console.log(`[AddPredefinedServer:${requestId}] Using user-level token (account: ${oauthToken.accountEmail})`);
         }
       }
 
-      // Ensure manager's role is set
-      if (mcpManager.getCurrentRoleId() !== currentRoleId) {
-        await mcpManager.switchRole(currentRoleId, request.user.id);
-      }
-
       // Add server via MCPManager
+      // Note: MCP servers are user-level (stored in main.db, shared across roles)
+      // No need to call switchRole() - servers work regardless of current role context
       console.log(`[AddPredefinedServer:${requestId}] Calling mcpManager.addServer...`);
       await mcpManager.addServer(config, userToken);
       console.log(`[AddPredefinedServer:${requestId}] Server added successfully`);
@@ -2761,54 +2774,50 @@ fastify.register(async (instance) => {
     }
   });
 
-  // Store role-specific OAuth token for MCP servers
+  // Store user-level OAuth token for MCP servers
+  // Note: OAuth tokens are now stored at the user level, not per-role
   instance.post('/mcp/oauth/token', async (request, reply) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
     const body = request.body as {
-      roleId: string;
+      roleId?: string; // Kept for backward compatibility but not used
       provider: string;
       accessToken: string;
       refreshToken?: string;
       expiryDate?: number;
+      accountEmail?: string;
     };
 
-    if (!body.roleId || !body.provider || !body.accessToken) {
+    if (!body.provider || !body.accessToken) {
       return reply.code(400).send({
         success: false,
-        error: { message: 'roleId, provider, and accessToken are required' },
+        error: { message: 'provider and accessToken are required' },
       });
     }
 
-    // Verify role ownership
-    const role = roleStorage.getRole(body.roleId);
-    if (!role || role.userId !== request.user.id) {
-      return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
-    }
-
     try {
-      await roleStorage.storeRoleOAuthToken(
-        body.roleId,
-        body.provider,
-        body.accessToken,
-        body.refreshToken,
-        body.expiryDate
-      );
+      // Store at user-level (tokens are now shared across all roles)
+      await authService.storeOAuthToken(request.user.id, {
+        provider: body.provider,
+        accessToken: body.accessToken,
+        refreshToken: body.refreshToken,
+        expiryDate: body.expiryDate,
+        accountEmail: body.accountEmail || '',
+      });
 
-      console.log(`[MCP] Stored ${body.provider} OAuth token for role ${body.roleId}`);
+      console.log(`[MCP] Stored ${body.provider} OAuth token for user ${request.user.id}`);
 
       return reply.send({
         success: true,
         data: {
-          roleId: body.roleId,
           provider: body.provider,
-          message: `OAuth token stored for role`,
+          message: `OAuth token stored for user`,
         },
       });
     } catch (error) {
-      console.error('[MCP] Failed to store role OAuth token:', error);
+      console.error('[MCP] Failed to store OAuth token:', error);
       return reply.code(500).send({
         success: false,
         error: { message: 'Failed to store OAuth token' },
@@ -2816,7 +2825,8 @@ fastify.register(async (instance) => {
     }
   });
 
-  // Get role-specific OAuth token status
+  // Get user-level OAuth token status
+  // Note: OAuth tokens are now stored at the user level, not per-role
   instance.get('/mcp/oauth/token', async (request, reply) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
@@ -2824,36 +2834,70 @@ fastify.register(async (instance) => {
 
     const query = request.query as { roleId?: string; provider?: string };
 
-    if (!query.roleId || !query.provider) {
+    if (!query.provider) {
       return reply.code(400).send({
         success: false,
-        error: { message: 'roleId and provider are required' },
+        error: { message: 'provider is required' },
       });
     }
 
-    // Verify role ownership
-    const role = roleStorage.getRole(query.roleId);
-    if (!role || role.userId !== request.user.id) {
-      return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
-    }
-
     try {
-      const token = await roleStorage.getRoleOAuthToken(query.roleId, query.provider);
+      // Get user-level token (no longer role-specific)
+      const token = await authService.getOAuthToken(request.user.id, query.provider);
 
       return reply.send({
         success: true,
         data: {
-          roleId: query.roleId,
           provider: query.provider,
           hasToken: !!token,
+          accountEmail: token?.accountEmail,
           expiryDate: token?.expiryDate,
         },
       });
     } catch (error) {
-      console.error('[MCP] Failed to get role OAuth token:', error);
+      console.error('[MCP] Failed to get OAuth token:', error);
       return reply.code(500).send({
         success: false,
         error: { message: 'Failed to get OAuth token status' },
+      });
+    }
+  });
+
+  // Get all user-level OAuth connections (shared across all roles)
+  instance.get('/mcp/oauth/connections', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    try {
+      const mainDb = getMainDatabase();
+
+      // Get all OAuth tokens for this user
+      const googleAccounts = mainDb.getAllUserOAuthTokens(request.user.id, 'google');
+      const githubTokens = mainDb.getAllUserOAuthTokens(request.user.id, 'github');
+
+      return reply.send({
+        success: true,
+        data: {
+          google: googleAccounts.map(token => ({
+            accountEmail: token.accountEmail,
+            expiryDate: token.expiryDate,
+            createdAt: token.createdAt,
+            updatedAt: token.updatedAt,
+          })),
+          github: githubTokens.map(token => ({
+            accountEmail: token.accountEmail,
+            expiryDate: token.expiryDate,
+            createdAt: token.createdAt,
+            updatedAt: token.updatedAt,
+          })),
+        },
+      });
+    } catch (error) {
+      console.error('[MCP] Failed to get OAuth connections:', error);
+      return reply.code(500).send({
+        success: false,
+        error: { message: 'Failed to get OAuth connections' },
       });
     }
   });
@@ -2990,6 +3034,24 @@ const start = async () => {
     await roleStorage.initialize();
     console.log(`[Storage] Using ${migrationResult.schema.toUpperCase()} schema`);
     fastify.log.info('Role storage service initialized');
+
+    // Run token migration (move role-specific tokens to user-level)
+    const { migrateRoleTokens } = await import('./storage/migrations/migrate-role-tokens.js');
+    try {
+      await migrateRoleTokens(config.storage.root);
+      fastify.log.info('OAuth token migration completed');
+    } catch (error) {
+      console.warn('[Storage] Token migration failed (continuing anyway):', error);
+    }
+
+    // Run MCP server migration (move role-specific servers to main.db)
+    const { migrateMCPServers } = await import('./storage/migrations/migrate-mcp-servers.js');
+    try {
+      await migrateMCPServers(config.storage.root);
+      fastify.log.info('MCP server migration completed');
+    } catch (error) {
+      console.warn('[Storage] MCP server migration failed (continuing anyway):', error);
+    }
 
     // Initialize legacy storage (for backward compatibility) - only if metadata.db exists
     const legacyDbPath = path.join(config.storage.root, 'metadata.db');

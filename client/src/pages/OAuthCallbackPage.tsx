@@ -12,6 +12,7 @@ export function OAuthCallbackPage() {
         const code = params.get('code');
         const state = params.get('state');
         const provider = params.get('provider') || 'google';
+        const accountEmail = params.get('accountEmail');
 
         if (!code) {
           setStatus('error');
@@ -30,6 +31,7 @@ export function OAuthCallbackPage() {
             {
               type: 'oauth_success',
               provider,
+              accountEmail,
               code,
               state,
             },
