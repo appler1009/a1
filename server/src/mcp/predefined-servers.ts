@@ -138,6 +138,19 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     inProcess: true, // Use InProcessAdapter for direct API calls (better performance)
   },
 
+  {
+    id: 'process-each',
+    name: 'Process Each',
+    description: 'Process a list of items (email IDs, file IDs, etc.) one at a time using a focused AI call per item. Avoids context overflow when handling large numbers of items.',
+    command: '', // In-process only
+    args: [],
+    auth: {
+      provider: 'none',
+    },
+    hidden: true, // Hidden from UI - automatically available
+    inProcess: true, // Use InProcessAdapter for direct function calls
+  },
+
   // DISABLED: Testing email preview with cache IDs instead
   // {
   //   id: 'display-email',

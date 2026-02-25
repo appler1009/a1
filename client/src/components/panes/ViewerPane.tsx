@@ -573,6 +573,19 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     }
   };
 
+  // Group servers by base ID (strips ~accountEmail suffix for multi-account services)
+  const getBaseServerId = (id: string) => id.includes('~') ? id.split('~')[0] : id;
+
+  const groupedServers = React.useMemo(() => {
+    const groups = new Map<string, MCPServer[]>();
+    for (const server of servers) {
+      const baseId = getBaseServerId(server.id || '');
+      if (!groups.has(baseId)) groups.set(baseId, []);
+      groups.get(baseId)!.push(server);
+    }
+    return groups;
+  }, [servers]);
+
   return (
     <div className="bg-background border border-border rounded-lg p-6 w-full max-w-2xl max-h-[70vh] overflow-y-auto">
       {/* Toast notification */}
@@ -639,42 +652,64 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
         </div>
       ) : (
         <>
-          {/* Current Features */}
-          {servers.length > 0 && (
+          {/* Current Features — grouped by service */}
+          {groupedServers.size > 0 && (
             <div className="mb-6">
               <h3 className="text-sm font-semibold mb-3">Active Features</h3>
               <div className="space-y-2">
-                {servers.map((server) => {
-                  const serverConfig = (server as any).config;
-                  const accountEmail = serverConfig?.accountEmail || (server as any).connectedEmail;
+                {Array.from(groupedServers.entries()).map(([baseId, groupServers]) => {
+                  const displayName = groupServers[0]?.name || baseId;
+                  const isMultiAccount = groupServers.some(s => (s.id || '').includes('~'));
+                  const predefined = predefinedServers.find(p => p.id === baseId);
+                  const supportsMultiAccount = predefined?.auth?.provider && predefined.auth.provider !== 'none';
+
                   return (
-                  <div key={`${server.id}:${accountEmail || 'default'}`} className="p-3 border border-border rounded-lg bg-muted/30">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <h4 className="font-semibold text-sm whitespace-nowrap">{server.name}</h4>
-                          {accountEmail && (
-                            <p className="text-xs text-muted-foreground italic truncate">{accountEmail}</p>
-                          )}
-                        </div>
+                    <div key={baseId} className="border border-border rounded-lg overflow-hidden">
+                      {/* Service header row */}
+                      <div className="flex items-center justify-between px-3 py-2 bg-muted/30">
+                        <h4 className="font-semibold text-sm">{displayName}</h4>
+                        {isMultiAccount && supportsMultiAccount ? (
+                          <button
+                            onClick={() => handleAddServer(baseId)}
+                            disabled={adding}
+                            className="text-xs text-blue-600 hover:underline disabled:opacity-50 whitespace-nowrap"
+                          >
+                            + Add account
+                          </button>
+                        ) : !isMultiAccount ? (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleToggleServer(groupServers[0].id!)}
+                              className="px-2 py-1 text-xs bg-blue-500/20 text-blue-600 rounded hover:bg-blue-500/30 whitespace-nowrap"
+                            >
+                              {groupServers[0].enabled ? 'Disable' : 'Enable'}
+                            </button>
+                            <button
+                              onClick={() => handleRemoveServer(groupServers[0].id!)}
+                              className="px-2 py-1 text-xs bg-red-500/20 text-red-600 rounded hover:bg-red-500/30 whitespace-nowrap"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="flex gap-2 ml-2">
-                        <button
-                          onClick={() => handleToggleServer(server.id!)}
-                          className="px-2 py-1 text-xs bg-blue-500/20 text-blue-600 rounded hover:bg-blue-500/30 whitespace-nowrap"
-                        >
-                          {server.enabled ? 'Disable' : 'Enable'}
-                        </button>
-                        <button
-                          onClick={() => handleRemoveServer(server.id!)}
-                          className="px-2 py-1 text-xs bg-red-500/20 text-red-600 rounded hover:bg-red-500/30 whitespace-nowrap"
-                        >
-                          Remove
-                        </button>
-                      </div>
+                      {/* Account rows (for multi-account services) */}
+                      {isMultiAccount && groupServers.map(server => {
+                        const accountEmail = server.config?.accountEmail || server.id?.split('~')[1];
+                        return (
+                          <div key={server.id} className="flex items-center justify-between px-3 py-1.5 border-t border-border/50">
+                            <span className="text-xs text-muted-foreground">{accountEmail || server.id}</span>
+                            <button
+                              onClick={() => handleRemoveServer(server.id!)}
+                              className="px-2 py-1 text-xs bg-red-500/20 text-red-600 rounded hover:bg-red-500/30 whitespace-nowrap"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
-                );
+                  );
                 })}
               </div>
               <hr className="my-4" />

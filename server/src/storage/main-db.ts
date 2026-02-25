@@ -165,6 +165,26 @@ export class MainDatabase {
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL
       );
+
+      -- Chat messages table (moved from per-role SQLite DBs)
+      CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        roleId TEXT NOT NULL,
+        groupId TEXT,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(roleId, createdAt);
+
+      -- Application settings table (global key-value)
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      );
     `);
 
     // Migrate old MCP server IDs to new package names
@@ -957,6 +977,34 @@ export class MainDatabase {
     }));
   }
 
+  getOAuthTokenByAccountEmail(provider: string, accountEmail: string): OAuthTokenEntry | null {
+    const row = this.db.prepare(`
+      SELECT * FROM oauth_tokens WHERE provider = ? AND accountEmail = ? LIMIT 1
+    `).get(provider, accountEmail) as {
+      provider: string;
+      userId: string;
+      accountEmail: string;
+      accessToken: string;
+      refreshToken: string | null;
+      expiryDate: number | null;
+      createdAt: string;
+      updatedAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      provider: row.provider,
+      userId: row.userId,
+      accountEmail: row.accountEmail,
+      accessToken: row.accessToken,
+      refreshToken: row.refreshToken,
+      expiryDate: row.expiryDate,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    };
+  }
+
   revokeOAuthToken(userId: string, provider: string, accountEmail?: string): boolean {
     let query = `DELETE FROM oauth_tokens WHERE userId = ? AND provider = ?`;
     const params: (string | number)[] = [userId, provider];
@@ -1064,28 +1112,139 @@ export class MainDatabase {
   }
 
   // ============================================
+  // Message Operations
+  // ============================================
+
+  saveMessage(entry: {
+    id: string;
+    userId: string;
+    roleId: string;
+    groupId: string | null;
+    role: string;
+    content: string;
+    createdAt: string | Date;
+  }): void {
+    const createdAt = entry.createdAt instanceof Date
+      ? entry.createdAt.toISOString()
+      : entry.createdAt;
+
+    this.db.prepare(`
+      INSERT OR IGNORE INTO messages (id, userId, roleId, groupId, role, content, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(entry.id, entry.userId, entry.roleId, entry.groupId ?? null, entry.role, entry.content, createdAt);
+  }
+
+  listMessages(
+    userId: string,
+    roleId: string,
+    options: { limit?: number; before?: string } = {}
+  ): Array<{ id: string; userId: string; roleId: string; groupId: string | null; role: string; content: string; createdAt: string }> {
+    const limit = options.limit ?? 50;
+
+    let query = `SELECT * FROM messages WHERE userId = ? AND roleId = ?`;
+    const params: (string | number)[] = [userId, roleId];
+
+    if (options.before) {
+      query += ` AND createdAt < ?`;
+      params.push(options.before);
+    }
+
+    query += ` ORDER BY createdAt DESC LIMIT ?`;
+    params.push(limit);
+
+    const rows = this.db.prepare(query).all(...params) as Array<{
+      id: string;
+      userId: string;
+      roleId: string;
+      groupId: string | null;
+      role: string;
+      content: string;
+      createdAt: string;
+    }>;
+
+    // Return in ascending order (oldest first)
+    return rows.reverse();
+  }
+
+  searchMessages(
+    userId: string,
+    roleId: string,
+    keyword: string,
+    options: { limit?: number } = {}
+  ): Array<{ id: string; userId: string; roleId: string; groupId: string | null; role: string; content: string; createdAt: string }> {
+    const limit = options.limit ?? 100;
+
+    const rows = this.db.prepare(`
+      SELECT * FROM messages
+      WHERE userId = ? AND roleId = ? AND content LIKE ?
+      ORDER BY createdAt DESC
+      LIMIT ?
+    `).all(userId, roleId, `%${keyword}%`, limit) as Array<{
+      id: string;
+      userId: string;
+      roleId: string;
+      groupId: string | null;
+      role: string;
+      content: string;
+      createdAt: string;
+    }>;
+
+    return rows;
+  }
+
+  clearMessages(userId: string, roleId: string): void {
+    this.db.prepare(`DELETE FROM messages WHERE userId = ? AND roleId = ?`).run(userId, roleId);
+  }
+
+  // ============================================
+  // Settings Operations
+  // ============================================
+
+  getSetting<T = unknown>(key: string): T | null {
+    const row = this.db.prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as { value: string } | undefined;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.value) as T;
+    } catch {
+      return row.value as unknown as T;
+    }
+  }
+
+  setSetting(key: string, value: unknown): void {
+    const now = new Date().toISOString();
+    const serialized = JSON.stringify(value);
+    this.db.prepare(`
+      INSERT INTO settings (key, value, updatedAt) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = ?, updatedAt = ?
+    `).run(key, serialized, now, serialized, now);
+  }
+
+  deleteSetting(key: string): void {
+    this.db.prepare(`DELETE FROM settings WHERE key = ?`).run(key);
+  }
+
+  getAllSettings(): Record<string, unknown> {
+    const rows = this.db.prepare(`SELECT key, value FROM settings`).all() as Array<{ key: string; value: string }>;
+    const result: Record<string, unknown> = {};
+    for (const row of rows) {
+      try {
+        result[row.key] = JSON.parse(row.value);
+      } catch {
+        result[row.key] = row.value;
+      }
+    }
+    return result;
+  }
+
+  // ============================================
   // Utility Methods
   // ============================================
 
   /**
-   * Get the path to the role-specific database file
+   * Delete a memory database file for a role (data/memory_<roleId>.db)
    */
-  getRoleDbPath(roleId: string): string {
-    return path.join(path.dirname(this.dbPath), `role_${roleId}.db`);
-  }
-
-  /**
-   * Check if a role database exists
-   */
-  roleDbExists(roleId: string): boolean {
-    return fs.existsSync(this.getRoleDbPath(roleId));
-  }
-
-  /**
-   * Delete a role database file
-   */
-  deleteRoleDb(roleId: string): boolean {
-    const dbPath = this.getRoleDbPath(roleId);
+  deleteMemoryDb(dataDir: string, roleId: string): boolean {
+    const dbPath = path.join(dataDir, `memory_${roleId}.db`);
     if (fs.existsSync(dbPath)) {
       fs.unlinkSync(dbPath);
       return true;

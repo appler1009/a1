@@ -4,12 +4,9 @@ import { SQLiteStorageAdapter } from './sqlite-adapter.js';
 import { S3StorageAdapter } from './s3-adapter.js';
 import type { IStorage, IMessageStorage, ChatMessageEntry } from './interface.js';
 
-// Export new role-based storage
+// Export main storage
 export { MainDatabase, getMainDatabase, closeMainDatabase, type RoleDefinition, type OAuthTokenEntry } from './main-db.js';
-export { RoleStorageAdapter, type RoleStorageConfig, type McpServerConfig } from './role-adapter.js';
-export { RoleStorageService, getRoleStorageService, closeRoleStorageService } from './role-storage-service.js';
 export { migrateToRoleBasedStorage, autoMigrate } from './migrate.js';
-export { migrateMCPServers } from './migrations/migrate-mcp-servers.js';
 
 export type { IStorage, IMessageStorage, ChatMessageEntry };
 export { BaseStorage } from './interface.js';

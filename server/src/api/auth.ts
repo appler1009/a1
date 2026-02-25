@@ -4,7 +4,7 @@ import type { IndividualSignup, CreateOrgSignup, JoinOrg } from '@local-agent/sh
 import { authService } from '../auth/index.js';
 import { GoogleOAuthHandler } from '../auth/google-oauth.js';
 import { GitHubOAuthHandler } from '../auth/github-oauth.js';
-import { getRoleStorageService, getMainDatabase } from '../storage/index.js';
+import { getMainDatabase } from '../storage/index.js';
 
 export async function authRoutes(fastify: FastifyInstance) {
   // Check if email exists

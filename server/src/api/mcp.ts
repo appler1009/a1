@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authService } from '../auth/index.js';
 import { mcpManager } from '../mcp/index.js';
-import { getRoleStorageService } from '../storage/role-storage-service.js';
+import { getMainDatabase } from '../storage/main-db.js';
 import type { MCPServerConfig } from '@local-agent/shared';
 
 const AddMCPServerSchema = z.object({
@@ -37,25 +37,14 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
       return reply.status(401).send({ success: false, error: 'Not authenticated' });
     }
     try {
-      const { getMainDatabase } = await import('../storage/main-db.js');
       const mainDb = getMainDatabase();
       const configs = mainDb.getMCPServerConfigs();
-      
-      // Also get role-specific configs
-      const roleStorage = getRoleStorageService();
-      const currentRoleId = roleStorage.getCurrentRoleId();
-      let roleConfigs = null;
-      if (currentRoleId) {
-        roleConfigs = await roleStorage.listMcpServers(currentRoleId);
-      }
-      
-      return { 
-        success: true, 
-        data: { 
+
+      return {
+        success: true,
+        data: {
           mainConfigs: configs,
-          currentRoleId,
-          roleConfigs,
-        } 
+        }
       };
     } catch (error) {
       return { success: true, data: { error: String(error) } };
@@ -100,18 +89,17 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
       const body = request.body as any;
       const addServerBody = AddMCPServerSchema.parse(body);
       
-      // Get the role ID - either from request body or current role
-      const roleStorage = getRoleStorageService();
-      const roleId = addServerBody.roleId || roleStorage.getCurrentRoleId();
-      
+      // Get the role ID from request body
+      const roleId = addServerBody.roleId;
+
       if (!roleId) {
         return reply.status(400).send({
           success: false,
-          error: { code: 'NO_ROLE', message: 'No role specified and no current role set. Please switch to a role first.' },
+          error: { code: 'NO_ROLE', message: 'No role specified. Please provide a roleId.' },
         });
       }
 
-      const config: MCPServerConfig = {
+      const config: MCPServerConfig & { userId?: string } = {
         id: crypto.randomUUID(),
         name: addServerBody.name,
         transport: addServerBody.transport,
@@ -123,6 +111,7 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
         autoStart: addServerBody.autoStart,
         restartOnExit: addServerBody.restartOnExit,
         enabled: addServerBody.enabled,
+        userId: request.user.id, // Store the user who owns this server (needed for auth-required servers at startup)
         auth: body.auth, // Include auth config if provided
       };
 

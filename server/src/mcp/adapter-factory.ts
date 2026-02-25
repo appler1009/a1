@@ -262,6 +262,15 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
   if (adapterRegistry.isInProcess(baseServerId)) {
     console.log(`[MCPAdapterFactory:getMcpAdapter] Using in-process adapter for ${serverKey} (base: ${baseServerId})`);
 
+    // Prefer the MCPManager's live adapter — it may be a MultiAccountAdapter
+    // that handles accountEmail routing and fan-out across all connected accounts.
+    const managerAdapter = mcpManager.getInProcessAdapter(baseServerId);
+    if (managerAdapter) {
+      console.log(`[MCPAdapterFactory:getMcpAdapter] Delegating to MCPManager's live adapter for ${baseServerId}`);
+      return managerAdapter;
+    }
+
+    // No manager adapter yet — create a single-account in-process adapter as fallback
     // For in-process adapters that need OAuth tokens (like Google Drive),
     // we need to retrieve the token data before creating the adapter
     let tokenData: any = undefined;
@@ -282,7 +291,7 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
       `mcp-${serverKey}`,
       tokenData
     );
-    
+
     // Cache the adapter (cast to McpAdapter to satisfy TypeScript)
     console.log(`[MCPAdapterFactory:getMcpAdapter] Caching in-process adapter with key: ${cacheKey}`);
     const cachedAdapter = adapter as unknown as McpAdapter;

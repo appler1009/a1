@@ -214,7 +214,8 @@ export function ChatPane() {
   const prevScrollHeightRef = useRef(0);
   const isRestoringScrollRef = useRef(false);
   const trimTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const MESSAGE_LIMIT = 10; // Keep only this many messages when trimming
+  const fillViewportFetchRef = useRef(false); // Prevent repeated auto-fetches when content doesn't fill viewport
+  const MESSAGE_LIMIT = 100; // Keep only this many messages when trimming
 
   const { user, currentGroup } = useAuthStore();
   const { currentRole, currentRoleId: storedRoleId, rolesLoaded } = useRolesStore();
@@ -270,7 +271,7 @@ export function ChatPane() {
     // Only fetch if we have a valid currentRole (not 'default')
     if (currentRole?.id) {
       console.log('[ChatPane] Roles loaded, fetching messages for role:', currentRole.id);
-      fetchMessages(currentRole.id, { limit: 10 });
+      fetchMessages(currentRole.id, { limit: 50 });
     } else {
       console.log('[ChatPane] No current role set, skipping message fetch');
     }
@@ -326,6 +327,30 @@ export function ChatPane() {
     }
   }, [currentContent, roleMessages.length, searchResults, isSearchMode]);
 
+  // Auto-fetch more messages when content doesn't fill the viewport (no scrollbar = scroll events never fire).
+  // Runs whenever loading transitions to false. Resets its guard on every new fetch start so role switches
+  // always get a fresh check.
+  useEffect(() => {
+    if (loading) {
+      fillViewportFetchRef.current = false;
+      return;
+    }
+    if (fillViewportFetchRef.current || !hasMore || roleMessages.length === 0) return;
+
+    const rafId = requestAnimationFrame(() => {
+      if (!containerRef.current || fillViewportFetchRef.current) return;
+      const { scrollHeight, clientHeight } = containerRef.current;
+      if (scrollHeight <= clientHeight) {
+        fillViewportFetchRef.current = true;
+        // Don't set isLoadingOlderRef — we want scroll-to-bottom (not restore) after prepend
+        fetchMessages(activeRoleId, { before: roleMessages[0].id, limit: 50 });
+      }
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
   // Handle scroll to detect when user scrolls to top and auto-load more messages
   // Also detect when user is at bottom to trigger message trimming
   const handleScroll = useCallback(() => {
@@ -344,7 +369,7 @@ export function ChatPane() {
         // Save current scroll height before loading
         prevScrollHeightRef.current = scrollHeight;
         const oldestMessage = roleMessages[0];
-        fetchMessages(activeRoleId, { before: oldestMessage.id, limit: 10 });
+        fetchMessages(activeRoleId, { before: oldestMessage.id, limit: 50 });
       }
       
       // Reset the trigger when user scrolls away from top

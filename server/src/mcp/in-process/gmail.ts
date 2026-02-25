@@ -130,13 +130,13 @@ export class GmailInProcess implements InProcessMCPModule {
       },
       {
         name: 'gmailSearchMessages',
-        description: 'Search for messages using Gmail search syntax. Use operators like: from:user@example.com, subject:text, after:2026-02-20, before:2026-02-23, has:attachment, is:unread, is:starred, in:inbox. Examples: "from:support@example.com", "subject:invoice after:2026-02-20", "coffee after:2026-02-20", "has:attachment is:unread"',
+        description: 'Search for messages using Gmail search syntax. Use operators like: from:user@example.com, subject:text, after:YYYY-MM-DD, before:YYYY-MM-DD, newer_than:Nd (e.g. newer_than:1d for last 24h, newer_than:7d for last week), has:attachment, is:unread, is:starred, in:inbox. For "today" or "recent" emails use after:CURRENT_DATE or newer_than:1d. The current date is available in the system prompt. Examples: "from:support@example.com", "subject:invoice after:2026-02-20", "newer_than:1d", "has:attachment is:unread"',
         inputSchema: {
           type: 'object',
           properties: {
             query: {
               type: 'string',
-              description: 'Gmail search query using operators: from:, to:, subject:, after:DATE, before:DATE, has:attachment, is:unread, is:starred, is:important, in:LABEL. Combine multiple terms with AND/OR. Use "YYYY-MM-DD" date format.',
+              description: 'Gmail search query using operators: from:, to:, subject:, after:YYYY-MM-DD, before:YYYY-MM-DD, newer_than:Nd (e.g. newer_than:1d = last 24h, newer_than:7d = last week), has:attachment, is:unread, is:starred, is:important, in:LABEL. Combine multiple terms with AND/OR. Use the current date from the system prompt for date-relative queries.',
             },
             maxResults: {
               type: 'number',
@@ -391,80 +391,52 @@ export class GmailInProcess implements InProcessMCPModule {
    */
   private parseGmailMessage(gmailMessage: any): Record<string, any> {
     const messageId = gmailMessage.id;
-    console.log(`\n[ParseEmail] Starting parseGmailMessage for message ID: ${messageId}`);
-    console.log(`[ParseEmail] Payload structure: ${gmailMessage.payload ? 'exists' : 'missing'}`);
 
     const headers = gmailMessage.payload?.headers || [];
     const getHeader = (name: string) => headers.find((h: any) => h.name === name)?.value || '';
 
-    // Log key headers
     const subject = getHeader('Subject') || '(no subject)';
     const from = getHeader('From') || '(no from)';
     const mimeType = gmailMessage.payload?.mimeType || 'unknown';
-
-    console.log(`[ParseEmail] Subject: ${subject}`);
-    console.log(`[ParseEmail] From: ${from}`);
-    console.log(`[ParseEmail] Root MIME type: ${mimeType}`);
 
     // Extract body content with proper MIME type detection
     let bodyContent = '';
     let isHtml = false;
 
     const getBodyFromPart = (part: any, depth: number = 0): { content: string; isHtml: boolean } | null => {
-      const indent = '  '.repeat(depth);
       const mimeType = part.mimeType || 'unknown';
-      const hasBody = !!part.body?.data;
-      const hasSubparts = !!(part.parts && part.parts.length > 0);
-
-      console.log(`${indent}[ParseEmail:getBodyFromPart] Depth ${depth}: mimeType=${mimeType}, hasBody=${hasBody}, hasSubparts=${hasSubparts}, partSize=${part.body?.size || 0}`);
 
       // If this part has body data, return it with MIME type
       if (part.body?.data) {
         try {
           const content = Buffer.from(part.body.data, 'base64').toString('utf-8');
           const partIsHtml = part.mimeType?.includes('text/html') || false;
-          const contentPreview = content.substring(0, 100).replace(/\n/g, ' ');
-
-          console.log(`${indent}[ParseEmail:getBodyFromPart] ✓ Found body data`);
-          console.log(`${indent}  MIME: ${mimeType}`);
-          console.log(`${indent}  isHtml: ${partIsHtml}`);
-          console.log(`${indent}  Content length: ${content.length} chars`);
-          console.log(`${indent}  Preview: "${contentPreview}..."`);
 
           return { content, isHtml: partIsHtml };
         } catch (err) {
-          console.error(`${indent}[ParseEmail:getBodyFromPart] ✗ Error decoding base64:`, err instanceof Error ? err.message : String(err));
           return null;
         }
       }
 
       // For multipart/alternative, prefer HTML over plain text
       if (part.mimeType === 'multipart/alternative' && part.parts && part.parts.length > 0) {
-        console.log(`${indent}[ParseEmail:getBodyFromPart] Detected multipart/alternative - preferring HTML over plain text`);
-
         // First pass: try to find HTML part
-        console.log(`${indent}[ParseEmail:getBodyFromPart] First pass: looking for text/html part`);
         for (let i = 0; i < part.parts.length; i++) {
           const subpart = part.parts[i];
           if (subpart.mimeType?.includes('text/html')) {
-            console.log(`${indent}[ParseEmail:getBodyFromPart] Found HTML part at index ${i}`);
             const result = getBodyFromPart(subpart, depth + 1);
             if (result) {
-              console.log(`${indent}[ParseEmail:getBodyFromPart] ✓ Using HTML body from subpart ${i + 1}`);
               return result;
             }
           }
         }
 
         // Second pass: fall back to plain text
-        console.log(`${indent}[ParseEmail:getBodyFromPart] Second pass: looking for text/plain part`);
         for (let i = 0; i < part.parts.length; i++) {
           const subpart = part.parts[i];
           if (subpart.mimeType?.includes('text/plain')) {
-            console.log(`${indent}[ParseEmail:getBodyFromPart] Found plain text part at index ${i}`);
             const result = getBodyFromPart(subpart, depth + 1);
             if (result) {
-              console.log(`${indent}[ParseEmail:getBodyFromPart] ✓ Using plain text body from subpart ${i + 1}`);
               return result;
             }
           }
@@ -473,36 +445,25 @@ export class GmailInProcess implements InProcessMCPModule {
 
       // Otherwise, recurse into subparts
       if (part.parts && part.parts.length > 0) {
-        console.log(`${indent}[ParseEmail:getBodyFromPart] Recursing into ${part.parts.length} subpart(s)`);
         for (let i = 0; i < part.parts.length; i++) {
           const subpart = part.parts[i];
-          console.log(`${indent}[ParseEmail:getBodyFromPart] Checking subpart ${i + 1}/${part.parts.length}: ${subpart.mimeType || 'unknown'}`);
           const result = getBodyFromPart(subpart, depth + 1);
           if (result) {
-            console.log(`${indent}[ParseEmail:getBodyFromPart] ✓ Found body in subpart ${i + 1}`);
             return result;
           }
         }
-        console.log(`${indent}[ParseEmail:getBodyFromPart] No body found in any subparts`);
-      } else {
-        console.log(`${indent}[ParseEmail:getBodyFromPart] No subparts to recurse into`);
       }
 
-      console.log(`${indent}[ParseEmail:getBodyFromPart] ✗ No body found at depth ${depth}`);
       return null;
     };
 
-    console.log(`[ParseEmail] Starting body extraction from root payload...`);
     const bodyResult = getBodyFromPart(gmailMessage.payload);
     if (bodyResult) {
       bodyContent = bodyResult.content;
       isHtml = bodyResult.isHtml;
-      console.log(`[ParseEmail] ✓ Successfully extracted body (${bodyContent.length} chars, isHtml=${isHtml})`);
     } else {
-      console.warn(`[ParseEmail] ✗ Failed to extract body from payload structure`);
       // Fallback to snippet
       bodyContent = gmailMessage.snippet || 'No content';
-      console.log(`[ParseEmail] Using fallback snippet (${bodyContent.length} chars)`);
     }
 
     // Parse From header: extract display name and email address
@@ -541,13 +502,6 @@ export class GmailInProcess implements InProcessMCPModule {
       snippet: gmailMessage.snippet,
     };
 
-    console.log(`[ParseEmail] ✓ Parse complete for message "${result.subject}"`);
-    console.log(`[ParseEmail]   From: ${result.from} ${result.fromName ? `(${result.fromName})` : ''}`);
-    console.log(`[ParseEmail]   To: ${result.to.join(', ')}`);
-    console.log(`[ParseEmail]   Body length: ${result.body.length} chars`);
-    console.log(`[ParseEmail]   Format: ${result.isHtml ? 'HTML' : 'Plain Text'}`);
-    console.log(`[ParseEmail]\n`);
-
     return result;
   }
 
@@ -557,9 +511,11 @@ export class GmailInProcess implements InProcessMCPModule {
    */
   async gmailGetMessage(args: any): Promise<unknown> {
     try {
-      console.log('[GmailInProcess:gmailGetMessage] Getting message', args);
+      // Accept both 'messageId' and 'id' (AI sometimes reuses the id field from search results)
+      const messageId = args.messageId ?? args.id;
+      console.log('[GmailInProcess:gmailGetMessage] Getting message', { ...args, messageId });
       // Always request full format for complete email data
-      const result = await getMessage(args.messageId, this.tokens, 'full');
+      const result = await getMessage(messageId, this.tokens, 'full');
 
       // Cache the message to temp directory
       try {
@@ -572,7 +528,7 @@ export class GmailInProcess implements InProcessMCPModule {
 
         // Use message ID as cache key, sanitized for filesystem
         // Include "email" in name so EmailPreviewAdapter recognizes it
-        const cacheId = `gmail_email_${args.messageId}_${uuidv4().substring(0, 8)}`;
+        const cacheId = `gmail_email_${messageId}_${uuidv4().substring(0, 8)}`;
         const cacheFileName = `${cacheId}.json`;
         const cachePath = path.join(tempDir, cacheFileName);
 
@@ -700,8 +656,9 @@ export class GmailInProcess implements InProcessMCPModule {
    */
   async gmailTrashMessage(args: any): Promise<unknown> {
     try {
-      console.log('[GmailInProcess:gmailTrashMessage] Trashing message', args);
-      const result = await trashMessage(args.messageId, this.tokens);
+      const messageId = args.messageId ?? args.id;
+      console.log('[GmailInProcess:gmailTrashMessage] Trashing message', { ...args, messageId });
+      const result = await trashMessage(messageId, this.tokens);
       return {
         type: 'text',
         text: JSON.stringify(result, null, 2),
@@ -718,8 +675,9 @@ export class GmailInProcess implements InProcessMCPModule {
    */
   async gmailUntrashMessage(args: any): Promise<unknown> {
     try {
-      console.log('[GmailInProcess:gmailUntrashMessage] Untrashing message', args);
-      const result = await untrashMessage(args.messageId, this.tokens);
+      const messageId = args.messageId ?? args.id;
+      console.log('[GmailInProcess:gmailUntrashMessage] Untrashing message', { ...args, messageId });
+      const result = await untrashMessage(messageId, this.tokens);
       return {
         type: 'text',
         text: JSON.stringify(result, null, 2),
@@ -736,8 +694,9 @@ export class GmailInProcess implements InProcessMCPModule {
    */
   async gmailArchiveMessage(args: any): Promise<unknown> {
     try {
-      console.log('[GmailInProcess:gmailArchiveMessage] Archiving message', args);
-      const result = await archiveMessage(args.messageId, this.tokens);
+      const messageId = args.messageId ?? args.id;
+      console.log('[GmailInProcess:gmailArchiveMessage] Archiving message', { ...args, messageId });
+      const result = await archiveMessage(messageId, this.tokens);
       return {
         type: 'text',
         text: JSON.stringify(result, null, 2),
@@ -754,8 +713,9 @@ export class GmailInProcess implements InProcessMCPModule {
    */
   async gmailUnarchiveMessage(args: any): Promise<unknown> {
     try {
-      console.log('[GmailInProcess:gmailUnarchiveMessage] Unarchiving message', args);
-      const result = await unarchiveMessage(args.messageId, this.tokens);
+      const messageId = args.messageId ?? args.id;
+      console.log('[GmailInProcess:gmailUnarchiveMessage] Unarchiving message', { ...args, messageId });
+      const result = await unarchiveMessage(messageId, this.tokens);
       return {
         type: 'text',
         text: JSON.stringify(result, null, 2),
@@ -791,9 +751,11 @@ export class GmailInProcess implements InProcessMCPModule {
    */
   async gmailGetThread(args: any): Promise<unknown> {
     try {
-      console.log('[GmailInProcess:gmailGetThread] Getting thread', args);
+      // Accept both 'threadId' and 'id' (AI sometimes reuses the id field from search results)
+      const threadId = args.threadId ?? args.id;
+      console.log('[GmailInProcess:gmailGetThread] Getting thread', { ...args, threadId });
       // Always request full format for complete email data
-      const result = await getThread(args.threadId, this.tokens, 'full');
+      const result = await getThread(threadId, this.tokens, 'full');
 
       // Cache the thread to temp directory
       try {
@@ -806,7 +768,7 @@ export class GmailInProcess implements InProcessMCPModule {
 
         // Use thread ID as cache key, sanitized for filesystem
         // Include "email" in name so EmailPreviewAdapter recognizes it
-        const cacheId = `gmail_email_thread_${args.threadId}_${uuidv4().substring(0, 8)}`;
+        const cacheId = `gmail_email_thread_${threadId}_${uuidv4().substring(0, 8)}`;
         const cacheFileName = `${cacheId}.json`;
         const cachePath = path.join(tempDir, cacheFileName);
 

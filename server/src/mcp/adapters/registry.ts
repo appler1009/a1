@@ -7,6 +7,7 @@ import { MetaMcpSearchInProcess } from '../in-process/meta-mcp-search.js';
 import { GoogleDriveInProcess } from '../in-process/google-drive.js';
 import { GmailInProcess } from '../in-process/gmail.js';
 import { DisplayEmailInProcess } from '../in-process/display-email.js';
+import { ProcessEachInProcess } from '../in-process/process-each.js';
 
 /**
  * Simple concrete implementation of BaseStdioAdapter for generic MCP servers
@@ -106,6 +107,11 @@ class AdapterRegistry {
     this.registerInProcess('display-email', () => new DisplayEmailInProcess());
     this.registerInProcess('Display Email', () => new DisplayEmailInProcess());
 
+    // Process Each - processes a list of items one at a time using a focused LLM call per item
+    // Avoids context overflow when handling many emails/files
+    this.registerInProcess('process-each', () => new ProcessEachInProcess());
+    this.registerInProcess('Process Each', () => new ProcessEachInProcess());
+
     // Future: this.register('github', GithubAdapter);
     // Future: this.register('brave-search', BraveSearchAdapter);
   }
@@ -139,6 +145,25 @@ class AdapterRegistry {
   isInProcess(serverKey: string): boolean {
     const entry = this.adapters.get(serverKey);
     return entry?.type === 'in-process';
+  }
+
+  /**
+   * Create a raw in-process module (without wrapping in InProcessAdapter).
+   * Used by MultiAccountAdapter to create per-account modules.
+   */
+  async createRawModule(
+    serverKey: string,
+    userId: string,
+    tokenData?: any
+  ): Promise<InProcessMCPModule> {
+    const entry = this.adapters.get(serverKey);
+
+    if (!entry || entry.type !== 'in-process') {
+      throw new Error(`No in-process adapter registered for ${serverKey}`);
+    }
+
+    console.log(`[AdapterRegistry] Creating raw module for ${serverKey}`);
+    return entry.factory(userId, tokenData);
   }
 
   /**

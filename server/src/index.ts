@@ -16,7 +16,7 @@ import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import { v4 as uuidv4 } from 'uuid';
 import type { User, Session } from '@local-agent/shared';
-import { createStorage, getRoleStorageService, closeRoleStorageService, autoMigrate, getMainDatabase } from './storage/index.js';
+import { createStorage, autoMigrate, getMainDatabase } from './storage/index.js';
 import type { RoleDefinition } from './storage/index.js';
 import { createLLMRouter } from './ai/router.js';
 import { mcpManager, getMcpAdapter, closeUserAdapters, listPredefinedServers, getPredefinedServer, requiresAuth, PREDEFINED_MCP_SERVERS } from './mcp/index.js';
@@ -196,8 +196,8 @@ const storage = createStorage({
   region: process.env.STORAGE_REGION,
 });
 
-// Role-based storage service (new)
-const roleStorage = getRoleStorageService(process.env.STORAGE_ROOT || './data');
+// Module-level current role tracking (replaces roleStorage.currentRoleId)
+let serverCurrentRoleId: string | null = null;
 
 // Default settings
 const DEFAULT_SETTINGS: Record<string, unknown> = {
@@ -209,11 +209,12 @@ const DEFAULT_SETTINGS: Record<string, unknown> = {
  * Only sets values that don't already exist
  */
 async function initializeDefaultSettings(): Promise<void> {
+  const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
-    const existing = await storage.getSetting(key);
+    const existing = mainDb.getSetting(key);
     if (existing === null) {
       console.log(`[Settings] Initializing default setting: ${key} = ${value}`);
-      await storage.setSetting(key, value);
+      mainDb.setSetting(key, value);
     }
   }
 }
@@ -221,8 +222,9 @@ async function initializeDefaultSettings(): Promise<void> {
 /**
  * Get a setting value with fallback to default
  */
-async function getSettingWithDefault<T>(key: string, defaultValue: T): Promise<T> {
-  const value = await storage.getSetting<T>(key);
+function getSettingWithDefault<T>(key: string, defaultValue: T): T {
+  const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+  const value = mainDb.getSetting<T>(key);
   return value !== null ? value : defaultValue;
 }
 
@@ -604,10 +606,11 @@ fastify.addHook('onRequest', async (request) => {
   const headerRoleId = request.headers['x-role-id'] as string | undefined;
   if (headerRoleId && request.user) {
     // Verify the user owns this role before setting it
-    const role = roleStorage.getRole(headerRoleId);
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const role = mainDb.getRole(headerRoleId);
     if (role && role.userId === request.user.id) {
       // Set the current role for this request
-      roleStorage.setCurrentRole(headerRoleId);
+      serverCurrentRoleId = headerRoleId;
       console.log(`[Request] Setting role from header: ${headerRoleId} (${role.name})`);
     } else {
       console.log(`[Request] WARNING: Invalid role ID in header: ${headerRoleId} (role not found or not owned by user)`);
@@ -952,7 +955,7 @@ fastify.register(async (instance) => {
   });
 }, { prefix: '/api' });
 
-// Roles routes - using new role-based storage
+// Roles routes - using main database
 fastify.register(async (instance) => {
   // Get roles for user or group
   instance.get('/roles', async (request, reply) => {
@@ -965,18 +968,19 @@ fastify.register(async (instance) => {
     console.log(`[/api/roles] User email: ${request.user.email}`);
 
     const query = request.query as { groupId?: string };
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     let roles: RoleDefinition[];
     if (query.groupId) {
       console.log(`[/api/roles] Query type: GROUP (${query.groupId})`);
-      roles = roleStorage.getGroupRoles(query.groupId);
+      roles = mainDb.getGroupRoles(query.groupId);
     } else {
       console.log(`[/api/roles] Query type: USER`);
-      roles = roleStorage.getUserRoles(request.user.id);
+      roles = mainDb.getUserRoles(request.user.id);
     }
 
     // Include the currently active role ID
-    const currentRoleId = roleStorage.getCurrentRoleId();
+    const currentRoleId = serverCurrentRoleId;
 
     console.log(`[/api/roles] ✓ Found ${roles.length} roles`);
     if (roles.length > 0) {
@@ -1000,52 +1004,54 @@ fastify.register(async (instance) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
-    
-    const currentRoleId = roleStorage.getCurrentRoleId();
-    
+
+    const currentRoleId = serverCurrentRoleId;
+
     if (!currentRoleId) {
-      return reply.send({ 
-        success: true, 
-        data: { 
+      return reply.send({
+        success: true,
+        data: {
           currentRole: null,
-          message: 'No role is currently active' 
-        } 
+          message: 'No role is currently active'
+        }
       });
     }
-    
-    const role = roleStorage.getRole(currentRoleId);
-    
+
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const role = mainDb.getRole(currentRoleId);
+
     // Verify ownership
     if (!role || role.userId !== request.user.id) {
       // Clear the invalid role
-      roleStorage.setCurrentRole('');
-      return reply.send({ 
-        success: true, 
-        data: { 
+      serverCurrentRoleId = null;
+      return reply.send({
+        success: true,
+        data: {
           currentRole: null,
-          message: 'No role is currently active' 
-        } 
+          message: 'No role is currently active'
+        }
       });
     }
-    
-    return reply.send({ 
-      success: true, 
-      data: { 
+
+    return reply.send({
+      success: true,
+      data: {
         currentRole: role,
-      } 
+      }
     });
   });
 
-  // Create role - creates a new isolated database for this role
+  // Create role - creates a record in main.db
   instance.post('/roles', async (request, reply) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
-    
+
     const body = request.body as { groupId?: string; name: string; jobDesc?: string; systemPrompt?: string; model?: string };
-    
+
     try {
-      const role = await roleStorage.createRole(
+      const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+      const role = mainDb.createRole(
         request.user.id,
         body.name,
         body.groupId,
@@ -1053,7 +1059,7 @@ fastify.register(async (instance) => {
         body.systemPrompt,
         body.model
       );
-      
+
       console.log(`[Roles] Created role ${role.id} "${role.name}" for user ${request.user.id}`);
       return reply.send({ success: true, data: role });
     } catch (error) {
@@ -1067,19 +1073,20 @@ fastify.register(async (instance) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
-    
+
     const params = request.params as { id: string };
-    const role = roleStorage.getRole(params.id);
-    
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const role = mainDb.getRole(params.id);
+
     if (!role) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
     }
-    
+
     // Verify ownership
     if (role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
     }
-    
+
     return reply.send({ success: true, data: role });
   });
 
@@ -1088,50 +1095,60 @@ fastify.register(async (instance) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
-    
+
     const params = request.params as { id: string };
     const body = request.body as { name?: string; jobDesc?: string; systemPrompt?: string; model?: string };
-    
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify ownership
-    const existingRole = roleStorage.getRole(params.id);
+    const existingRole = mainDb.getRole(params.id);
     if (!existingRole) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
     }
-    
+
     if (existingRole.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
     }
-    
-    const role = roleStorage.updateRole(params.id, body);
+
+    const role = mainDb.updateRole(params.id, body);
     return reply.send({ success: true, data: role });
   });
 
-  // Delete role - removes the role database file
+  // Delete role - removes the role from main.db and its memory DB file
   instance.delete('/roles/:id', async (request, reply) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
-    
+
     const params = request.params as { id: string };
-    
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify ownership
-    const existingRole = roleStorage.getRole(params.id);
+    const existingRole = mainDb.getRole(params.id);
     if (!existingRole) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
     }
-    
+
     if (existingRole.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
     }
-    
+
     // If this is the current role, clear it
-    if (roleStorage.getCurrentRoleId() === params.id) {
-      roleStorage.setCurrentRole('');
+    if (serverCurrentRoleId === params.id) {
+      serverCurrentRoleId = null;
     }
-    
-    await roleStorage.deleteRole(params.id);
+
+    // Delete memory DB file if it exists
+    const dataDir = process.env.STORAGE_ROOT || './data';
+    mainDb.deleteMemoryDb(dataDir, params.id);
+
+    // Delete role messages from main.db
+    mainDb.clearMessages(existingRole.userId, params.id);
+
+    // Delete the role from main.db
+    mainDb.deleteRole(params.id);
     console.log(`[Roles] Deleted role ${params.id}`);
-    
+
     return reply.send({ success: true });
   });
 
@@ -1140,21 +1157,22 @@ fastify.register(async (instance) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
-    
+
     const params = request.params as { id: string };
-    
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify ownership
-    const role = roleStorage.getRole(params.id);
+    const role = mainDb.getRole(params.id);
     if (!role) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
     }
-    
+
     if (role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
     }
-    
-    // Set the current role in storage
-    roleStorage.setCurrentRole(params.id);
+
+    // Set the current role
+    serverCurrentRoleId = params.id;
     
     // Switch MCP servers to the new role
     // This will disconnect auth-required servers and load role-specific MCP configs
@@ -1173,7 +1191,7 @@ fastify.register(async (instance) => {
   });
 }, { prefix: '/api' });
 
-// Chat routes - using role-based storage
+// Chat routes - using main database
 fastify.register(async (instance) => {
   // Get messages for a role with pagination
   instance.get('/messages', async (request, reply) => {
@@ -1184,7 +1202,6 @@ fastify.register(async (instance) => {
     const query = request.query as { roleId?: string; limit?: number; before?: string };
     const roleId = query.roleId;
 
-    const serverCurrentRoleId = roleStorage.getCurrentRoleId();
     console.log(`[/api/messages GET] User: ${request.user.id}, Requested RoleId: ${roleId}, Server Current: ${serverCurrentRoleId}`);
 
     if (!roleId) {
@@ -1192,8 +1209,10 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify role ownership
-    const role = roleStorage.getRole(roleId);
+    const role = mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       console.log(`[/api/messages GET] ERROR: Access denied to role ${roleId} (role not found or wrong user)`);
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
@@ -1202,13 +1221,13 @@ fastify.register(async (instance) => {
     const limit = query.limit || 50;
 
     // Check if role is changing
-    const previousRoleId = roleStorage.getCurrentRoleId();
+    const previousRoleId = serverCurrentRoleId;
     const roleChanged = previousRoleId !== roleId;
 
     // Set current role and get messages
     console.log(`[/api/messages GET] Setting current role to: ${roleId}, Role name: ${role.name}`);
     console.log(`[/api/messages GET] Previous role: ${previousRoleId || 'none'}, Role changed: ${roleChanged}`);
-    roleStorage.setCurrentRole(roleId);
+    serverCurrentRoleId = roleId;
 
     // Switch MCP servers if role changed
     if (roleChanged) {
@@ -1216,8 +1235,8 @@ fastify.register(async (instance) => {
       await mcpManager.switchRole(roleId, request.user.id);
     }
 
-    console.log(`[/api/messages GET] Fetching messages from role database: role_${roleId}.db (limit: ${limit}, before: ${query.before || 'none'})`);
-    const messages = await roleStorage.listMessages(roleId, { limit, before: query.before });
+    console.log(`[/api/messages GET] Fetching messages from main.db (limit: ${limit}, before: ${query.before || 'none'})`);
+    const messages = mainDb.listMessages(request.user.id, roleId, { limit, before: query.before });
     console.log(`[/api/messages GET] Found ${messages.length} messages for role ${roleId}`);
 
     return reply.send({ success: true, data: messages });
@@ -1239,8 +1258,10 @@ fastify.register(async (instance) => {
 
     console.log(`[/api/messages POST] User: ${request.user.id}, RoleId: ${body.roleId}, Message role: ${body.role}`);
 
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify role ownership
-    const role = roleStorage.getRole(body.roleId);
+    const role = mainDb.getRole(body.roleId);
     if (!role || role.userId !== request.user.id) {
       console.log(`[/api/messages POST] ERROR: Access denied to role ${body.roleId}`);
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
@@ -1256,10 +1277,8 @@ fastify.register(async (instance) => {
       createdAt: new Date().toISOString(),
     };
 
-    // Set current role and save message
-    console.log(`[/api/messages POST] Setting current role to: ${body.roleId}, Role name: ${role.name}`);
-    roleStorage.setCurrentRole(body.roleId);
-    await roleStorage.saveMessage(message);
+    serverCurrentRoleId = body.roleId;
+    mainDb.saveMessage(message);
     const contentPreview = body.content.substring(0, 50) + (body.content.length > 50 ? '...' : '');
     console.log(`[/api/messages POST] Message saved for role ${body.roleId}: "${contentPreview}"`);
     return reply.send({ success: true, data: message });
@@ -1278,15 +1297,15 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify role ownership
-    const role = roleStorage.getRole(roleId);
+    const role = mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    // Set current role and clear messages
-    roleStorage.setCurrentRole(roleId);
-    await roleStorage.clearMessages(roleId);
+    mainDb.clearMessages(request.user.id, roleId);
     return reply.send({ success: true });
   });
 
@@ -1303,8 +1322,10 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify role ownership
-    const role = roleStorage.getRole(roleId);
+    const role = mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
@@ -1316,9 +1337,7 @@ fastify.register(async (instance) => {
       return reply.send({ success: true, data: [] });
     }
 
-    // Set current role and search messages
-    roleStorage.setCurrentRole(roleId);
-    const messages = await roleStorage.searchMessages(keyword, roleId, { limit });
+    const messages = mainDb.searchMessages(request.user.id, roleId, keyword, { limit });
     return reply.send({ success: true, data: messages });
   });
 
@@ -1328,7 +1347,7 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
-    const body = request.body as { 
+    const body = request.body as {
       roleId: string;
       messages: Array<{
         id: string;
@@ -1338,21 +1357,20 @@ fastify.register(async (instance) => {
         role: 'user' | 'assistant' | 'system';
         content: string;
         createdAt: string;
-      }> 
+      }>;
     };
 
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify role ownership
-    const role = roleStorage.getRole(body.roleId);
+    const role = mainDb.getRole(body.roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    // Set current role
-    roleStorage.setCurrentRole(body.roleId);
-
     let migrated = 0;
     for (const msg of body.messages) {
-      await roleStorage.saveMessage({
+      mainDb.saveMessage({
         ...msg,
         userId: msg.userId || request.user.id,
         groupId: msg.groupId || null,
@@ -1469,10 +1487,22 @@ fastify.register(async (instance) => {
       // TWO-PHASE MCP TOOL LOADING
       // Phase 1: Start with only search_tool from meta-mcp-search
       // Phase 2: After search_tool is called, dynamically load relevant tools
-      
+
+      // Ensure role-specific MCP servers (incl. multi-account Gmail/Drive) are loaded
+      // for this user. switchRole is idempotent — it only reloads when the role changes
+      // or when the adapter is empty.
+      const chatRoleId = body.roleId;
+      if (chatRoleId && chatRoleId !== mcpManager.getCurrentRoleId()) {
+        console.log(`[ChatStream] Role mismatch (current=${mcpManager.getCurrentRoleId()}, request=${chatRoleId}), switching role...`);
+        await mcpManager.switchRole(chatRoleId, request.user.id);
+      } else if (chatRoleId) {
+        // Same role but ensure user-specific adapters (e.g. Gmail) are populated
+        await mcpManager.ensureUserServers(chatRoleId, request.user.id);
+      }
+
       // Import the meta-mcp-search module for tool discovery
       const { updateToolManifest } = await import('./mcp/in-process/meta-mcp-search.js');
-      
+
       // Load ALL available MCP tools for the search manifest
       console.log('[ChatStream] Loading MCP tools from available servers for search manifest');
       const allTools = await mcpManager.listAllTools();
@@ -1501,11 +1531,30 @@ fastify.register(async (instance) => {
       }
       console.log(`[ChatStream] Tool cache built with ${toolCache.getToolCount()} tool-to-server mappings`);
 
-      // PHASE 1: Start with search_tool + memory retrieval tools
+      // PHASE 1: Start with search_tool (if enabled) + memory retrieval tools
       // The search_tool allows the LLM to discover what tools are available
-      // Memory tools provide access to the knowledge graph for context
-      const phase1Tools = [
-        {
+      // When search is disabled, ALL available MCP tools are included directly
+      const enableMetaMcpSearch = process.env.ENABLE_META_MCP_SEARCH !== 'false';
+
+      const phase1Tools = [];
+
+      // When meta-mcp-search is disabled, include all available MCP tools directly in Phase 1
+      if (!enableMetaMcpSearch) {
+        const hiddenServerIds = new Set(['meta-mcp-search', 'memory', 'sqlite-memory', 'process-each']);
+        for (const { serverId, tools } of allTools) {
+          if (hiddenServerIds.has(serverId)) continue; // memory tools added separately below
+          for (const tool of tools) {
+            phase1Tools.push({ ...tool, serverId });
+          }
+        }
+        if (phase1Tools.length > 0) {
+          console.log(`[ChatStream] meta-mcp-search disabled: injected ${phase1Tools.length} tools directly into Phase 1`);
+        }
+      }
+
+      // Add search_tool if enabled
+      if (enableMetaMcpSearch) {
+        phase1Tools.push({
           name: 'search_tool',
           description: `Search for MCP tools using natural language. Use this tool to discover what tools are available for your task.
 
@@ -1534,8 +1583,11 @@ After calling this tool, you'll receive tool names and their server information.
             required: ['query']
           },
           serverId: 'meta-mcp-search',
-        },
-        // Memory retrieval tools - always available for context
+        });
+      }
+
+      // Memory retrieval tools - always available for context
+      phase1Tools.push(
         {
           name: 'memory_search_nodes',
           description: 'Search the knowledge graph for relevant entities, relationships, and observations. Use this to find existing context about topics discussed before.',
@@ -1576,11 +1628,12 @@ After calling this tool, you'll receive tool names and their server information.
           },
           serverId: 'sqlite-memory',
         }
-      ];
+      );
 
       // Convert tools to provider format
       const providerTools = llmRouter.convertMCPToolsToOpenAI(phase1Tools);
-      console.log(`[ChatStream] Phase 1: Providing search_tool + memory retrieval tools (${providerTools.length} tools)`);
+      const toolList = enableMetaMcpSearch ? 'search_tool + memory retrieval tools' : 'memory retrieval tools (search_tool disabled)';
+      console.log(`[ChatStream] Phase 1: Providing ${toolList} (${providerTools.length} tools)`);
       
       // Print the list of tools being sent to the LLM
       console.log('\n' + '='.repeat(80));
@@ -1672,9 +1725,15 @@ ${accountList}
 
       // Keep track of conversation for tool execution
       // Add system message about file tagging for preview
+      const now = new Date();
+      const currentDateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+      const currentDateTimeStr = now.toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+
       const systemMessage = {
         role: 'system' as const,
         content: `You are a helpful assistant.
+
+**Current date and time**: ${currentDateTimeStr} (${currentDateStr})
 
 - No emojis. Use markdown.
 - Use human-readable filenames and email subjects, never mention cache IDs or internal identifiers.
@@ -1723,7 +1782,7 @@ You have access to a knowledge graph memory system with the following tools:
       let conversationMessages = [systemMessage, ...body.messages];
       let assistantContent = '';
       let toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
-      const MAX_TOOL_ITERATIONS = await getSettingWithDefault<number>('MAX_TOOL_ITERATIONS', 10);
+      const MAX_TOOL_ITERATIONS = getSettingWithDefault<number>('MAX_TOOL_ITERATIONS', 10);
       let toolIteration = 0;
 
       // Track consecutive identical tool calls to prevent infinite loops
@@ -2532,15 +2591,15 @@ fastify.register(async (instance) => {
     const body = request.body as any;
     
     // Get the current role ID
-    const currentRoleId = mcpManager.getCurrentRoleId() || roleStorage.getCurrentRoleId();
-    
+    const currentRoleId = mcpManager.getCurrentRoleId() || serverCurrentRoleId;
+
     if (!currentRoleId) {
       return reply.code(400).send({
         success: false,
         error: { message: 'No role is currently active. Please switch to a role first.' },
       });
     }
-    
+
     const config = {
       id: body.id || undefined,
       name: body.name,
@@ -2659,7 +2718,7 @@ fastify.register(async (instance) => {
     }
 
     // Get the current role ID
-    const currentRoleId = mcpManager.getCurrentRoleId() || roleStorage.getCurrentRoleId();
+    const currentRoleId = mcpManager.getCurrentRoleId() || serverCurrentRoleId;
     if (!currentRoleId) {
       return reply.code(400).send({
         success: false,
@@ -2720,6 +2779,7 @@ fastify.register(async (instance) => {
         autoStart: false,
         restartOnExit: false,
         auth: predefinedServer.auth,
+        userId: request.user.id, // Store the user who owns this server (needed for auth-required servers at startup)
         accountEmail, // Store the selected account email for multi-account support
         env: predefinedServer.env || {},
       };
@@ -2903,9 +2963,9 @@ fastify.register(async (instance) => {
   });
 }, { prefix: '/api' });
 
-// Settings routes - using role-based storage
+// Settings routes - using main database (global settings)
 fastify.register(async (instance) => {
-  // Get all settings for a role
+  // Get all settings (verify role ownership but settings are global)
   instance.get('/settings', async (request, reply) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
@@ -2918,18 +2978,19 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify role ownership
-    const role = roleStorage.getRole(roleId);
+    const role = mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    roleStorage.setCurrentRole(roleId);
-    const settings = await roleStorage.getAllSettings();
+    const settings = mainDb.getAllSettings();
     return reply.send({ success: true, data: settings });
   });
 
-  // Get a specific setting for a role
+  // Get a specific setting
   instance.get('/settings/:key', async (request, reply) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
@@ -2943,23 +3004,24 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify role ownership
-    const role = roleStorage.getRole(roleId);
+    const role = mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    roleStorage.setCurrentRole(roleId);
-    const value = await roleStorage.getSetting(params.key);
-    
+    const value = mainDb.getSetting(params.key);
+
     if (value === null) {
       return reply.code(404).send({ success: false, error: { message: 'Setting not found' } });
     }
-    
+
     return reply.send({ success: true, data: { key: params.key, value } });
   });
 
-  // Update a setting for a role
+  // Update a setting
   instance.put('/settings/:key', async (request, reply) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
@@ -2972,25 +3034,26 @@ fastify.register(async (instance) => {
     if (!roleId) {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
-    
+
     if (body.value === undefined) {
       return reply.code(400).send({ success: false, error: { message: 'Value is required' } });
     }
 
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify role ownership
-    const role = roleStorage.getRole(roleId);
+    const role = mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    roleStorage.setCurrentRole(roleId);
-    await roleStorage.setSetting(params.key, body.value);
-    console.log(`[Settings] Updated setting for role ${roleId}: ${params.key} = ${JSON.stringify(body.value)}`);
-    
+    mainDb.setSetting(params.key, body.value);
+    console.log(`[Settings] Updated setting: ${params.key} = ${JSON.stringify(body.value)}`);
+
     return reply.send({ success: true, data: { key: params.key, value: body.value } });
   });
 
-  // Delete a setting for a role
+  // Delete a setting
   instance.delete('/settings/:key', async (request, reply) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
@@ -3004,16 +3067,17 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
     // Verify role ownership
-    const role = roleStorage.getRole(roleId);
+    const role = mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    roleStorage.setCurrentRole(roleId);
-    await roleStorage.deleteSetting(params.key);
-    console.log(`[Settings] Deleted setting for role ${roleId}: ${params.key}`);
-    
+    mainDb.deleteSetting(params.key);
+    console.log(`[Settings] Deleted setting: ${params.key}`);
+
     return reply.send({ success: true });
   });
 }, { prefix: '/api' });
@@ -3030,28 +3094,12 @@ const start = async () => {
       console.log('══════════════════════════════════════════════════════════════\n');
     }
 
-    // Initialize role-based storage (new system)
-    await roleStorage.initialize();
+    // Initialize main database
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    await mainDb.initialize();
     console.log(`[Storage] Using ${migrationResult.schema.toUpperCase()} schema`);
-    fastify.log.info('Role storage service initialized');
+    fastify.log.info('Main database initialized');
 
-    // Run token migration (move role-specific tokens to user-level)
-    const { migrateRoleTokens } = await import('./storage/migrations/migrate-role-tokens.js');
-    try {
-      await migrateRoleTokens(config.storage.root);
-      fastify.log.info('OAuth token migration completed');
-    } catch (error) {
-      console.warn('[Storage] Token migration failed (continuing anyway):', error);
-    }
-
-    // Run MCP server migration (move role-specific servers to main.db)
-    const { migrateMCPServers } = await import('./storage/migrations/migrate-mcp-servers.js');
-    try {
-      await migrateMCPServers(config.storage.root);
-      fastify.log.info('MCP server migration completed');
-    } catch (error) {
-      console.warn('[Storage] MCP server migration failed (continuing anyway):', error);
-    }
 
     // Initialize legacy storage (for backward compatibility) - only if metadata.db exists
     const legacyDbPath = path.join(config.storage.root, 'metadata.db');
@@ -3072,10 +3120,6 @@ const start = async () => {
     // Initialize MCP manager
     await mcpManager.initialize();
     fastify.log.info('MCP manager initialized with persisted servers');
-
-    // Initialize MCP servers for all roles
-    await mcpManager.initializeAllRoles();
-    fastify.log.info('MCP servers initialized for all roles');
 
     // Register in-process adapters for better performance
     // These adapters run directly in the Node.js process without spawning child processes
@@ -3111,7 +3155,7 @@ const start = async () => {
 process.on('SIGTERM', async () => {
   console.log('Shutting down...');
   await mcpManager.disconnectAll();
-  closeRoleStorageService();
+  // (no role storage to close - using main database)
   await fastify.close();
   process.exit(0);
 });
@@ -3119,7 +3163,7 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
   console.log('Shutting down...');
   await mcpManager.disconnectAll();
-  closeRoleStorageService();
+  // (no role storage to close - using main database)
   await fastify.close();
   process.exit(0);
 });

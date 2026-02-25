@@ -147,6 +147,7 @@ export const MCPServerConfigSchema = z.object({
   restartOnExit: z.boolean().optional().default(false),
   enabled: z.boolean().optional().default(true),
   hidden: z.boolean().optional(), // If true, won't show in UI but can still be used
+  userId: z.string().optional(), // User who owns this server config (for auth-required servers)
   accountEmail: z.string().optional(), // For multi-account OAuth services (Gmail, Google Drive, etc.)
   auth: z.object({
     provider: z.string().optional(),
@@ -159,7 +160,7 @@ export const MCPServerConfigSchema = z.object({
 export const MCPToolInfoSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
-  inputSchema: z.record(z.unknown()).optional(),
+  inputSchema: z.record(z.unknown()),
   requiresDetailedSchema: z.boolean().optional(),
 });
 

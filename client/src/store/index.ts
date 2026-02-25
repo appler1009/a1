@@ -329,25 +329,35 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
   
   fetchMessages: async (roleId, options = {}) => {
-    const { loading, messages } = get();
-    if (loading) return;
-    
-    set({ loading: true });
+    const { loading } = get();
+
+    // For pagination (loading older messages), skip if a fetch is already in progress
+    if (loading && options.before) return;
+
+    // For initial loads (role switch), clear messages immediately so stale messages
+    // from the previous role never appear, then always proceed with the fetch.
+    if (!options.before) {
+      set({ messages: [], hasMore: true, loading: true });
+    } else {
+      set({ loading: true });
+    }
+
     try {
       const params = new URLSearchParams({ roleId });
       if (options.limit) params.append('limit', String(options.limit));
       if (options.before) params.append('before', options.before);
-      
+
       const response = await apiFetch(`/api/messages?${params}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
           const fetchedMessages = data.data as Message[];
           if (options.before) {
-            // Prepend older messages
-            set({ messages: [...fetchedMessages, ...messages], hasMore: fetchedMessages.length === (options.limit || 50) });
+            // Prepend older messages — use get() to avoid stale closure
+            const current = get().messages;
+            set({ messages: [...fetchedMessages, ...current], hasMore: fetchedMessages.length === (options.limit || 50) });
           } else {
-            // Initial load
+            // Initial load — replace all messages
             set({ messages: fetchedMessages, hasMore: fetchedMessages.length === (options.limit || 50) });
           }
         }
