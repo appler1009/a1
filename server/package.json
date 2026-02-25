@@ -10,7 +10,9 @@
     "start": "NODE_ENV=production node dist/index.js",
     "start:dev": "NODE_ENV=development node dist/index.js",
     "start:test": "NODE_ENV=test node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -23,6 +25,7 @@
     "@googleapis/gmail": "^8.0.0",
     "@local-agent/shared": "*",
     "better-sqlite3": "^9.4.3",
+    "discord.js": "^14.15.0",
     "dotenv": "^17.3.1",
     "fastify": "^4.26.2",
     "fuse.js": "^7.0.0",
@@ -44,6 +47,7 @@
     "@types/uuid": "^9.0.8",
     "@types/ws": "^8.5.10",
     "tsx": "^4.7.1",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^1.4.0"
   }
 }

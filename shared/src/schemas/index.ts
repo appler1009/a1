@@ -6,6 +6,9 @@ export const UserSchema = z.object({
   email: z.string().email(),
   name: z.string().optional(),
   accountType: z.enum(['individual', 'group']),
+  discordUserId: z.string().optional(),
+  locale: z.string().optional(),
+  timezone: z.string().optional(),
   createdAt: z.string().or(z.date()),
   updatedAt: z.string().or(z.date()).optional(),
 });

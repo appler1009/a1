@@ -15,7 +15,7 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['Mulish', 'sans-serif'],
+        sans: ['Mulish', 'Asta Sans', 'sans-serif'],
       },
       colors: {
         border: "hsl(var(--border))",

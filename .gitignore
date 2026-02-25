@@ -49,6 +49,10 @@ lerna-debug.log*
 coverage/
 .nyc_output/
 *.lcov
+.vitest/
+test-results/
+playwright-report/
+.playwright
 
 # TypeScript
 *.tsbuildinfo

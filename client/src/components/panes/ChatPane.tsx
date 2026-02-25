@@ -4,87 +4,7 @@ import { useAuthStore, useRolesStore, useChatStore, useUIStore, type ViewerFile,
 import { MessageItem } from '../MessageItem';
 import { TopBanner } from '../TopBanner';
 import { apiFetch } from '../../lib/api';
-
-/**
- * Format tool name for display: converts camelCase to words, underscores to spaces, lowercase, italic
- * Examples:
- * - "gmailSearchMessages" → "gmail search messages"
- * - "search_tool" → "search tool"
- * - "googleDriveListFiles" → "google drive list files"
- */
-function formatToolName(toolName: string): string {
-  // Insert space before uppercase letters (camelCase to words)
-  let formatted = toolName.replace(/([A-Z])/g, ' $1');
-  // Replace underscores with spaces
-  formatted = formatted.replace(/_/g, ' ');
-  // Lowercase everything
-  formatted = formatted.toLowerCase();
-  // Remove extra spaces and trim
-  formatted = formatted.replace(/\s+/g, ' ').trim();
-  return formatted;
-}
-
-/**
- * Parse Google Drive search result to extract PDF files
- * Format: "Report.pdf (ID: abc123, application/pdf)"
- */
-function parseGoogleDriveSearchResult(result: string): { id: string; name: string; mimeType: string; previewUrl: string } | null {
-  const lines = result.split('\n');
-  for (const line of lines) {
-    // Match: "filename (ID: id123, application/pdf)"
-    const match = line.match(/^(.+?)\s+\(ID:\s*(\S+?),\s*(.+?)\)$/);
-    if (match) {
-      const [, name, id, mimeType] = match;
-      if (mimeType.trim() === 'application/pdf') {
-        return {
-          id,
-          name: name.trim(),
-          mimeType: mimeType.trim(),
-          previewUrl: `https://drive.google.com/file/d/${id}/preview`,
-        };
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * Extract email data from display_email tool marker
- * Format: ___DISPLAY_EMAIL__{json}___END_DISPLAY_EMAIL___
- */
-function parseDisplayEmailMarker(result: string): { id: string; name: string; mimeType: string; previewUrl: string } | null {
-  console.log('[DisplayEmail] Attempting to parse email marker from result:', result.substring(0, 150));
-
-  const match = result.match(/___DISPLAY_EMAIL___(.*?)___END_DISPLAY_EMAIL___/s);
-  if (!match || !match[1]) {
-    console.log('[DisplayEmail] No marker found in result');
-    return null;
-  }
-
-  console.log('[DisplayEmail] Marker found, parsing JSON...');
-  try {
-    const emailData = JSON.parse(match[1]);
-    console.log('[DisplayEmail] Successfully parsed email data:', { subject: emailData.subject, from: emailData.from });
-
-    // Determine what type of email data we have
-    let emailName = 'Email';
-    if (emailData.subject) {
-      emailName = emailData.subject;
-    } else if (emailData.messages && emailData.messages.length > 0) {
-      emailName = emailData.messages[0].subject || 'Email Thread';
-    }
-
-    return {
-      id: emailData.id || crypto.randomUUID(),
-      name: emailName,
-      mimeType: 'message/rfc822',
-      previewUrl: `data:message/rfc822;base64,${btoa(match[1])}`,
-    };
-  } catch (error) {
-    console.error('[DisplayEmail] Failed to parse email marker:', error);
-    return null;
-  }
-}
+import { formatToolName, parseGoogleDriveSearchResult, parseDisplayEmailMarker } from '../../lib/chat-utils';
 
 /**
  * Parse preview file tags from model response
@@ -207,6 +127,7 @@ export function ChatPane() {
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [searchResults, setSearchResults] = useState<Message[]>([]);
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [pendingRoleSwitch, setPendingRoleSwitch] = useState<{ roleId: string; roleName: string } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isLoadingOlderRef = useRef(false);
@@ -426,6 +347,8 @@ export function ChatPane() {
           })),
           roleId: currentRole?.id,
           groupId: currentGroup?.id,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          locale: navigator.language,
           viewerFile: viewerFile ? {
             id: viewerFile.id,
             name: viewerFile.name,
@@ -498,6 +421,35 @@ export function ChatPane() {
                 // Handle tool results - display as system message and prepare for next response
                 if (parsed.type === 'tool_result' && parsed.result) {
                   console.log('[ChatPane] Tool result received:', { toolName: parsed.toolName, resultPreview: parsed.result.substring(0, 100) });
+
+                  // Check for role switch metadata from role-manager tool
+                  if (parsed.metadata?.roleSwitch) {
+                    const roleSwitch = parsed.metadata.roleSwitch;
+                    console.log('[ChatPane] Role switch detected:', roleSwitch);
+                    // Show pending state with spinner
+                    setPendingRoleSwitch({ roleId: roleSwitch.roleId, roleName: roleSwitch.roleName });
+
+                    // Schedule the actual role switch after 3 seconds
+                    setTimeout(() => {
+                      const { roles } = useRolesStore.getState();
+                      const targetRole = roles.find(r => r.id === roleSwitch.roleId);
+                      if (targetRole) {
+                        console.log('[ChatPane] Executing role switch:', targetRole.name);
+                        const { switchRole } = useRolesStore.getState();
+                        switchRole(targetRole, () => {})
+                          .then(() => {
+                            console.log('[ChatPane] Role switched successfully');
+                            setPendingRoleSwitch(null);
+                          })
+                          .catch(err => {
+                            console.error('[ChatPane] Failed to switch role:', err);
+                            setPendingRoleSwitch(null);
+                          });
+                      } else {
+                        setPendingRoleSwitch(null);
+                      }
+                    }, 3000);
+                  }
 
                   // Check for emails from display_email tool
                   const emailFile = parseDisplayEmailMarker(parsed.result);
@@ -670,8 +622,23 @@ export function ChatPane() {
         clearHistoryLabel="Clear History"
       />
 
+      {/* Pending Role Switch Indicator */}
+      {pendingRoleSwitch && (
+        <div className="px-4 py-3 bg-blue-50 border-b border-blue-200 flex items-center gap-3">
+          <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+          <span className="text-sm text-blue-800">
+            Switching to <strong>{pendingRoleSwitch.roleName}</strong>...
+          </span>
+        </div>
+      )}
+
       {/* Messages */}
-      <div ref={containerRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2">
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        onClick={() => { if (!window.getSelection()?.toString()) inputRef.current?.focus(); }}
+        className={`flex-1 min-h-0 overflow-y-auto p-4 space-y-2 transition-opacity duration-500 ${pendingRoleSwitch ? 'opacity-0' : 'opacity-100'}`}
+      >
         {/* Search Mode - Show search results */}
         {isSearchMode && (
           <>

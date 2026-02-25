@@ -521,14 +521,13 @@ export class GmailInProcess implements InProcessMCPModule {
       try {
         const fs = await import('fs/promises');
         const path = await import('path');
-        const { v4: uuidv4 } = await import('uuid');
 
         const tempDir = path.join(this.storageRoot, 'temp');
         await fs.mkdir(tempDir, { recursive: true });
 
-        // Use message ID as cache key, sanitized for filesystem
+        // Use message ID as cache key directly
         // Include "email" in name so EmailPreviewAdapter recognizes it
-        const cacheId = `gmail_email_${messageId}_${uuidv4().substring(0, 8)}`;
+        const cacheId = `gmail_email_${messageId}`;
         const cacheFileName = `${cacheId}.json`;
         const cachePath = path.join(tempDir, cacheFileName);
 
@@ -761,14 +760,13 @@ export class GmailInProcess implements InProcessMCPModule {
       try {
         const fs = await import('fs/promises');
         const path = await import('path');
-        const { v4: uuidv4 } = await import('uuid');
 
         const tempDir = path.join(this.storageRoot, 'temp');
         await fs.mkdir(tempDir, { recursive: true });
 
-        // Use thread ID as cache key, sanitized for filesystem
+        // Use thread ID as cache key directly
         // Include "email" in name so EmailPreviewAdapter recognizes it
-        const cacheId = `gmail_email_thread_${threadId}_${uuidv4().substring(0, 8)}`;
+        const cacheId = `gmail_email_thread_${threadId}`;
         const cacheFileName = `${cacheId}.json`;
         const cachePath = path.join(tempDir, cacheFileName);
 

@@ -8,6 +8,8 @@ import { GoogleDriveInProcess } from '../in-process/google-drive.js';
 import { GmailInProcess } from '../in-process/gmail.js';
 import { DisplayEmailInProcess } from '../in-process/display-email.js';
 import { ProcessEachInProcess } from '../in-process/process-each.js';
+import { RoleManagerInProcess } from '../in-process/role-manager.js';
+import { getMainDatabase } from '../../storage/index.js';
 
 /**
  * Simple concrete implementation of BaseStdioAdapter for generic MCP servers
@@ -111,6 +113,17 @@ class AdapterRegistry {
     // Avoids context overflow when handling many emails/files
     this.registerInProcess('process-each', () => new ProcessEachInProcess());
     this.registerInProcess('Process Each', () => new ProcessEachInProcess());
+
+    // Role Manager - allows LLM to switch between user's roles dynamically
+    // Used by Discord bot and other clients to manage active role
+    this.registerInProcess('role-manager', (userId: string) => {
+      const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+      return new RoleManagerInProcess(userId, mainDb);
+    });
+    this.registerInProcess('Role Manager', (userId: string) => {
+      const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+      return new RoleManagerInProcess(userId, mainDb);
+    });
 
     // Future: this.register('github', GithubAdapter);
     // Future: this.register('brave-search', BraveSearchAdapter);

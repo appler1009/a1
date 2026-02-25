@@ -61,6 +61,7 @@ export class MainDatabase {
         email TEXT UNIQUE NOT NULL,
         name TEXT,
         accountType TEXT DEFAULT 'individual',
+        discordUserId TEXT,
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL
       );
@@ -192,6 +193,12 @@ export class MainDatabase {
 
     // Migrate oauth_tokens table to add accountEmail column if needed
     this.migrateOAuthTokensSchema();
+
+    // Migrate users table to add discordUserId column if needed
+    this.migrateDiscordUserIdSchema();
+
+    // Migrate users table to add locale and timezone columns if needed
+    this.migrateLocaleTimezoneSchema();
   }
 
   /**
@@ -257,6 +264,61 @@ export class MainDatabase {
     }
   }
 
+  /**
+   * Add discordUserId column to users table if it doesn't exist
+   * This handles existing databases that don't have the column yet
+   */
+  private migrateDiscordUserIdSchema(): void {
+    try {
+      // Check if discordUserId column exists
+      const tableInfo = this.db.prepare(`PRAGMA table_info(users)`).all() as Array<{
+        name: string;
+        type: string;
+      }>;
+
+      const hasDiscordUserId = tableInfo.some(col => col.name === 'discordUserId');
+
+      if (!hasDiscordUserId) {
+        console.log('[MainDatabase] Adding discordUserId column to users table...');
+        this.db.exec(`
+          ALTER TABLE users ADD COLUMN discordUserId TEXT;
+        `);
+        console.log('[MainDatabase] discordUserId column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during discordUserId schema migration:', error);
+      // Don't fail initialization if migration fails
+    }
+  }
+
+  /**
+   * Add locale and timezone columns to users table if they don't exist
+   */
+  private migrateLocaleTimezoneSchema(): void {
+    try {
+      const tableInfo = this.db.prepare(`PRAGMA table_info(users)`).all() as Array<{
+        name: string;
+        type: string;
+      }>;
+
+      const hasLocale = tableInfo.some(col => col.name === 'locale');
+      const hasTimezone = tableInfo.some(col => col.name === 'timezone');
+
+      if (!hasLocale) {
+        console.log('[MainDatabase] Adding locale column to users table...');
+        this.db.exec(`ALTER TABLE users ADD COLUMN locale TEXT;`);
+        console.log('[MainDatabase] locale column added successfully');
+      }
+      if (!hasTimezone) {
+        console.log('[MainDatabase] Adding timezone column to users table...');
+        this.db.exec(`ALTER TABLE users ADD COLUMN timezone TEXT;`);
+        console.log('[MainDatabase] timezone column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during locale/timezone schema migration:', error);
+    }
+  }
+
   close(): void {
     this.db.close();
   }
@@ -290,6 +352,9 @@ export class MainDatabase {
       email: string;
       name: string | null;
       accountType: 'individual' | 'group';
+      discordUserId: string | null;
+      locale: string | null;
+      timezone: string | null;
       createdAt: string;
       updatedAt: string;
     } | undefined;
@@ -301,6 +366,9 @@ export class MainDatabase {
       email: row.email,
       name: row.name || undefined,
       accountType: row.accountType,
+      discordUserId: row.discordUserId || undefined,
+      locale: row.locale || undefined,
+      timezone: row.timezone || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -312,6 +380,9 @@ export class MainDatabase {
       email: string;
       name: string | null;
       accountType: 'individual' | 'group';
+      discordUserId: string | null;
+      locale: string | null;
+      timezone: string | null;
       createdAt: string;
       updatedAt: string;
     } | undefined;
@@ -323,6 +394,37 @@ export class MainDatabase {
       email: row.email,
       name: row.name || undefined,
       accountType: row.accountType,
+      discordUserId: row.discordUserId || undefined,
+      locale: row.locale || undefined,
+      timezone: row.timezone || undefined,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    };
+  }
+
+  getUserByDiscordId(discordUserId: string): User | null {
+    const row = this.db.prepare('SELECT * FROM users WHERE discordUserId = ?').get(discordUserId) as {
+      id: string;
+      email: string;
+      name: string | null;
+      accountType: 'individual' | 'group';
+      discordUserId: string | null;
+      locale: string | null;
+      timezone: string | null;
+      createdAt: string;
+      updatedAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      email: row.email,
+      name: row.name || undefined,
+      accountType: row.accountType,
+      discordUserId: row.discordUserId || undefined,
+      locale: row.locale || undefined,
+      timezone: row.timezone || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -348,6 +450,18 @@ export class MainDatabase {
       fields.push('accountType = ?');
       values.push(updates.accountType);
     }
+    if (updates.discordUserId !== undefined) {
+      fields.push('discordUserId = ?');
+      values.push(updates.discordUserId || null);
+    }
+    if (updates.locale !== undefined) {
+      fields.push('locale = ?');
+      values.push(updates.locale || null);
+    }
+    if (updates.timezone !== undefined) {
+      fields.push('timezone = ?');
+      values.push(updates.timezone || null);
+    }
 
     values.push(id);
 
@@ -364,6 +478,9 @@ export class MainDatabase {
       email: string;
       name: string | null;
       accountType: 'individual' | 'group';
+      discordUserId: string | null;
+      locale: string | null;
+      timezone: string | null;
       createdAt: string;
       updatedAt: string;
     }>;
@@ -373,6 +490,9 @@ export class MainDatabase {
       email: row.email,
       name: row.name || undefined,
       accountType: row.accountType,
+      discordUserId: row.discordUserId || undefined,
+      locale: row.locale || undefined,
+      timezone: row.timezone || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     }));

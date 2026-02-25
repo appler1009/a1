@@ -28,7 +28,7 @@ const EXCLUDED_PATHS = [
 /**
  * Check if a path should be excluded from role ID injection
  */
-function isExcludedPath(path: string): boolean {
+export function isExcludedPath(path: string): boolean {
   return EXCLUDED_PATHS.some(excluded => path.startsWith(excluded));
 }
 

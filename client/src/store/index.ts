@@ -8,6 +8,9 @@ export interface User {
   email: string;
   name?: string;
   accountType: 'individual' | 'group';
+  discordUserId?: string;
+  locale?: string;
+  timezone?: string;
   createdAt: string;
 }
 

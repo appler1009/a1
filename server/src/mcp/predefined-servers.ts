@@ -151,6 +151,19 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     inProcess: true, // Use InProcessAdapter for direct function calls
   },
 
+  {
+    id: 'role-manager',
+    name: 'Role Manager',
+    description: 'Switch between roles during conversation. Allows the AI to manage active role context.',
+    command: '', // In-process only
+    args: [],
+    auth: {
+      provider: 'none',
+    },
+    hidden: true, // Hidden from UI - system tool for role switching
+    inProcess: true, // Use InProcessAdapter for direct function calls
+  },
+
   // DISABLED: Testing email preview with cache IDs instead
   // {
   //   id: 'display-email',

@@ -38,6 +38,16 @@
   }
 }
 
+/* Role switch animations */
+@keyframes role-activate {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.06); box-shadow: 0 0 0 2px hsl(var(--primary) / 0.5); }
+  100% { transform: scale(1); }
+}
+.animate-role-activate {
+  animation: role-activate 0.45s ease;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

@@ -271,6 +271,44 @@ export async function authRoutes(fastify: FastifyInstance) {
     });
   });
 
+  // Update current user profile
+  fastify.patch('/me', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({
+        success: false,
+        error: { message: 'Not authenticated' },
+      });
+    }
+
+    const body = request.body as { name?: string; discordUserId?: string; locale?: string; timezone?: string };
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
+    const updates: Partial<{ name?: string; discordUserId?: string; locale?: string; timezone?: string }> = {};
+    if (body.name !== undefined) updates.name = body.name;
+    if (body.discordUserId !== undefined) updates.discordUserId = body.discordUserId;
+    if (body.locale !== undefined) updates.locale = body.locale;
+    if (body.timezone !== undefined) updates.timezone = body.timezone;
+
+    const updatedUser = mainDb.updateUser(request.user.id, updates);
+
+    if (!updatedUser) {
+      return reply.code(500).send({
+        success: false,
+        error: { message: 'Failed to update user' },
+      });
+    }
+
+    const groups = await authService.getUserGroups(request.user.id);
+
+    return reply.send({
+      success: true,
+      data: {
+        user: updatedUser,
+        groups,
+      },
+    });
+  });
+
   // Google OAuth flow
   const googleOAuth = new GoogleOAuthHandler({
     clientId: process.env.GOOGLE_CLIENT_ID || '',

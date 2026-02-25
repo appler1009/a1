@@ -262,12 +262,16 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
   if (adapterRegistry.isInProcess(baseServerId)) {
     console.log(`[MCPAdapterFactory:getMcpAdapter] Using in-process adapter for ${serverKey} (base: ${baseServerId})`);
 
-    // Prefer the MCPManager's live adapter — it may be a MultiAccountAdapter
-    // that handles accountEmail routing and fan-out across all connected accounts.
-    const managerAdapter = mcpManager.getInProcessAdapter(baseServerId);
-    if (managerAdapter) {
-      console.log(`[MCPAdapterFactory:getMcpAdapter] Delegating to MCPManager's live adapter for ${baseServerId}`);
-      return managerAdapter;
+    // For role-manager, always create a user-specific adapter (don't use global cache)
+    // because each user needs their own instance with their userId
+    if (baseServerId !== 'role-manager') {
+      // Prefer the MCPManager's live adapter — it may be a MultiAccountAdapter
+      // that handles accountEmail routing and fan-out across all connected accounts.
+      const managerAdapter = mcpManager.getInProcessAdapter(baseServerId);
+      if (managerAdapter) {
+        console.log(`[MCPAdapterFactory:getMcpAdapter] Delegating to MCPManager's live adapter for ${baseServerId}`);
+        return managerAdapter;
+      }
     }
 
     // No manager adapter yet — create a single-account in-process adapter as fallback

@@ -22,9 +22,16 @@
     "lint": "npm run lint -ws",
     "typecheck": "npm run typecheck -ws",
     "docker:build": "docker build -t local-agent-ui .",
-    "docker:run": "docker run -p 3000:3000 -v $(pwd)/data:/app/data local-agent-ui"
+    "docker:run": "docker run -p 3000:3000 -v $(pwd)/data:/app/data local-agent-ui",
+    "test": "npm run test:unit",
+    "test:unit": "npm run test --workspaces --if-present",
+    "test:coverage": "npm run test:coverage --workspaces --if-present",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "devDependencies": {
+    "@playwright/test": "^1.42.1",
+    "@vitest/coverage-v8": "^1.6.1",
     "concurrently": "^8.2.2",
     "typescript": "^5.3.3"
   },

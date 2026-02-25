@@ -23,6 +23,7 @@ import { mcpManager, getMcpAdapter, closeUserAdapters, listPredefinedServers, ge
 import { authRoutes } from './api/auth.js';
 import { authService } from './auth/index.js';
 import { GoogleOAuthHandler } from './auth/google-oauth.js';
+import { startDiscordBot } from './discord/bot.js';
 import fs from 'fs';
 
 // Configuration
@@ -641,7 +642,7 @@ async function executeToolWithAdapters(
   toolName: string,
   args: Record<string, unknown>,
   roleId?: string
-): Promise<string> {
+): Promise<{ text: string; metadata?: Record<string, unknown> }> {
   try {
     console.log(`\n[ToolExecution] ========================================`);
     console.log(`[ToolExecution] Tool Request: ${toolName}`);
@@ -675,15 +676,19 @@ async function executeToolWithAdapters(
           const errorMsg = `Error: ${result.error || 'Unknown error'}`;
           console.log(`[ToolExecution] Tool returned error: ${errorMsg}`);
           console.log(`[ToolExecution] ========================================\n`);
-          return errorMsg;
+          return { text: errorMsg };
         }
 
         const resultText = result.text || JSON.stringify(result);
         console.log(`[ToolExecution] Tool execution successful (from cache)`);
         console.log(`[ToolExecution] Result length: ${resultText.length} chars`);
-        
+
         // Handle convert_to_markdown special case
-        return await handleToolResult(toolName, args, resultText, userId);
+        const finalResult = await handleToolResult(toolName, args, resultText, userId);
+        return {
+          text: finalResult,
+          metadata: (result as any).metadata,
+        };
       } catch (error) {
         console.error(`[ToolExecution] Error executing cached tool on ${cachedTool.serverId}:`, error);
         // Fall through to full search below
@@ -732,15 +737,19 @@ async function executeToolWithAdapters(
             const errorMsg = `Error: ${result.error || 'Unknown error'}`;
             console.log(`[ToolExecution] Tool returned error: ${errorMsg}`);
             console.log(`[ToolExecution] ========================================\n`);
-            return errorMsg;
+            return { text: errorMsg };
           }
 
           const resultText = result.text || JSON.stringify(result);
           console.log(`[ToolExecution] Tool execution successful`);
           console.log(`[ToolExecution] Result length: ${resultText.length} chars`);
-          
+
           // Handle convert_to_markdown special case
-          return await handleToolResult(toolName, args, resultText, userId);
+          const finalResult = await handleToolResult(toolName, args, resultText, userId);
+          return {
+            text: finalResult,
+            metadata: (result as any).metadata,
+          };
         }
       } catch (error) {
         console.error(`[ToolExecution] Error searching server ${server.id}:`, error);
@@ -754,7 +763,7 @@ async function executeToolWithAdapters(
     const errorMsg = error instanceof Error ? error.message : String(error);
     console.error(`[ToolExecution] Tool execution failed (${toolName}):`, error);
     console.log(`[ToolExecution] ========================================\n`);
-    return `Error executing tool ${toolName}: ${errorMsg}`;
+    return { text: `Error executing tool ${toolName}: ${errorMsg}` };
   }
 }
 
@@ -1461,10 +1470,12 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
-    const body = request.body as { 
-      messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>; 
-      roleId?: string; 
+    const body = request.body as {
+      messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
+      roleId?: string;
       groupId?: string;
+      timezone?: string;
+      locale?: string;
       viewerFile?: {
         id: string;
         name: string;
@@ -1726,14 +1737,23 @@ ${accountList}
       // Keep track of conversation for tool execution
       // Add system message about file tagging for preview
       const now = new Date();
-      const currentDateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
-      const currentDateTimeStr = now.toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+      const userTimezone = body.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const userLocale = body.locale || 'en-US';
+      const currentDateStr = now.toLocaleDateString('en-CA', { timeZone: userTimezone }); // YYYY-MM-DD in user's TZ
+      const currentDateTimeStr = now.toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short', timeZone: userTimezone });
+
+      // Determine measurement system from locale
+      const metricLocales = ['en-CA', 'en-AU', 'en-NZ', 'en-GB', 'en-IE', 'en-ZA', 'en-IN'];
+      const usesMetric = userLocale !== 'en-US' && (userLocale.startsWith('fr') || userLocale.startsWith('de') || userLocale.startsWith('es') || userLocale.startsWith('pt') || userLocale.startsWith('it') || userLocale.startsWith('nl') || userLocale.startsWith('sv') || userLocale.startsWith('no') || userLocale.startsWith('da') || userLocale.startsWith('fi') || userLocale.startsWith('pl') || userLocale.startsWith('ru') || userLocale.startsWith('zh') || userLocale.startsWith('ja') || userLocale.startsWith('ko') || metricLocales.includes(userLocale));
+      const unitSystem = usesMetric ? 'metric (Celsius, km, kg, L, cm)' : 'imperial (Fahrenheit, miles, lb, fl oz, inches)';
 
       const systemMessage = {
         role: 'system' as const,
         content: `You are a helpful assistant.
 
 **Current date and time**: ${currentDateTimeStr} (${currentDateStr})
+**User's timezone**: ${userTimezone} — always use this timezone when displaying or interpreting dates and times.
+**User's locale**: ${userLocale} — use ${unitSystem} for measurements and units.
 
 - No emojis. Use markdown.
 - Use human-readable filenames and email subjects, never mention cache IDs or internal identifiers.
@@ -1776,7 +1796,18 @@ You have access to a knowledge graph memory system with the following tools:
 - When the user mentions a previous context or topic, look it up in memory first
 - Use memory to maintain continuity and personalization across conversations
 
-**Memory write tools** (create, add, delete entities/relations) are available via the search_tool if you need to save new learning.${documentContext}`,
+**Memory write tools** (create, add, delete entities/relations) are available via the search_tool if you need to save new learning.
+
+## ROLE MANAGEMENT
+You have access to role management tools. When the user asks to change or switch roles, you MUST call these tools — no exceptions:
+- **list_roles**: Lists all available roles
+- **switch_role**: Switches to a different role by name or ID
+
+**Rules — strictly enforced:**
+- ALWAYS call switch_role when asked to switch, even if you believe the role is already active
+- NEVER say "you're already in that role" or skip the tool call for any reason — the system requires switch_role to be called to apply the change
+- NEVER ask the user to switch the role themselves
+- Call list_roles first if you are unsure of the exact role name, then call switch_role${documentContext}`,
       };
       
       let conversationMessages = [systemMessage, ...body.messages];
@@ -1887,12 +1918,13 @@ You have access to a knowledge graph memory system with the following tools:
             consecutiveIdenticalCallCount = 1;
           }
 
-          const toolResult = await executeToolWithAdapters(request.user!.id, toolCall.name, toolCall.arguments, body.roleId);
+          const toolResultObj = await executeToolWithAdapters(request.user!.id, toolCall.name, toolCall.arguments, body.roleId);
+          const toolResult = toolResultObj.text;
 
           // PHASE 2: After search_tool returns, dynamically load the relevant tools
           if (toolCall.name === 'search_tool' && !hasLoadedPhase2Tools) {
             console.log('[ChatStream] Phase 2: Loading tools based on search results');
-            
+
             // Parse the search results to find which tools were recommended
             // The search result format is: "1. **tool_name** (server_id) - match_score"
             try {
@@ -1995,7 +2027,14 @@ You have access to a knowledge graph memory system with the following tools:
 
           // Include serverId with tool_result event so client knows which server the tool came from
           const serverId = flattenedTools.find(t => t.name === toolCall.name)?.serverId;
-          reply.raw.write(`data: ${JSON.stringify({ type: 'tool_result', toolName: toolCall.name, serverId, result: toolResult })}\n\n`);
+          const toolResultEvent: any = { type: 'tool_result', toolName: toolCall.name, serverId, result: toolResult };
+
+          // Include metadata if present (e.g., roleSwitch for role-manager tool)
+          if (toolResultObj.metadata) {
+            toolResultEvent.metadata = toolResultObj.metadata;
+          }
+
+          reply.raw.write(`data: ${JSON.stringify(toolResultEvent)}\n\n`);
         }
 
         // Continue streaming with tool results
@@ -3145,6 +3184,9 @@ const start = async () => {
     });
 
     console.log(`Server listening on ${config.host}:${config.port}`);
+
+    // Start Discord bot if token is configured
+    await startDiscordBot(config.port);
   } catch (error) {
     fastify.log.error(error);
     process.exit(1);

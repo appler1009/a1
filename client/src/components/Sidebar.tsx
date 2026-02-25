@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   MessageSquare,
   Settings,
@@ -14,10 +14,20 @@ import { apiFetch } from '../lib/api';
 
 export function Sidebar() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [flashRoleId, setFlashRoleId] = useState<string | null>(null);
+
   const { user, currentGroup, groups, setCurrentGroup, logout } = useAuthStore();
   const { roles, currentRole, switchRole, addRole } = useRolesStore();
   const { sidebarOpen, toggleSidebar, setShowMcpManager, roleSwitching, setRoleSwitching } = useUIStore();
   const environment = useEnvironmentStore((state) => state.environment);
+
+  useEffect(() => {
+    if (currentRole?.id) {
+      setFlashRoleId(currentRole.id);
+      const timer = setTimeout(() => setFlashRoleId(null), 500);
+      return () => clearTimeout(timer);
+    }
+  }, [currentRole?.id]);
 
   const getEnvironmentBadgeClass = (env?: string) => {
     switch (env) {
@@ -134,7 +144,9 @@ export function Sidebar() {
                   currentRole?.id === role.id
                     ? 'bg-primary text-primary-foreground'
                     : 'hover:bg-muted'
-                } ${roleSwitching ? 'opacity-50 cursor-not-allowed' : ''}`}
+                } ${roleSwitching ? 'opacity-50 cursor-not-allowed' : ''} ${
+                  flashRoleId === role.id ? 'animate-role-activate' : ''
+                }`}
               >
                 <Users className="w-4 h-4" />
                 {sidebarOpen && <span className="truncate">{role.name}</span>}

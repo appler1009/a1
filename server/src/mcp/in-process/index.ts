@@ -10,3 +10,5 @@ export { GoogleDriveInProcess } from './google-drive.js';
 export { SQLiteMemoryInProcess } from './sqlite-memory.js';
 export { MetaMcpSearchInProcess, updateToolManifest, searchTools, isSearchEngineReady } from './meta-mcp-search.js';
 export { DisplayEmailInProcess, getDisplayEmailToolDefinition, isDisplayEmailMarker, extractEmailDataFromMarker } from './display-email.js';
+export { GmailInProcess } from './gmail.js';
+export { RoleManagerInProcess } from './role-manager.js';
