@@ -1189,14 +1189,207 @@ fastify.register(async (instance) => {
     
     console.log(`[Roles] User ${request.user.id} switched to role ${params.id} "${role.name}"`);
     
-    return reply.send({ 
-      success: true, 
-      data: { 
-        roleId: params.id, 
+    return reply.send({
+      success: true,
+      data: {
+        roleId: params.id,
         role,
-        message: `Switched to role "${role.name}"` 
-      } 
+        message: `Switched to role "${role.name}"`
+      }
     });
+  });
+
+  // Get prose overview of a role's memory graph
+  instance.get('/roles/:id/memory-overview', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const params = request.params as { id: string };
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
+    // Verify ownership
+    const role = mainDb.getRole(params.id);
+    if (!role) {
+      return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
+    }
+
+    if (role.userId !== request.user.id) {
+      return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
+    }
+
+    try {
+      const adapter = await getMcpAdapter(request.user.id, 'memory', params.id);
+      const result = await adapter.callTool('memory_read_graph', {});
+
+      const graphResultText = result.text || JSON.stringify(result);
+
+      // Check if graph is empty
+      let isEmpty = false;
+      try {
+        const parsed = JSON.parse(graphResultText);
+        if (Array.isArray(parsed?.entities) && parsed.entities.length === 0) {
+          isEmpty = true;
+        }
+      } catch {
+        // Not JSON or unexpected shape — treat as non-empty
+      }
+
+      if (isEmpty) {
+        return reply.send({ success: true, data: { overview: null, empty: true } });
+      }
+
+      // Generate prose overview via LLM
+      const messages = [
+        {
+          role: 'system' as const,
+          content: 'You are a memory summarizer. Be extremely concise. Your entire response must be 200 words or fewer. No fluff, no repetition. NEVER start with a heading or title of any kind — your very first output must be regular text or a bullet point.',
+        },
+        {
+          role: 'user' as const,
+          content: `Summarize the memory graph for a role called "${role.name}" in markdown. Use bold for key terms, bullet lists where appropriate. Group related facts. Be factual and direct — do not invent anything. Do NOT include a title or heading. Stay within 200 words.\n\nMemory graph:\n${graphResultText}`,
+        },
+      ];
+
+      let overview = '';
+      const stream = llmRouter.stream({ messages });
+      for await (const chunk of stream) {
+        if (chunk.type === 'text') {
+          overview += chunk.content;
+        }
+      }
+
+      return reply.send({ success: true, data: { overview, empty: false } });
+    } catch (error) {
+      console.error(`[MemoryOverview] Error for role ${params.id}:`, error);
+      return reply.code(500).send({ success: false, error: { message: 'Failed to generate memory overview' } });
+    }
+  });
+
+  instance.post('/roles/:id/remove-memories', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const params = request.params as { id: string };
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
+    const role = mainDb.getRole(params.id);
+    if (!role) {
+      return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
+    }
+
+    if (role.userId !== request.user.id) {
+      return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
+    }
+
+    const body = request.body as { selection: string };
+
+    try {
+      const adapter = await getMcpAdapter(request.user.id, 'memory', params.id);
+      const result = await adapter.callTool('memory_read_graph', {});
+      const graphResultText = result.text || JSON.stringify(result);
+
+      const messages = [
+        {
+          role: 'user' as const,
+          content: `Given this selected text from a memory overview:\n"${body.selection}"\n\nAnd this knowledge graph:\n${graphResultText}\n\nList the entity names from the graph that are related to the selected text and should be removed.\nReturn ONLY a JSON array of entity names, e.g. ["Alice", "Project X"].\nIf nothing matches, return [].`,
+        },
+      ];
+
+      let responseText = '';
+      const stream = llmRouter.stream({ messages });
+      for await (const chunk of stream) {
+        if (chunk.type === 'text') {
+          responseText += chunk.content;
+        }
+      }
+
+      // Strip markdown fences if present
+      const stripped = responseText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+      let parsedNames: string[];
+      try {
+        parsedNames = JSON.parse(stripped);
+        if (!Array.isArray(parsedNames)) throw new Error('Not an array');
+      } catch {
+        return reply.code(400).send({ success: false, error: { message: 'Could not identify entities' } });
+      }
+
+      if (parsedNames.length === 0) {
+        return reply.send({ success: true, data: { removed: [], count: 0 } });
+      }
+
+      await adapter.callTool('memory_delete_entities', { entityNames: parsedNames });
+      return reply.send({ success: true, data: { removed: parsedNames, count: parsedNames.length } });
+    } catch (error) {
+      console.error(`[RemoveMemories] Error for role ${params.id}:`, error);
+      return reply.code(500).send({ success: false, error: { message: 'Failed to remove memories' } });
+    }
+  });
+
+  instance.post('/roles/:id/edit-memories', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const params = request.params as { id: string };
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
+    const role = mainDb.getRole(params.id);
+    if (!role) {
+      return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
+    }
+
+    if (role.userId !== request.user.id) {
+      return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
+    }
+
+    const body = request.body as { selection: string; instruction: string };
+
+    try {
+      const adapter = await getMcpAdapter(request.user.id, 'memory', params.id);
+      const result = await adapter.callTool('memory_read_graph', {});
+      const graphResultText = result.text || JSON.stringify(result);
+
+      const messages = [
+        {
+          role: 'user' as const,
+          content: `Given this selected text from a memory overview:\n"${body.selection}"\n\nUser instruction: ${body.instruction}\n\nAnd this knowledge graph:\n${graphResultText}\n\nIdentify the entities from the graph that are related to the selected text, and apply the user's instruction to update them.\nReturn ONLY a JSON array of updated entity objects. Each object must have: "name" (string), "entityType" (string), "observations" (array of strings).\nExample: [{"name":"Alice","entityType":"person","observations":["Works at Acme","Prefers email"]}]\nIf no entities match, return [].`,
+        },
+      ];
+
+      let responseText = '';
+      const stream = llmRouter.stream({ messages });
+      for await (const chunk of stream) {
+        if (chunk.type === 'text') {
+          responseText += chunk.content;
+        }
+      }
+
+      const stripped = responseText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+      let updatedEntities: Array<{ name: string; entityType: string; observations: string[] }>;
+      try {
+        updatedEntities = JSON.parse(stripped);
+        if (!Array.isArray(updatedEntities)) throw new Error('Not an array');
+      } catch {
+        return reply.code(400).send({ success: false, error: { message: 'Could not identify entities to update' } });
+      }
+
+      if (updatedEntities.length === 0) {
+        return reply.send({ success: true, data: { updated: [], count: 0 } });
+      }
+
+      const entityNames = updatedEntities.map((e) => e.name);
+      await adapter.callTool('memory_delete_entities', { entityNames });
+      await adapter.callTool('memory_create_entities', { entities: updatedEntities });
+
+      return reply.send({ success: true, data: { updated: entityNames, count: entityNames.length } });
+    } catch (error) {
+      console.error(`[EditMemories] Error for role ${params.id}:`, error);
+      return reply.code(500).send({ success: false, error: { message: 'Failed to edit memories' } });
+    }
   });
 }, { prefix: '/api' });
 
@@ -1755,6 +1948,12 @@ ${accountList}
 **User's timezone**: ${userTimezone} — always use this timezone when displaying or interpreting dates and times.
 **User's locale**: ${userLocale} — use ${unitSystem} for measurements and units.
 
+## HONESTY AND ACCURACY
+- If you are not certain about a fact, say so explicitly. Never fabricate names, dates, numbers, file contents, or tool responses.
+- If you don't know something, say "I don't know" — do not guess or infer an answer and present it as fact.
+- When uncertain, use explicit hedging: "I believe...", "I'm not sure, but...", or "You may want to verify this." Never present uncertain information with the same confidence as verified information.
+- Only answer questions based on what the user has told you, what tools return, or what is in memory. If answering from general knowledge, clearly label it as such and note it may be outdated or incorrect.
+
 - No emojis. Use markdown.
 - Use human-readable filenames and email subjects, never mention cache IDs or internal identifiers.
 - For all cached files (PDFs, Google Drive files, emails): Use [preview-file:Filename](cache-id) format for preview pane display. Never mention cache IDs in plain text.
@@ -1778,10 +1977,6 @@ When showing email search results from gmailSearchMessages:
   - Sender (From address and display name)
   - Date (human-readable format)
   - Brief preview/snippet if available
-- Format as a numbered list that users can understand:
-  - 1. [preview-file:Email Subject](cache-id) | From: sender@example.com (Sender Name) | Feb 22, 2026
-  - 2. [preview-file:Another Subject](cache-id) | From: other@example.com | Feb 21, 2026
-- This makes it easy for users to scan results and click on emails they want to view
 - **IMPORTANT**: Any emails shown as links in your response MUST be downloaded using gmailGetMessage - never show raw email data or message IDs as links. Always use the cache-id from gmailGetMessage responses.
 
 ${roleSection}${accountsSection}## MEMORY SYSTEM
@@ -1791,12 +1986,23 @@ You have access to a knowledge graph memory system with the following tools:
 - **memory_open_nodes**: Retrieve specific entities by name to access their detailed observations and relationships
 
 **When to use memory:**
+- You MUST search memory before answering any question about the user, their preferences, past context, or prior decisions. Do not answer from assumption.
 - At the beginning of conversations, search memory for relevant context about the topic
 - Before making recommendations, check if related information exists in memory
 - When the user mentions a previous context or topic, look it up in memory first
 - Use memory to maintain continuity and personalization across conversations
+- For any factual question about the user's data, files, or past context — always use available tools to look it up. Never answer from training knowledge when a tool can retrieve the real answer.
 
-**Memory write tools** (create, add, delete entities/relations) are available via the search_tool if you need to save new learning.
+## MCP TOOLS
+You have access to a \`search_tool\` that discovers available MCP tools by natural language query.
+
+**You MUST use \`search_tool\` before attempting any task that could benefit from external tools** (file access, email, calendar, search, APIs, data sources, etc.). Do not assume tools are unavailable — always check first. Examples:
+- User asks about a file → search_tool("read or convert a file")
+- User wants to send a message → search_tool("send message or email")
+- User needs web data → search_tool("web search or fetch URL")
+- User references Google Drive, Gmail, Slack, GitHub, etc. → search_tool with that service name
+
+After calling search_tool, use the returned tools to complete the task. Only tell the user a capability is unavailable if search_tool returns nothing relevant.
 
 ## ROLE MANAGEMENT
 You have access to role management tools. When the user asks to change or switch roles, you MUST call these tools — no exceptions:
@@ -2047,6 +2253,53 @@ You have access to role management tools. When the user asks to change or switch
       if (toolIteration >= MAX_TOOL_ITERATIONS && toolCalls.length > 0) {
         reply.raw.write(`data: ${JSON.stringify({ type: 'info', message: 'Tool execution limit reached' })}\n\n`);
       }
+
+      // --- Memory extraction ---
+      const lastUserMsg = body.messages[body.messages.length - 1]?.content;
+      const memWriteToolNames = ['memory_create_entities', 'memory_add_observations', 'memory_create_relations'];
+      const memWriteTools = flattenedTools.filter(t =>
+        t.serverId === 'memory' && memWriteToolNames.includes(t.name)
+      );
+
+      if (body.roleId && lastUserMsg && assistantContent.length > 100 && memWriteTools.length > 0) {
+        reply.raw.write(`data: ${JSON.stringify({ type: 'memory_task', status: 'started' })}\n\n`);
+
+        const extractionMessages = [
+          {
+            role: 'system' as const,
+            content: `Extract 1-5 notable facts or insights from this Q&A. Use memory_create_entities to create topics, then memory_add_observations to attach concise insights. Be brief.`,
+          },
+          {
+            role: 'user' as const,
+            content: `Q: ${lastUserMsg}\n\nA: ${assistantContent}\n\nExtract and save notable points to memory.`,
+          },
+        ];
+
+        const extractionProviderTools = llmRouter.convertMCPToolsToOpenAI(memWriteTools);
+        const extractionToolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
+
+        try {
+          const extractionStream = llmRouter.stream({ messages: extractionMessages, tools: extractionProviderTools });
+          for await (const chunk of extractionStream) {
+            if (chunk.type === 'tool_call' && chunk.toolCall) {
+              extractionToolCalls.push(chunk.toolCall);
+            }
+          }
+
+          let savedCount = 0;
+          for (const toolCall of extractionToolCalls) {
+            if (memWriteToolNames.includes(toolCall.name)) {
+              await executeToolWithAdapters(request.user!.id, toolCall.name, toolCall.arguments, body.roleId);
+              savedCount++;
+            }
+          }
+
+          reply.raw.write(`data: ${JSON.stringify({ type: 'memory_task', status: 'completed', count: savedCount })}\n\n`);
+        } catch (err) {
+          console.error('[ChatStream] Memory extraction failed:', err);
+        }
+      }
+      // --- end memory extraction ---
 
       reply.raw.write('data: [DONE]\n\n');
     } catch (error) {
@@ -3160,18 +3413,9 @@ const start = async () => {
     await mcpManager.initialize();
     fastify.log.info('MCP manager initialized with persisted servers');
 
-    // Register in-process adapters for better performance
-    // These adapters run directly in the Node.js process without spawning child processes
-    const { adapterRegistry } = await import('./mcp/adapters/registry.js');
-    const { SQLiteMemoryInProcess } = await import('./mcp/in-process/sqlite-memory.js');
-    
-    // Register SQLite memory as in-process adapter (no auth required)
-    // Use a shared memory database path within the data directory
-    const memoryDbPath = path.join(config.storage.root, 'memory.db');
-    adapterRegistry.registerInProcess('memory', (userId: string) => {
-      return new SQLiteMemoryInProcess(memoryDbPath);
-    });
-    console.log('[MCP] Registered in-process adapter for memory server');
+    // In-process adapters are registered in the registry constructor (registry.ts).
+    // The memory adapter uses tokenData.dbPath for role-specific isolation — do not
+    // re-register here with a shared path as that would overwrite the role-aware factory.
 
     // Initialize LLM router
     llmRouter = createLLMRouter(config.llm);

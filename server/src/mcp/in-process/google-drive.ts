@@ -68,8 +68,24 @@ export class GoogleDriveInProcess implements InProcessMCPModule {
   }
 
   /**
+   * Returns true if the query already uses Google Drive API query syntax.
+   */
+  private isDriveQuerySyntax(query: string): boolean {
+    return (
+      query.includes(' contains ') ||
+      query.includes('=') ||
+      query.includes('>') ||
+      query.includes('<') ||
+      /\band\b/i.test(query) ||
+      /\bor\b/i.test(query) ||
+      /^not\b/i.test(query)
+    );
+  }
+
+  /**
    * Convert user-friendly query syntax to Google Drive API syntax
    * Handles:
+   * - Plain text queries (e.g. a filename) → fullText contains terms
    * - "filetype:pdf" style queries to proper Google Drive query format
    * - Double quotes to single quotes in mimeType filters
    * - Adding "and" operator between search queries and filters
@@ -101,6 +117,19 @@ export class GoogleDriveInProcess implements InProcessMCPModule {
     convertedQuery = convertedQuery.replace(/\s+and\s+/gi, ' and ');
     convertedQuery = convertedQuery.replace(/\s+or\s+/gi, ' or ');
 
+    // Step 5: If the result still has no Drive query syntax, treat it as plain text
+    // and convert each word to a fullText contains clause (same as the library does
+    // for googleDriveSearchFiles). This prevents "Invalid Value" errors when a plain
+    // filename or free-text phrase is passed as the query.
+    if (!this.isDriveQuerySyntax(convertedQuery)) {
+      const terms = convertedQuery.trim().split(/\s+/).filter(t => t.length > 0);
+      if (terms.length > 0) {
+        convertedQuery = terms
+          .map(term => `fullText contains '${term.replace(/'/g, "\\'")}'`)
+          .join(' and ');
+      }
+    }
+
     console.log(`[GoogleDriveInProcess:convertQuerySyntax] Output: "${convertedQuery}"`);
     return convertedQuery;
   }
@@ -128,9 +157,11 @@ export class GoogleDriveInProcess implements InProcessMCPModule {
    */
   async googleDriveListFiles(args: ListFilesOperationOptions): Promise<any> {
     console.log('[GoogleDriveInProcess:googleDriveListFiles] Listing files');
+    const query = args.query ? this.convertQuerySyntax(args.query) : undefined;
     try {
       const result = await listFiles({
         ...args,
+        query,
         tokens: this.tokens,
       });
       return result;

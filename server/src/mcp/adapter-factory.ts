@@ -263,8 +263,10 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
     console.log(`[MCPAdapterFactory:getMcpAdapter] Using in-process adapter for ${serverKey} (base: ${baseServerId})`);
 
     // For role-manager, always create a user-specific adapter (don't use global cache)
-    // because each user needs their own instance with their userId
-    if (baseServerId !== 'role-manager') {
+    // because each user needs their own instance with their userId.
+    // When a roleId is provided, skip the shared manager adapter so each role gets
+    // its own in-process instance pointing to the correct role-specific DB.
+    if (baseServerId !== 'role-manager' && !roleId) {
       // Prefer the MCPManager's live adapter — it may be a MultiAccountAdapter
       // that handles accountEmail routing and fan-out across all connected accounts.
       const managerAdapter = mcpManager.getInProcessAdapter(baseServerId);
@@ -276,8 +278,11 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
 
     // No manager adapter yet — create a single-account in-process adapter as fallback
     // For in-process adapters that need OAuth tokens (like Google Drive),
-    // we need to retrieve the token data before creating the adapter
-    let tokenData: any = undefined;
+    // we need to retrieve the token data before creating the adapter.
+    // For role-scoped servers (e.g. memory), pass the role-specific DB path.
+    let tokenData: any = roleId
+      ? { roleId, dbPath: path.join(process.env.STORAGE_ROOT || './data', `memory_${roleId}.db`) }
+      : undefined;
 
     // Check if this server requires Google OAuth by looking at predefined servers
     const { getPredefinedServer } = await import('./predefined-servers.js');

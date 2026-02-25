@@ -128,6 +128,7 @@ export function ChatPane() {
   const [searchResults, setSearchResults] = useState<Message[]>([]);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [pendingRoleSwitch, setPendingRoleSwitch] = useState<{ roleId: string; roleName: string } | null>(null);
+  const [memoryTask, setMemoryTask] = useState<{ status: 'extracting' | 'done'; count?: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isLoadingOlderRef = useRef(false);
@@ -505,6 +506,16 @@ export function ChatPane() {
                   fullContent += `\n\n*${parsed.message}*`;
                   setCurrentContent(fullContent);
                 }
+
+                // Handle memory extraction status
+                if (parsed.type === 'memory_task') {
+                  if (parsed.status === 'started') {
+                    setMemoryTask({ status: 'extracting' });
+                  } else if (parsed.status === 'completed') {
+                    setMemoryTask({ status: 'done', count: parsed.count ?? 0 });
+                    setTimeout(() => setMemoryTask(null), 4000);
+                  }
+                }
               } catch {
                 // Skip invalid JSON
               }
@@ -692,6 +703,15 @@ export function ChatPane() {
           </>
         )}
       </div>
+
+      {/* Memory extraction indicator */}
+      {memoryTask && (
+        <div className="px-4 py-0.5 text-xs text-muted-foreground/40 italic select-none">
+          {memoryTask.status === 'extracting'
+            ? '~ extracting insights...'
+            : `~ saved ${memoryTask.count} insight${memoryTask.count !== 1 ? 's' : ''} to memory`}
+        </div>
+      )}
 
       {/* Input */}
       <form onSubmit={handleSubmit} className="p-4 border-t border-border">

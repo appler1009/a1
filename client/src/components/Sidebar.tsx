@@ -5,16 +5,21 @@ import {
   LogOut,
   Plus,
   ChevronDown,
-  Users
+  ChevronRight,
+  Users,
+  Brain
 } from 'lucide-react';
 import { useAuthStore, useRolesStore, useUIStore, useEnvironmentStore } from '../store';
 import { CreateRoleDialog } from './CreateRoleDialog';
+import { MemoryOverviewDialog } from './MemoryOverviewDialog';
 import { LoadingOverlay } from './LoadingOverlay';
 import { apiFetch } from '../lib/api';
 
 export function Sidebar() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [flashRoleId, setFlashRoleId] = useState<string | null>(null);
+  const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
+  const [memoryDialogRole, setMemoryDialogRole] = useState<{ id: string; name: string } | null>(null);
 
   const { user, currentGroup, groups, setCurrentGroup, logout } = useAuthStore();
   const { roles, currentRole, switchRole, addRole } = useRolesStore();
@@ -136,21 +141,53 @@ export function Sidebar() {
           {roles
             .filter((r) => !currentGroup || r.groupId === currentGroup.id)
             .map((role) => (
-              <button
-                key={role.id}
-                onClick={() => switchRole(role, setRoleSwitching)}
-                disabled={roleSwitching}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
-                  currentRole?.id === role.id
-                    ? 'bg-primary text-primary-foreground'
-                    : 'hover:bg-muted'
-                } ${roleSwitching ? 'opacity-50 cursor-not-allowed' : ''} ${
-                  flashRoleId === role.id ? 'animate-role-activate' : ''
-                }`}
-              >
-                <Users className="w-4 h-4" />
-                {sidebarOpen && <span className="truncate">{role.name}</span>}
-              </button>
+              <div key={role.id}>
+                {/* Row */}
+                <div className={`flex items-center rounded-lg text-sm transition-colors ${
+                  currentRole?.id === role.id ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
+                } ${roleSwitching ? 'opacity-50' : ''} ${flashRoleId === role.id ? 'animate-role-activate' : ''}`}>
+
+                  {/* Role switch button */}
+                  <button
+                    onClick={() => switchRole(role, setRoleSwitching)}
+                    disabled={roleSwitching}
+                    className="flex items-center gap-2 flex-1 px-3 py-2 text-left min-w-0"
+                  >
+                    <Users className="w-4 h-4 shrink-0" />
+                    {sidebarOpen && <span className="truncate">{role.name}</span>}
+                  </button>
+
+                  {/* Chevron toggle (only when sidebar expanded) */}
+                  {sidebarOpen && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedRoleId(expandedRoleId === role.id ? null : role.id);
+                      }}
+                      disabled={roleSwitching}
+                      className="px-2 py-2 shrink-0 opacity-40 hover:opacity-100 transition-opacity"
+                      title="Role options"
+                    >
+                      <ChevronRight className={`w-3 h-3 transition-transform duration-200 ${
+                        expandedRoleId === role.id ? 'rotate-90' : ''
+                      }`} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Sub-menu */}
+                {sidebarOpen && expandedRoleId === role.id && (
+                  <div className="ml-3 mt-0.5 pl-2 border-l border-border">
+                    <button
+                      onClick={() => setMemoryDialogRole(role)}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left text-xs text-muted-foreground hover:bg-muted transition-colors"
+                    >
+                      <Brain className="w-3 h-3" />
+                      View Memory
+                    </button>
+                  </div>
+                )}
+              </div>
             ))}
         </div>
       </div>
@@ -209,6 +246,10 @@ export function Sidebar() {
         isOpen={isCreateDialogOpen}
         onClose={() => setIsCreateDialogOpen(false)}
         onCreateRole={handleCreateRole}
+      />
+      <MemoryOverviewDialog
+        role={memoryDialogRole}
+        onClose={() => setMemoryDialogRole(null)}
       />
     </div>
     </>
