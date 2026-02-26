@@ -14,6 +14,9 @@ out/
 # Data directory (user data storage)
 data/
 
+# Local Dev Documentation
+docs/
+
 # Environment files
 .env
 .env.*

@@ -10,11 +10,19 @@
  * - Message threading and replies
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { Document, Page, pdfjs } from 'react-pdf';
+import './pdf-viewer.css';
 import { PreviewAdapter } from '../preview-adapters';
 import { ViewerFile } from '../../store';
 import { EmailMessage, EmailThread } from './types';
+
+// Configure the PDF.js worker (required by react-pdf)
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
 
 /**
  * Email message header display
@@ -161,15 +169,162 @@ function EmailBody({ email }: { email: EmailMessage }) {
 }
 
 /**
- * Email attachments display
+ * Returns true for MIME types that can be previewed inline
  */
-function EmailAttachments({ email }: { email: EmailMessage }) {
-  if (!email.attachments || email.attachments.length === 0) {
-    return null;
-  }
+function isPreviewable(mimeType: string): boolean {
+  return (
+    mimeType.startsWith('image/') ||
+    mimeType.startsWith('text/') ||
+    mimeType.startsWith('video/') ||
+    mimeType === 'application/pdf'
+  );
+}
+
+type Attachment = NonNullable<EmailMessage['attachments']>[number];
+
+/**
+ * Scrollable PDF viewer using react-pdf (pdfjs-dist).
+ * Renders all pages stacked vertically, fitting the pane width.
+ */
+function PdfPreview({ url }: { url: string }) {
+  const [numPages, setNumPages] = useState(0);
+  const [width, setWidth] = useState(600);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      setWidth(entries[0]?.contentRect.width ?? 600);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   return (
-    <div className="border-t bg-muted/30 p-4">
+    <div ref={containerRef} className="pdf-viewer h-full overflow-auto flex flex-col items-center bg-muted/20 gap-3 p-4">
+      <Document
+        file={url}
+        onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+        loading={<p className="text-muted-foreground mt-8">Loading PDF…</p>}
+        error={<p className="text-destructive mt-8">Failed to load PDF.</p>}
+      >
+        {Array.from({ length: numPages }, (_, i) => (
+          <Page
+            key={i + 1}
+            pageNumber={i + 1}
+            width={Math.max(width - 32, 100)}
+            className="shadow-md"
+          />
+        ))}
+      </Document>
+    </div>
+  );
+}
+
+/**
+ * Text content fetcher for attachment preview
+ */
+function TextAttachmentContent({ url }: { url: string }) {
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (url.startsWith('data:')) {
+      try {
+        setText(atob(url.split(',')[1]));
+      } catch {
+        setError(true);
+      }
+    } else {
+      fetch(url).then(r => r.text()).then(setText).catch(() => setError(true));
+    }
+  }, [url]);
+
+  if (error) return <p className="text-destructive p-4">Failed to load text content.</p>;
+  if (text === null) return <p className="text-muted-foreground p-4">Loading…</p>;
+  return (
+    <pre className="w-full h-full p-4 text-sm text-foreground font-mono whitespace-pre-wrap overflow-auto">
+      {text}
+    </pre>
+  );
+}
+
+/**
+ * Inline attachment preview — renders inside the right preview pane,
+ * not as a full-screen overlay, so the chat remains visible.
+ */
+function AttachmentPreview({ attachment, onClose }: { attachment: Attachment; onClose: () => void }) {
+  const { url, filename, mimeType } = attachment;
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const renderContent = () => {
+    if (!url) return <p className="text-muted-foreground p-4">No preview URL available.</p>;
+    if (mimeType.startsWith('image/')) {
+      return (
+        <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-muted/20">
+          <img src={url} alt={filename} className="max-w-full max-h-full object-contain shadow-md" />
+        </div>
+      );
+    }
+    if (mimeType === 'application/pdf') {
+      return <PdfPreview url={url} />;
+    }
+    if (mimeType.startsWith('video/')) {
+      return (
+        <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-muted/20">
+          <video src={url} controls className="max-w-full max-h-full" />
+        </div>
+      );
+    }
+    if (mimeType.startsWith('text/')) {
+      return <div className="flex-1 overflow-auto"><TextAttachmentContent url={url} /></div>;
+    }
+    return <p className="text-muted-foreground p-4">Preview not available for this file type.</p>;
+  };
+
+  return (
+    <div className="flex flex-col flex-1 min-h-0">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-4 py-2 bg-muted/50 border-b shrink-0">
+        <span className="text-sm font-medium text-foreground truncate max-w-[60%]">{filename}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          {url && (
+            <a
+              href={url}
+              download={filename}
+              className="px-2 py-1 text-xs bg-muted text-foreground rounded hover:bg-muted/70"
+            >
+              Download
+            </a>
+          )}
+          <button
+            onClick={onClose}
+            className="px-2 py-1 text-xs bg-muted text-foreground rounded hover:bg-muted/70"
+          >
+            ← Back
+          </button>
+        </div>
+      </div>
+      {renderContent()}
+    </div>
+  );
+}
+
+/**
+ * Email attachments list — calls onPreview when the user clicks Preview.
+ * State is owned by the parent so the preview replaces content in-pane.
+ */
+function EmailAttachments({ email, onPreview }: { email: EmailMessage; onPreview: (a: Attachment) => void }) {
+  if (!email.attachments || email.attachments.length === 0) return null;
+
+  return (
+    <div className="border-t bg-muted/30 p-4 shrink-0">
       <h3 className="text-sm font-semibold text-foreground mb-3">Attachments ({email.attachments.length})</h3>
       <div className="space-y-2">
         {email.attachments.map((attachment, idx) => (
@@ -180,23 +335,31 @@ function EmailAttachments({ email }: { email: EmailMessage }) {
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-lg">📎</span>
               <div className="min-w-0">
-                <div className="text-sm font-medium text-foreground truncate">
-                  {attachment.filename}
-                </div>
+                <div className="text-sm font-medium text-foreground truncate">{attachment.filename}</div>
                 <div className="text-xs text-muted-foreground">
                   {attachment.mimeType} • {formatFileSize(attachment.size)}
                 </div>
               </div>
             </div>
-            {attachment.url && (
-              <a
-                href={attachment.url}
-                download={attachment.filename}
-                className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90 whitespace-nowrap"
-              >
-                Download
-              </a>
-            )}
+            <div className="flex items-center gap-2 shrink-0">
+              {attachment.url && isPreviewable(attachment.mimeType) && (
+                <button
+                  onClick={() => onPreview(attachment)}
+                  className="px-2 py-1 text-xs bg-muted text-foreground rounded hover:bg-muted/70 whitespace-nowrap"
+                >
+                  Preview
+                </button>
+              )}
+              {attachment.url && (
+                <a
+                  href={attachment.url}
+                  download={attachment.filename}
+                  className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90 whitespace-nowrap"
+                >
+                  Download
+                </a>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -208,13 +371,21 @@ function EmailAttachments({ email }: { email: EmailMessage }) {
  * Single email message display
  */
 function EmailMessageComponent({ email }: { email: EmailMessage }) {
+  const [previewing, setPreviewing] = useState<Attachment | null>(null);
+
   return (
     <div className="flex flex-col h-full bg-background">
       <EmailHeader email={email} />
-      <div className="flex-1 overflow-auto">
-        <EmailBody email={email} />
-      </div>
-      <EmailAttachments email={email} />
+      {previewing ? (
+        <AttachmentPreview attachment={previewing} onClose={() => setPreviewing(null)} />
+      ) : (
+        <>
+          <div className="flex-1 overflow-auto">
+            <EmailBody email={email} />
+          </div>
+          <EmailAttachments email={email} onPreview={setPreviewing} />
+        </>
+      )}
     </div>
   );
 }
@@ -224,48 +395,41 @@ function EmailMessageComponent({ email }: { email: EmailMessage }) {
  */
 function EmailThreadComponent({ thread }: { thread: EmailThread }) {
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(
-    new Set([thread.messages[thread.messages.length - 1]?.id]) // Expand last message by default
+    new Set([thread.messages[thread.messages.length - 1]?.id])
   );
+  const [previewing, setPreviewing] = useState<Attachment | null>(null);
 
   const toggleMessage = (messageId: string) => {
     setExpandedMessages(prev => {
       const next = new Set(prev);
-      if (next.has(messageId)) {
-        next.delete(messageId);
-      } else {
-        next.add(messageId);
-      }
+      if (next.has(messageId)) next.delete(messageId); else next.add(messageId);
       return next;
     });
   };
 
-  const expandAll = () => {
-    setExpandedMessages(new Set(thread.messages.map(m => m.id)));
-  };
-
-  const collapseAll = () => {
-    setExpandedMessages(new Set());
-  };
-
   return (
-    <div className="flex flex-col h-full bg-background">
+    // `relative` so the absolute attachment-preview overlay is scoped to this pane
+    <div className="flex flex-col h-full bg-background relative">
+      {previewing && (
+        <div className="absolute inset-0 z-10 bg-background flex flex-col">
+          <AttachmentPreview attachment={previewing} onClose={() => setPreviewing(null)} />
+        </div>
+      )}
+
       {/* Thread header */}
-      <div className="border-b bg-muted/50 p-4">
-        <h2 className="text-lg font-semibold text-foreground mb-2">
-          {thread.subject}
-        </h2>
+      <div className="border-b bg-muted/50 p-4 shrink-0">
+        <h2 className="text-lg font-semibold text-foreground mb-2">{thread.subject}</h2>
         <div className="text-sm text-muted-foreground space-y-1">
-          <div>{thread.messageCount} messages</div>
-          <div>{thread.participants.length} participants</div>
+          <div>{thread.messageCount} messages · {thread.participants.length} participants</div>
           <div className="flex gap-2 text-xs mt-2">
             <button
-              onClick={expandAll}
+              onClick={() => setExpandedMessages(new Set(thread.messages.map(m => m.id)))}
               className="px-2 py-1 bg-muted hover:bg-muted/80 rounded"
             >
               Expand All
             </button>
             <button
-              onClick={collapseAll}
+              onClick={() => setExpandedMessages(new Set())}
               className="px-2 py-1 bg-muted hover:bg-muted/80 rounded"
             >
               Collapse All
@@ -280,39 +444,24 @@ function EmailThreadComponent({ thread }: { thread: EmailThread }) {
           {thread.messages.map((message, idx) => {
             const isExpanded = expandedMessages.has(message.id);
             const isLastMessage = idx === thread.messages.length - 1;
-
             return (
-              <div
-                key={message.id}
-                className={`border-b ${isLastMessage ? '' : 'border-b-muted'}`}
-              >
-                {/* Message preview bar */}
+              <div key={message.id} className={`border-b ${isLastMessage ? '' : 'border-b-muted'}`}>
                 <button
                   onClick={() => toggleMessage(message.id)}
                   className="w-full text-left p-3 hover:bg-muted/50 transition-colors flex items-center justify-between gap-2"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="font-medium text-foreground truncate">
-                      {message.fromName || message.from}
-                    </div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      {message.subject}
-                    </div>
+                    <div className="font-medium text-foreground truncate">{message.fromName || message.from}</div>
+                    <div className="text-xs text-muted-foreground truncate">{message.subject}</div>
                   </div>
-                  <div className="text-xs text-muted-foreground whitespace-nowrap ml-2">
-                    {formatDate(message.date)}
-                  </div>
-                  <span className="text-lg">
-                    {isExpanded ? '▼' : '▶'}
-                  </span>
+                  <div className="text-xs text-muted-foreground whitespace-nowrap ml-2">{formatDate(message.date)}</div>
+                  <span className="text-lg">{isExpanded ? '▼' : '▶'}</span>
                 </button>
-
-                {/* Expanded message */}
                 {isExpanded && (
                   <div className="bg-background/50 border-t">
                     <EmailHeader email={message} />
                     <EmailBody email={message} />
-                    <EmailAttachments email={message} />
+                    <EmailAttachments email={message} onPreview={setPreviewing} />
                   </div>
                 )}
               </div>

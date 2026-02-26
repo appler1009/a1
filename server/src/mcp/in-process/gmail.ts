@@ -466,6 +466,62 @@ export class GmailInProcess implements InProcessMCPModule {
       bodyContent = gmailMessage.snippet || 'No content';
     }
 
+    // Extract attachments from MIME tree
+    const attachments: Array<{
+      filename: string;
+      mimeType: string;
+      size: number;
+      url?: string;
+    }> = [];
+
+    const extractAttachments = (part: any) => {
+      const partMimeType = part.mimeType || '';
+      const isMultipart = partMimeType.startsWith('multipart/');
+
+      // Filename can be set directly on the part or in Content-Disposition header
+      const cdHeader = part.headers?.find((h: any) => h.name?.toLowerCase() === 'content-disposition')?.value || '';
+      const cdFilename = cdHeader.match(/filename\*?=(?:UTF-8'')?(?:"([^"]+)"|([^\s;]+))/i);
+      const filename = part.filename || cdFilename?.[1] || cdFilename?.[2];
+
+      if (filename && !isMultipart) {
+        const attachMimeType = partMimeType || 'application/octet-stream';
+        const size = part.body?.size || 0;
+
+        if (part.body?.data) {
+          // Small inline attachment — serve as data URL directly
+          attachments.push({
+            filename,
+            mimeType: attachMimeType,
+            size,
+            url: `data:${attachMimeType};base64,${part.body.data}`,
+          });
+        } else if (part.body?.attachmentId) {
+          // Large attachment — download via server proxy endpoint.
+          // All IDs go in query params to avoid Fastify's maxParamLength limit
+          // (Gmail attachment IDs can be 400+ chars).
+          const qs = new URLSearchParams({
+            messageId,
+            attachmentId: part.body.attachmentId,
+            filename,
+            mimeType: attachMimeType,
+          }).toString();
+          attachments.push({
+            filename,
+            mimeType: attachMimeType,
+            size,
+            url: `/api/gmail/attachment?${qs}`,
+          });
+        }
+      }
+
+      // Recurse into sub-parts
+      if (part.parts) {
+        part.parts.forEach((sub: any) => extractAttachments(sub));
+      }
+    };
+
+    extractAttachments(gmailMessage.payload);
+
     // Parse From header: extract display name and email address
     // Format: "Display Name <email@example.com>" splits into name and email
     // Format: "email@example.com" or anything else is used as-is
@@ -500,6 +556,7 @@ export class GmailInProcess implements InProcessMCPModule {
       body: bodyContent || gmailMessage.snippet || 'No content',
       isHtml,
       snippet: gmailMessage.snippet,
+      attachments: attachments.length > 0 ? attachments : undefined,
     };
 
     return result;

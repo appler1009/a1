@@ -3379,6 +3379,95 @@ fastify.register(async (instance) => {
   });
 }, { prefix: '/api' });
 
+// Gmail attachment download proxy
+fastify.register(async (instance) => {
+  // All IDs come as query params to avoid Fastify's 100-char maxParamLength limit
+  // on Gmail attachment IDs (which can be 400+ chars).
+  instance.get('/gmail/attachment', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const query = request.query as { messageId?: string; attachmentId?: string; filename?: string; mimeType?: string };
+
+    if (!query.messageId || !query.attachmentId) {
+      return reply.code(400).send({ success: false, error: { message: 'messageId and attachmentId are required' } });
+    }
+
+    // Basic input validation — reject path traversal
+    if (query.messageId.includes('..') || query.attachmentId.includes('..')) {
+      return reply.code(400).send({ success: false, error: { message: 'Invalid attachment parameters' } });
+    }
+
+    try {
+      const { google } = await import('googleapis');
+      const { OAuth2Client } = await import('google-auth-library');
+
+      // With multi-account support a user can have several Google tokens.
+      // Try each one in turn — the right account will return 200; others 403.
+      const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+      const allTokens = mainDb.getAllUserOAuthTokens(request.user.id, 'google');
+      if (allTokens.length === 0) {
+        return reply.code(401).send({ success: false, error: { message: 'Google OAuth token not found. Please authenticate first.' } });
+      }
+
+      let lastError: unknown;
+      for (const oauthToken of allTokens) {
+        try {
+          const oauth2Client = new OAuth2Client(
+            process.env.GOOGLE_CLIENT_ID,
+            process.env.GOOGLE_CLIENT_SECRET,
+            process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
+          );
+          oauth2Client.setCredentials({
+            access_token: oauthToken.accessToken,
+            refresh_token: oauthToken.refreshToken,
+            expiry_date: oauthToken.expiryDate,
+            token_type: 'Bearer',
+          });
+
+          const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+          const response = await gmail.users.messages.attachments.get({
+            userId: 'me',
+            messageId: query.messageId!,
+            id: query.attachmentId!,
+          });
+
+          if (!response.data.data) {
+            return reply.code(404).send({ success: false, error: { message: 'Attachment data not found' } });
+          }
+
+          // Gmail returns base64url-encoded data
+          const buffer = Buffer.from(response.data.data, 'base64');
+          const mimeType = query.mimeType || 'application/octet-stream';
+          const filename = query.filename || 'attachment';
+
+          reply.header('Content-Type', mimeType);
+          // Use "inline" so browsers can render in iframes/img for preview;
+          // the Download button on the client uses the `download` attribute.
+          reply.header('Content-Disposition', `inline; filename="${filename.replace(/"/g, '\\"')}"`);
+          reply.header('Content-Length', String(buffer.length));
+          return reply.send(buffer);
+        } catch (err: any) {
+          // 403 = wrong account; try the next token
+          if (err?.status === 403 || err?.code === 403) {
+            lastError = err;
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      // All tokens exhausted
+      console.error('[GmailAttachment] All tokens returned 403:', lastError);
+      return reply.code(403).send({ success: false, error: { message: 'Permission denied for all linked Google accounts' } });
+    } catch (error) {
+      console.error('[GmailAttachment] Error downloading attachment:', error);
+      return reply.code(500).send({ success: false, error: { message: 'Failed to download attachment' } });
+    }
+  });
+}, { prefix: '/api' });
+
 // Start server
 const start = async () => {
   try {

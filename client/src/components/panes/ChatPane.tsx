@@ -268,7 +268,7 @@ export function ChatPane() {
       if (scrollHeight <= clientHeight) {
         fillViewportFetchRef.current = true;
         // Don't set isLoadingOlderRef — we want scroll-to-bottom (not restore) after prepend
-        fetchMessages(activeRoleId, { before: roleMessages[0].id, limit: 50 });
+        fetchMessages(activeRoleId, { before: roleMessages[0].createdAt, limit: 50 });
       }
     });
 
@@ -294,7 +294,7 @@ export function ChatPane() {
         // Save current scroll height before loading
         prevScrollHeightRef.current = scrollHeight;
         const oldestMessage = roleMessages[0];
-        fetchMessages(activeRoleId, { before: oldestMessage.id, limit: 50 });
+        fetchMessages(activeRoleId, { before: oldestMessage.createdAt, limit: 50 });
       }
       
       // Reset the trigger when user scrolls away from top
@@ -667,13 +667,6 @@ export function ChatPane() {
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
-      {/* Debug Banner - Show current role ID */}
-      <div className="px-4 py-1 bg-yellow-100 border-b border-yellow-300 text-xs text-yellow-800 font-mono">
-        <span>Role ID: <strong>{activeRoleId}</strong></span>
-        {currentRole && <span className="ml-3">| Role: <strong>{currentRole.name}</strong></span>}
-        {rolesLoaded ? <span className="ml-3 text-green-600">✓ Loaded</span> : <span className="ml-3 text-red-600">⟳ Loading...</span>}
-      </div>
-
       {/* Top Banner */}
       <TopBanner
         roleId={activeRoleId}
