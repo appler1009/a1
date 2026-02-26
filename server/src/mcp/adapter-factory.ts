@@ -63,10 +63,8 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 async function getGoogleTokenData(userId: string, credentialsPath?: string): Promise<TokenData> {
   // Always use user-level tokens (no role-specific tokens anymore)
   let oauthToken = await authService.getOAuthToken(userId, 'google');
-  console.log(`[getGoogleTokenData] Attempting to retrieve user-level token for user ${userId}`);
 
   if (!oauthToken) {
-    console.warn(`[getGoogleTokenData] No OAuth token found for user ${userId}`);
     throw new Error(`Google OAuth token not found for user ${userId}. Please authenticate first.`);
   }
 
@@ -77,7 +75,7 @@ async function getGoogleTokenData(userId: string, credentialsPath?: string): Pro
   // Check if token needs refresh (expiring within buffer or already expired)
   if (timeUntilExpiry < REFRESH_BUFFER_MS && oauthToken.refreshToken) {
     const isExpired = timeUntilExpiry < 0;
-    console.log(`[getGoogleTokenData] Token ${isExpired ? 'expired' : `expiring in ${Math.round(timeUntilExpiry / 1000)}s`}, attempting refresh...`);
+    console.log(`[OAuth] Token ${isExpired ? 'expired' : `expiring in ${Math.round(timeUntilExpiry / 1000)}s`}, refreshing...`);
 
     try {
       const { GoogleOAuthHandler } = await import('../auth/google-oauth.js');
@@ -95,21 +93,15 @@ async function getGoogleTokenData(userId: string, credentialsPath?: string): Pro
         accessToken: newTokens.access_token,
         refreshToken: newTokens.refresh_token || oauthToken.refreshToken,
         expiryDate: Date.now() + (newTokens.expires_in * 1000),
-        accountEmail: oauthToken.accountEmail, // Preserve the account email
+        accountEmail: oauthToken.accountEmail,
       } as any);
-      console.log(`[getGoogleTokenData] Token refreshed successfully. New expiry: ${new Date(oauthToken.expiryDate!).toISOString()}`);
+      console.log(`[OAuth] Token refreshed, new expiry: ${new Date(oauthToken.expiryDate!).toISOString()}`);
     } catch (refreshError) {
-      console.error(`[getGoogleTokenData] Failed to refresh token:`, refreshError);
-
-      // If token is expired and refresh failed, throw error
+      console.error(`[OAuth] Failed to refresh token:`, refreshError);
       if (isExpired) {
         throw new Error(`Google OAuth token has expired and cannot be refreshed for user ${userId}. Please re-authenticate.`);
       }
-      // If token is still valid, continue with existing token
-      console.log(`[getGoogleTokenData] Proceeding with existing token despite refresh failure`);
     }
-  } else {
-    console.log(`[getGoogleTokenData] Token is valid (expires in ${Math.round(timeUntilExpiry / 1000)}s)`);
   }
 
   // Validate OAuth token structure
@@ -138,25 +130,10 @@ async function prepareUserMcpDir(
 ): Promise<PrepareResult> {
   const cwd = serverConfig.cwd || process.cwd();
 
-  console.log(`[prepareUserMcpDir] Preparing directory for ${serverKey}`);
-  console.log(`[prepareUserMcpDir] CWD: ${cwd}`);
-  console.log(`[prepareUserMcpDir] Auth required: ${!!serverConfig.auth}`);
+  if (!serverConfig.auth) return { cwd };
 
-  if (!serverConfig.auth) {
-    console.log(`[prepareUserMcpDir] No auth config, returning CWD as-is`);
-    return { cwd };
-  }
-
-  console.log(`[prepareUserMcpDir] Auth provider: ${serverConfig.auth.provider}`);
-  console.log(`[prepareUserMcpDir] Credentials filename: ${serverConfig.auth.credentialsFilename}`);
-
-  // Create generic credentials file from environment variables if needed
   if (serverConfig.auth.credentialsFilename && serverConfig.auth.provider === 'google') {
-    // Always use gcp-oauth.keys.json for google-drive-mcp
-    const credentialsFilename = 'gcp-oauth.keys.json';
-    const credentialsPath = path.join(cwd, credentialsFilename);
-    console.log(`[prepareUserMcpDir] Creating credentials file at: ${credentialsPath}`);
-
+    const credentialsPath = path.join(cwd, 'gcp-oauth.keys.json');
     const credentials = {
       installed: {
         client_id: process.env.GOOGLE_CLIENT_ID || '',
@@ -164,17 +141,9 @@ async function prepareUserMcpDir(
         redirect_uris: [process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback'],
       },
     };
-
-    const dir = path.dirname(credentialsPath);
-    console.log(`[prepareUserMcpDir] Creating directory: ${dir}`);
-    await fs.mkdir(dir, { recursive: true });
+    await fs.mkdir(path.dirname(credentialsPath), { recursive: true });
     await fs.writeFile(credentialsPath, JSON.stringify(credentials, null, 2));
-    console.log(`[MCPAdapterFactory] Created credentials file: ${credentialsPath}`);
-    console.log(`[prepareUserMcpDir] Credentials file setup complete`);
-    
     return { cwd, credentialsPath };
-  } else if (serverConfig.auth.credentialsFilename && serverConfig.auth.provider !== 'google') {
-    console.log(`[prepareUserMcpDir] Credentials file setup skipped (non-Google provider)`);
   }
 
   return { cwd };
@@ -192,19 +161,12 @@ async function loadServerConfig(serverKey: string): Promise<MCPServerConfig> {
   // First, check MCPManager's in-memory cache
   // This includes both main DB configs AND role-specific configs loaded during role switch
   const managerConfig = mcpManager.getServerConfig(serverKey);
-  if (managerConfig) {
-    console.log(`[MCPAdapterFactory:loadServerConfig] Found config in MCPManager cache for: ${serverKey}`);
-    return managerConfig;
-  }
+  if (managerConfig) return managerConfig;
 
-  // Fall back to main database for global/persisted configs
   try {
     const mainDb = getMainDatabase();
     const config = mainDb.getMCPServerConfig(serverKey);
-    if (config) {
-      console.log(`[MCPAdapterFactory:loadServerConfig] Found config in main database for: ${serverKey}`);
-      return config as unknown as MCPServerConfig;
-    }
+    if (config) return config as unknown as MCPServerConfig;
   } catch (error) {
     console.error(`[MCPAdapterFactory] Error loading config for ${serverKey}:`, error);
   }
@@ -231,159 +193,77 @@ async function loadServerConfig(serverKey: string): Promise<MCPServerConfig> {
 export async function getMcpAdapter(userId: string, serverKey: string, roleId?: string): Promise<McpAdapter> {
   const cacheKey = `${userId}:${serverKey}${roleId ? `:${roleId}` : ''}`;
 
-  console.log(`[MCPAdapterFactory:getMcpAdapter] Requested: userId=${userId}, serverKey=${serverKey}, roleId=${roleId || 'none'}`);
-
   // Return cached adapter if it exists and is connected
   if (activeAdapters.has(cacheKey)) {
-    console.log(`[MCPAdapterFactory:getMcpAdapter] Found cached adapter for ${cacheKey}`);
     const adapter = activeAdapters.get(cacheKey)!;
-    if (adapter.isConnected()) {
-      console.log(`[MCPAdapterFactory:getMcpAdapter] Cached adapter is connected, returning it`);
-      return adapter;
-    }
-    // If adapter exists but disconnected, reconnect it
-    console.log(`[MCPAdapterFactory:getMcpAdapter] Cached adapter disconnected, attempting reconnect...`);
+    if (adapter.isConnected()) return adapter;
+    // Disconnected — try to reconnect
     try {
       await adapter.reconnect();
-      console.log(`[MCPAdapterFactory:getMcpAdapter] Reconnect successful`);
       return adapter;
     } catch (error) {
-      console.error(`[MCPAdapterFactory] Failed to reconnect adapter for ${cacheKey}:`, error);
+      console.error(`[MCPAdapterFactory] Failed to reconnect adapter for ${serverKey}:`, error);
       activeAdapters.delete(cacheKey);
     }
   }
 
-  console.log(`[MCPAdapterFactory:getMcpAdapter] No cached adapter, creating new one...`);
-
-  // Use base server ID (strip ~accountEmail suffix) for predefined lookup
   const baseServerId = getBaseServerId(serverKey);
 
-  // Check if this server has an in-process adapter registered FIRST
+  // In-process adapter path
   if (adapterRegistry.isInProcess(baseServerId)) {
-    console.log(`[MCPAdapterFactory:getMcpAdapter] Using in-process adapter for ${serverKey} (base: ${baseServerId})`);
+    // memory is role-scoped (each role has its own DB); all other in-process servers
+    // (gmail, google-drive, etc.) are user-scoped and should use the manager's
+    // MultiAccountAdapter regardless of whether a roleId was passed.
+    const isRoleScoped = baseServerId === 'memory' || baseServerId === 'Memory';
 
-    // For role-manager, always create a user-specific adapter (don't use global cache)
-    // because each user needs their own instance with their userId.
-    // When a roleId is provided, skip the shared manager adapter so each role gets
-    // its own in-process instance pointing to the correct role-specific DB.
-    if (baseServerId !== 'role-manager' && !roleId) {
-      // Prefer the MCPManager's live adapter — it may be a MultiAccountAdapter
-      // that handles accountEmail routing and fan-out across all connected accounts.
+    if (baseServerId !== 'role-manager' && !isRoleScoped) {
       const managerAdapter = mcpManager.getInProcessAdapter(baseServerId);
-      if (managerAdapter) {
-        console.log(`[MCPAdapterFactory:getMcpAdapter] Delegating to MCPManager's live adapter for ${baseServerId}`);
-        return managerAdapter;
-      }
+      if (managerAdapter) return managerAdapter;
     }
 
-    // No manager adapter yet — create a single-account in-process adapter as fallback
-    // For in-process adapters that need OAuth tokens (like Google Drive),
-    // we need to retrieve the token data before creating the adapter.
-    // For role-scoped servers (e.g. memory), pass the role-specific DB path.
-    let tokenData: any = roleId
+    // Role-scoped (memory) or no manager adapter yet — create a fresh in-process instance
+    let tokenData: any = isRoleScoped && roleId
       ? { roleId, dbPath: path.join(process.env.STORAGE_ROOT || './data', `memory_${roleId}.db`) }
       : undefined;
 
-    // Check if this server requires Google OAuth by looking at predefined servers
     const { getPredefinedServer } = await import('./predefined-servers.js');
     const predefinedServer = getPredefinedServer(baseServerId);
-
     if (predefinedServer?.auth?.provider === 'google') {
-      console.log(`[MCPAdapterFactory:getMcpAdapter] In-process adapter requires Google OAuth, retrieving token...`);
       tokenData = await getGoogleTokenData(userId);
-      console.log(`[MCPAdapterFactory:getMcpAdapter] Token data prepared for in-process adapter`);
     }
 
-    const adapter = await adapterRegistry.createInProcess(
-      baseServerId,
-      userId,
-      `mcp-${serverKey}`,
-      tokenData
-    );
-
-    // Cache the adapter (cast to McpAdapter to satisfy TypeScript)
-    console.log(`[MCPAdapterFactory:getMcpAdapter] Caching in-process adapter with key: ${cacheKey}`);
+    const adapter = await adapterRegistry.createInProcess(baseServerId, userId, `mcp-${serverKey}`, tokenData);
     const cachedAdapter = adapter as unknown as McpAdapter;
     activeAdapters.set(cacheKey, cachedAdapter);
 
-    // Wrap close method to handle cleanup
     const originalClose = adapter.close.bind(adapter);
-    adapter.close = () => {
-      console.log(`[MCPAdapterFactory] Closing in-process adapter: ${cacheKey}`);
-      originalClose();
-      activeAdapters.delete(cacheKey);
-    };
+    adapter.close = () => { originalClose(); activeAdapters.delete(cacheKey); };
 
-    console.log(`[MCPAdapterFactory:getMcpAdapter] Complete - returning in-process adapter`);
     return cachedAdapter;
   }
 
-  // Load server config from database (only for stdio adapters)
-  console.log(`[MCPAdapterFactory:getMcpAdapter] Loading config for ${serverKey}...`);
+  // Stdio adapter path
   const serverConfig = await loadServerConfig(serverKey);
-  console.log(`[MCPAdapterFactory:getMcpAdapter] Config loaded`, {
-    command: serverConfig.command,
-    has_args: !!serverConfig.args,
-    auth_provider: serverConfig.auth?.provider,
-  });
+  const { cwd, credentialsPath } = await prepareUserMcpDir(serverKey, userId, serverConfig);
 
-  // Prepare working directory (credentials files, etc.)
-  console.log(`[MCPAdapterFactory:getMcpAdapter] Preparing MCP directory...`);
-  const prepareResult = await prepareUserMcpDir(serverKey, userId, serverConfig);
-  const { cwd, credentialsPath } = prepareResult;
-  console.log(`[MCPAdapterFactory:getMcpAdapter] CWD: ${cwd}, credentialsPath: ${credentialsPath}`);
-
-  // Retrieve OAuth token if this is a Google MCP
   let tokenData: any;
   if (serverConfig.auth?.provider === 'google') {
-    console.log(`[MCPAdapterFactory:getMcpAdapter] Google auth required, retrieving OAuth token...`);
     tokenData = await getGoogleTokenData(userId, credentialsPath);
-    console.log(`[MCPAdapterFactory:getMcpAdapter] Token data prepared and validated:`, {
-      has_access_token: !!tokenData.access_token,
-      access_token_length: tokenData.access_token?.length,
-      access_token_prefix: tokenData.access_token?.substring(0, 10) + '...',
-      has_refresh_token: !!tokenData.refresh_token,
-      expiry_date: tokenData.expiry_date,
-      token_type: tokenData.token_type,
-      credentialsPath: tokenData.credentialsPath,
-    });
   }
 
-  // Create adapter using registry (handles MCP-specific setup)
-  console.log(`[MCPAdapterFactory:getMcpAdapter] Creating stdio adapter via registry...`);
-  const adapter = adapterRegistry.create(
-    serverKey,
-    userId,
-    `mcp-${serverKey}`,
-    serverConfig,
-    cwd,
-    tokenData
-  );
-  console.log(`[MCPAdapterFactory:getMcpAdapter] Adapter created: ${adapter.id}`);
+  const adapter = adapterRegistry.create(serverKey, userId, `mcp-${serverKey}`, serverConfig, cwd, tokenData);
 
-  // Connect the adapter (calls prepare() internally)
-  console.log(`[MCPAdapterFactory:getMcpAdapter] Connecting adapter...`);
   try {
     await adapter.connect();
-    console.log(`[MCPAdapterFactory:getMcpAdapter] Adapter connected successfully`);
   } catch (error) {
-    console.error(`[MCPAdapterFactory] Failed to connect adapter for ${serverKey}:`, error);
+    console.error(`[MCPAdapterFactory] Failed to connect to ${serverKey}:`, error);
     throw new Error(`Failed to connect to MCP server ${serverKey}: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // Cache the adapter
-  console.log(`[MCPAdapterFactory:getMcpAdapter] Caching adapter with key: ${cacheKey}`);
   activeAdapters.set(cacheKey, adapter);
-
-  // Wrap close method to handle cleanup
   const originalClose = adapter.close.bind(adapter);
-  adapter.close = () => {
-    console.log(`[MCPAdapterFactory] Closing adapter: ${cacheKey}`);
-    originalClose();
-    activeAdapters.delete(cacheKey);
-  };
+  adapter.close = () => { originalClose(); activeAdapters.delete(cacheKey); };
 
-  console.log(`[MCPAdapterFactory:getMcpAdapter] Complete - returning adapter`);
   return adapter;
 }
 

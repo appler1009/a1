@@ -569,6 +569,23 @@ fastify.get('/health', async () => {
   return { status: 'ok', timestamp: new Date().toISOString() };
 });
 
+// Test-only cleanup endpoint — deletes a user and all their data by email.
+// Only available outside production to prevent accidental data loss.
+if (!config.env.isProduction) {
+  fastify.post('/api/test/cleanup', async (request, reply) => {
+    const body = request.body as { email?: string };
+    if (!body.email) {
+      return reply.code(400).send({ success: false, error: { message: 'email required' } });
+    }
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const user = mainDb.getUserByEmail(body.email);
+    if (user) {
+      mainDb.deleteUser(user.id);
+    }
+    return reply.send({ success: true, deleted: !!user });
+  });
+}
+
 // Environment info endpoint
 fastify.get('/api/env', async () => {
   return {
@@ -642,127 +659,56 @@ async function executeToolWithAdapters(
   toolName: string,
   args: Record<string, unknown>,
   roleId?: string
-): Promise<{ text: string; metadata?: Record<string, unknown> }> {
+): Promise<{ text: string; metadata?: Record<string, unknown>; accounts?: string[] }> {
   try {
-    console.log(`\n[ToolExecution] ========================================`);
-    console.log(`[ToolExecution] Tool Request: ${toolName}`);
-    console.log(`[ToolExecution] Arguments: ${JSON.stringify(args, null, 2)}`);
-    console.log(`[ToolExecution] User: ${userId}, Role: ${roleId || 'global'}`);
-
-    // Import tool cache
     const { toolCache } = await import('./mcp/tool-cache.js');
-
-    // First, check the tool cache to find which server has this tool
     const cachedTool = toolCache.findToolServer(toolName);
-    
+
     if (cachedTool) {
-      console.log(`[ToolExecution] Cache HIT: Tool "${toolName}" found on server: ${cachedTool.serverId}`);
-
       try {
-        // Connect only to the specific server that has the tool
         const adapter = await getMcpAdapter(userId, cachedTool.serverId, roleId);
-        
-        // Resolve any URIs/filenames in the arguments to local file URIs
         const resolvedArgs = await resolveUrisInArgs(args, userId);
-        console.log(`[ToolExecution] Resolved arguments: ${JSON.stringify(resolvedArgs, null, 2)}`);
-
         const result = await adapter.callTool(toolName, resolvedArgs);
 
-        console.log(`[ToolExecution] Raw response type: ${result.type}`);
-        console.log(`[ToolExecution] Raw response:`, JSON.stringify(result, null, 2));
+        if (result.type === 'error') return { text: `Error: ${result.error || 'Unknown error'}` };
 
-        // Format result as string
-        if (result.type === 'error') {
-          const errorMsg = `Error: ${result.error || 'Unknown error'}`;
-          console.log(`[ToolExecution] Tool returned error: ${errorMsg}`);
-          console.log(`[ToolExecution] ========================================\n`);
-          return { text: errorMsg };
-        }
-
-        const resultText = result.text || JSON.stringify(result);
-        console.log(`[ToolExecution] Tool execution successful (from cache)`);
-        console.log(`[ToolExecution] Result length: ${resultText.length} chars`);
-
-        // Handle convert_to_markdown special case
-        const finalResult = await handleToolResult(toolName, args, resultText, userId);
-        return {
-          text: finalResult,
-          metadata: (result as any).metadata,
-        };
+        const finalResult = await handleToolResult(toolName, args, result.text || JSON.stringify(result), userId);
+        return { text: finalResult, metadata: (result as any).metadata, accounts: (result as any).accounts };
       } catch (error) {
-        console.error(`[ToolExecution] Error executing cached tool on ${cachedTool.serverId}:`, error);
-        // Fall through to full search below
+        console.error(`[ToolExecution] Cache-hit execution failed for ${toolName} on ${cachedTool.serverId}:`, error);
+        // Fall through to full search
       }
     }
 
-    // Cache miss or error - search all servers
-    console.log(`[ToolExecution] Cache MISS: Searching all servers for tool: ${toolName}`);
-    
-    // Get all MCP servers from manager
+    // Cache miss — search all servers
+    console.log(`[ToolExecution] Cache miss for "${toolName}", searching all servers`);
     const servers = mcpManager.getServers();
-    console.log(`[ToolExecution] Searching across ${servers.length} servers for tool: ${toolName}`);
-    if (servers.length > 0) {
-      console.log(`[ToolExecution] Available servers: ${servers.map(s => s.id).join(', ')}`);
-    }
 
-    // Try to find the tool and execute it
     for (const server of servers) {
       try {
-        console.log(`[ToolExecution] Checking server: ${server.id}`);
         const adapter = await getMcpAdapter(userId, server.id, roleId);
         const tools = await adapter.listTools();
-        console.log(`[ToolExecution] Server ${server.id} has ${tools.length} tools available`);
-        
-        // Update the tool cache with this server's tools
         toolCache.updateServerTools(server.id, tools);
 
         const tool = tools.find(t => t.name === toolName);
-
         if (tool) {
-          console.log(`[ToolExecution] Found tool "${toolName}" on server: ${server.id}`);
-          console.log(`[ToolExecution] Tool description: ${tool.description}`);
-          console.log(`[ToolExecution] Executing tool...`);
-
-          // Resolve any URIs/filenames in the arguments to local file URIs
           const resolvedArgs = await resolveUrisInArgs(args, userId);
-          console.log(`[ToolExecution] Resolved arguments: ${JSON.stringify(resolvedArgs, null, 2)}`);
-
           const result = await adapter.callTool(toolName, resolvedArgs);
 
-          console.log(`[ToolExecution] Raw response type: ${result.type}`);
-          console.log(`[ToolExecution] Raw response:`, JSON.stringify(result, null, 2));
+          if (result.type === 'error') return { text: `Error: ${result.error || 'Unknown error'}` };
 
-          // Format result as string
-          if (result.type === 'error') {
-            const errorMsg = `Error: ${result.error || 'Unknown error'}`;
-            console.log(`[ToolExecution] Tool returned error: ${errorMsg}`);
-            console.log(`[ToolExecution] ========================================\n`);
-            return { text: errorMsg };
-          }
-
-          const resultText = result.text || JSON.stringify(result);
-          console.log(`[ToolExecution] Tool execution successful`);
-          console.log(`[ToolExecution] Result length: ${resultText.length} chars`);
-
-          // Handle convert_to_markdown special case
-          const finalResult = await handleToolResult(toolName, args, resultText, userId);
-          return {
-            text: finalResult,
-            metadata: (result as any).metadata,
-          };
+          const finalResult = await handleToolResult(toolName, args, result.text || JSON.stringify(result), userId);
+          return { text: finalResult, metadata: (result as any).metadata, accounts: (result as any).accounts };
         }
       } catch (error) {
-        console.error(`[ToolExecution] Error searching server ${server.id}:`, error);
-        // Continue to next server
+        console.error(`[ToolExecution] Error searching server ${server.id} for ${toolName}:`, error);
       }
     }
 
-    // Tool not found
     throw new Error(`Tool "${toolName}" not found on any MCP server`);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error(`[ToolExecution] Tool execution failed (${toolName}):`, error);
-    console.log(`[ToolExecution] ========================================\n`);
+    console.error(`[ToolExecution] Failed to execute ${toolName}:`, error);
     return { text: `Error executing tool ${toolName}: ${errorMsg}` };
   }
 }
@@ -1391,6 +1337,42 @@ fastify.register(async (instance) => {
       return reply.code(500).send({ success: false, error: { message: 'Failed to edit memories' } });
     }
   });
+
+  instance.post('/roles/:id/save-to-memory', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const params = request.params as { id: string };
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+
+    const role = mainDb.getRole(params.id);
+    if (!role) {
+      return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
+    }
+
+    if (role.userId !== request.user.id) {
+      return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
+    }
+
+    const body = request.body as { text: string };
+    if (!body.text?.trim()) {
+      return reply.code(400).send({ success: false, error: { message: 'Text is required' } });
+    }
+
+    try {
+      const adapter = await getMcpAdapter(request.user.id, 'memory', params.id);
+      const trimmed = body.text.trim();
+      const entityName = trimmed.length > 50 ? trimmed.slice(0, 50) + '…' : trimmed;
+      await adapter.callTool('memory_create_entities', {
+        entities: [{ name: entityName, entityType: 'ChatNote', observations: [trimmed] }],
+      });
+      return reply.send({ success: true });
+    } catch (error) {
+      console.error(`[SaveToMemory] Error for role ${params.id}:`, error);
+      return reply.code(500).send({ success: false, error: { message: 'Failed to save to memory' } });
+    }
+  });
 }, { prefix: '/api' });
 
 // Chat routes - using main database
@@ -1993,7 +1975,15 @@ You have access to a knowledge graph memory system with the following tools:
 - Use memory to maintain continuity and personalization across conversations
 - For any factual question about the user's data, files, or past context — always use available tools to look it up. Never answer from training knowledge when a tool can retrieve the real answer.
 
+## EMAIL AND FILE SEARCH RECENCY
+Always bias toward recent content when searching:
+- **Gmail**: include \`newer_than:90d\` in all search queries unless the user specifies a different timeframe or is explicitly looking for something historical. For "recent" or "today" use \`newer_than:7d\` or \`newer_than:1d\`. Gmail returns results newest-first by default.
+- **Google Drive**: files are always returned ordered by most recently modified first. Mention the modification date when presenting results.
+- When ranking or summarizing multiple results, give higher weight to more recent items.
+
 ## MCP TOOLS
+**You MUST explore and use available MCP tools to be better equipped for the answer.**
+
 You have access to a \`search_tool\` that discovers available MCP tools by natural language query.
 
 **You MUST use \`search_tool\` before attempting any task that could benefit from external tools** (file access, email, calendar, search, APIs, data sources, etc.). Do not assume tools are unavailable — always check first. Examples:
@@ -2240,6 +2230,12 @@ You have access to role management tools. When the user asks to change or switch
             toolResultEvent.metadata = toolResultObj.metadata;
           }
 
+          // Include accounts if present (multi-account fan-out)
+          if (toolResultObj.accounts) {
+            toolResultEvent.accounts = toolResultObj.accounts;
+            console.log(`[ChatStream] Tool ${toolCall.name} ran against accounts: ${toolResultObj.accounts.join(', ')}`);
+          }
+
           reply.raw.write(`data: ${JSON.stringify(toolResultEvent)}\n\n`);
         }
 
@@ -2250,7 +2246,7 @@ You have access to role management tools. When the user asks to change or switch
         await processStream(conversationMessages, allowMoreTools);
       }
 
-      if (toolIteration >= MAX_TOOL_ITERATIONS && toolCalls.length > 0) {
+      if (toolIteration >= MAX_TOOL_ITERATIONS) {
         reply.raw.write(`data: ${JSON.stringify({ type: 'info', message: 'Tool execution limit reached' })}\n\n`);
       }
 
@@ -2278,25 +2274,34 @@ You have access to role management tools. When the user asks to change or switch
         const extractionProviderTools = llmRouter.convertMCPToolsToOpenAI(memWriteTools);
         const extractionToolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
 
+        const MEMORY_EXTRACTION_TIMEOUT_MS = 12000;
         try {
-          const extractionStream = llmRouter.stream({ messages: extractionMessages, tools: extractionProviderTools });
-          for await (const chunk of extractionStream) {
-            if (chunk.type === 'tool_call' && chunk.toolCall) {
-              extractionToolCalls.push(chunk.toolCall);
-            }
-          }
+          await Promise.race([
+            (async () => {
+              const extractionStream = llmRouter.stream({ messages: extractionMessages, tools: extractionProviderTools });
+              for await (const chunk of extractionStream) {
+                if (chunk.type === 'tool_call' && chunk.toolCall) {
+                  extractionToolCalls.push(chunk.toolCall);
+                }
+              }
 
-          let savedCount = 0;
-          for (const toolCall of extractionToolCalls) {
-            if (memWriteToolNames.includes(toolCall.name)) {
-              await executeToolWithAdapters(request.user!.id, toolCall.name, toolCall.arguments, body.roleId);
-              savedCount++;
-            }
-          }
+              let savedCount = 0;
+              for (const toolCall of extractionToolCalls) {
+                if (memWriteToolNames.includes(toolCall.name)) {
+                  await executeToolWithAdapters(request.user!.id, toolCall.name, toolCall.arguments, body.roleId);
+                  savedCount++;
+                }
+              }
 
-          reply.raw.write(`data: ${JSON.stringify({ type: 'memory_task', status: 'completed', count: savedCount })}\n\n`);
+              reply.raw.write(`data: ${JSON.stringify({ type: 'memory_task', status: 'completed', count: savedCount })}\n\n`);
+            })(),
+            new Promise<void>((_, reject) =>
+              setTimeout(() => reject(new Error('Memory extraction timed out')), MEMORY_EXTRACTION_TIMEOUT_MS)
+            ),
+          ]);
         } catch (err) {
           console.error('[ChatStream] Memory extraction failed:', err);
+          reply.raw.write(`data: ${JSON.stringify({ type: 'memory_task', status: 'completed', count: 0 })}\n\n`);
         }
       }
       // --- end memory extraction ---

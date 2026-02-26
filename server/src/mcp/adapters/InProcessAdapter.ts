@@ -85,17 +85,13 @@ export class InProcessAdapter {
     
     // In-process adapters are immediately "connected" since there's no external process
     this._isConnected = true;
-    
-    console.log(`[InProcessAdapter] Created adapter: ${id} for server: ${serverKey}`);
   }
 
   /**
    * Connect - for in-process adapters, this is a no-op since there's nothing to connect to
    */
   async connect(): Promise<void> {
-    console.log(`[InProcessAdapter:connect] Connecting adapter: ${this.id}`);
     this._isConnected = true;
-    console.log(`[InProcessAdapter:connect] Connected successfully (in-process)`);
   }
 
   /**
@@ -119,7 +115,6 @@ export class InProcessAdapter {
           inputSchema: schema,
         });
       }
-      console.log(`[InProcessAdapter:listTools] Found ${result.length} tools for ${this.serverKey}`);
       return result;
     } catch (error) {
       console.error(`[InProcessAdapter:listTools] Error listing tools:`, error);
@@ -134,9 +129,6 @@ export class InProcessAdapter {
     if (!this._isConnected) {
       throw new Error(`Adapter ${this.id} is not connected`);
     }
-
-    console.log(`[InProcessAdapter:callTool] Calling tool: ${name} on ${this.serverKey}`);
-    console.log(`[InProcessAdapter:callTool] Args:`, JSON.stringify(args, null, 2));
 
     try {
       const fn = this.toolModule[name];
@@ -167,7 +159,6 @@ export class InProcessAdapter {
     if (typeof this.toolModule.getResources === 'function') {
       try {
         const resources = await this.toolModule.getResources!();
-        console.log(`[InProcessAdapter:listResources] Found ${resources.length} resources for ${this.serverKey}`);
         return resources;
       } catch (error) {
         console.error(`[InProcessAdapter:listResources] Error listing resources:`, error);
@@ -175,7 +166,6 @@ export class InProcessAdapter {
       }
     }
 
-    console.log(`[InProcessAdapter:listResources] No resources available for ${this.serverKey}`);
     return [];
   }
 
@@ -191,7 +181,6 @@ export class InProcessAdapter {
       throw new Error(`Resource reading not supported by ${this.serverKey}`);
     }
 
-    console.log(`[InProcessAdapter:readResource] Reading resource: ${uri}`);
     
     try {
       const result = await this.toolModule.readResource!(uri);
@@ -213,16 +202,13 @@ export class InProcessAdapter {
    * Reconnect - for in-process adapters, just ensure connected state
    */
   async reconnect(): Promise<void> {
-    console.log(`[InProcessAdapter:reconnect] Reconnecting adapter: ${this.id}`);
     this._isConnected = true;
-    console.log(`[InProcessAdapter:reconnect] Reconnected successfully`);
   }
 
   /**
    * Close - for in-process adapters, just mark as disconnected
    */
   close(): void {
-    console.log(`[InProcessAdapter:close] Closing adapter: ${this.id}`);
     this._isConnected = false;
   }
 

@@ -1,53 +1,42 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 test.describe('App Smoke Tests', () => {
-  test('app is accessible', async ({ page }) => {
-    await page.goto('/');
-
-    // Page should load without errors
-    const title = page.locator('h1, h2');
-    await expect(title.first()).toBeVisible({ timeout: 10000 });
-  });
-
   test('login page displays correctly', async ({ page }) => {
     await page.goto('/login');
-
     await expect(page.getByRole('heading', { name: /sign in/i })).toBeVisible();
     await expect(page.getByLabel(/email address/i)).toBeVisible();
     await expect(page.getByRole('button', { name: /continue/i })).toBeVisible();
   });
 
-  test('can navigate between pages', async ({ page }) => {
+  test('continue button is disabled with empty email', async ({ page }) => {
     await page.goto('/login');
-
-    // Check for join link
-    const joinLink = page.getByRole('link', { name: /join/i });
-    expect(await joinLink.isVisible().catch(() => false)).toBeTruthy();
+    await expect(page.getByRole('button', { name: /continue/i })).toBeDisabled();
   });
 
-  test('form validation works', async ({ page }) => {
+  test('continue button enables with email input', async ({ page }) => {
     await page.goto('/login');
-
-    const continueBtn = page.getByRole('button', { name: /continue/i });
-
-    // Button should be disabled with empty email
-    await expect(continueBtn).toBeDisabled();
-
-    // Button should enable with email
     await page.fill('input[type="email"]', 'test@example.com');
-    await expect(continueBtn).toBeEnabled();
+    await expect(page.getByRole('button', { name: /continue/i })).toBeEnabled();
   });
 
-  test('page handles navigation correctly', async ({ page }) => {
-    // Start at root
+  test('unauthenticated root redirects to login or shows app', async ({ page }) => {
     await page.goto('/');
-
-    // Should redirect to either login or show app
     const finalUrl = page.url();
     expect(
       finalUrl.includes('/login') ||
-      finalUrl === 'http://localhost:5173/' ||
-      finalUrl.includes('/onboarding')
+        finalUrl === 'http://localhost:5173/' ||
+        finalUrl.includes('/onboarding')
     ).toBeTruthy();
+  });
+
+  test('authenticated user sees app with fresh empty state', async ({
+    authenticatedPage: page,
+    testEmail,
+  }) => {
+    // Each test run creates a brand-new user, so there are no prior messages
+    await expect(page.getByPlaceholder('Type a message...')).toBeVisible();
+    await expect(page.getByText('Start a conversation')).toBeVisible();
+    // Confirm we're using the isolated test email (not the old shared one)
+    expect(testEmail).toMatch(/^test-w\d+-[0-9a-f]+@test\.local$/);
   });
 });

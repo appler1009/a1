@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2 } from 'lucide-react';
+import { Send, Loader2, BookmarkPlus, Check } from 'lucide-react';
 import { useAuthStore, useRolesStore, useChatStore, useUIStore, type ViewerFile, type Message } from '../../store';
 import { MessageItem } from '../MessageItem';
 import { TopBanner } from '../TopBanner';
@@ -129,6 +129,9 @@ export function ChatPane() {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [pendingRoleSwitch, setPendingRoleSwitch] = useState<{ roleId: string; roleName: string } | null>(null);
   const [memoryTask, setMemoryTask] = useState<{ status: 'extracting' | 'done'; count?: number } | null>(null);
+  const [chatSelection, setChatSelection] = useState<{ text: string; rect: DOMRect } | null>(null);
+  const [savingMemory, setSavingMemory] = useState(false);
+  const [memorySaved, setMemorySaved] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isLoadingOlderRef = useRef(false);
@@ -485,13 +488,17 @@ export function ChatPane() {
                   }
                   
                   // Add tool call as a compact system message with friendly formatted tool name
+                  // Include account(s) for multi-account servers
+                  const toolLabel = formatToolName(parsed.toolName || 'tool');
+                  const accounts: string[] | undefined = parsed.accounts;
+                  const accountSuffix = accounts?.length ? ` · ${accounts.join(', ')}` : '';
                   const toolMessage = {
                     id: crypto.randomUUID(),
                     roleId: activeRoleId,
                     groupId: currentGroup?.id || null,
                     userId: user.id,
                     role: 'system' as const,
-                    content: `*${formatToolName(parsed.toolName || 'tool')}*`,
+                    content: `*${toolLabel}*${accountSuffix}`,
                     createdAt: new Date().toISOString(),
                   };
                   addMessage(toolMessage);
@@ -564,6 +571,50 @@ export function ChatPane() {
     } finally {
       setStreaming(false);
       setCurrentContent('');
+    }
+  };
+
+  const handleChatMouseUp = () => {
+    const sel = window.getSelection();
+    const text = sel?.toString().trim() ?? '';
+    if (!text || text.length < 3) {
+      setChatSelection(null);
+      return;
+    }
+    if (!containerRef.current) return;
+    const range = sel?.getRangeAt(0);
+    if (!range || !containerRef.current.contains(range.commonAncestorContainer)) {
+      setChatSelection(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    setChatSelection({ text, rect });
+  };
+
+  const handleChatMouseDown = () => {
+    setChatSelection(null);
+    setMemorySaved(false);
+  };
+
+  const handleSaveToMemory = async () => {
+    if (!chatSelection || !activeRoleId) return;
+    setSavingMemory(true);
+    try {
+      const res = await apiFetch(`/api/roles/${activeRoleId}/save-to-memory`, {
+        method: 'POST',
+        body: JSON.stringify({ text: chatSelection.text }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMemorySaved(true);
+        setChatSelection(null);
+        window.getSelection()?.removeAllRanges();
+        setTimeout(() => setMemorySaved(false), 2000);
+      }
+    } catch {
+      // silent fail
+    } finally {
+      setSavingMemory(false);
     }
   };
 
@@ -648,6 +699,8 @@ export function ChatPane() {
         ref={containerRef}
         onScroll={handleScroll}
         onClick={() => { if (!window.getSelection()?.toString()) inputRef.current?.focus(); }}
+        onMouseUp={handleChatMouseUp}
+        onMouseDown={handleChatMouseDown}
         className={`flex-1 min-h-0 overflow-y-auto p-4 space-y-2 transition-opacity duration-500 ${pendingRoleSwitch ? 'opacity-0' : 'opacity-100'}`}
       >
         {/* Search Mode - Show search results */}
@@ -704,6 +757,38 @@ export function ChatPane() {
         )}
       </div>
 
+      {/* Floating "Remember" popover on text selection */}
+      {chatSelection && (
+        <div
+          style={{
+            position: 'fixed',
+            top: chatSelection.rect.top - 40,
+            left: chatSelection.rect.left + chatSelection.rect.width / 2,
+            transform: 'translateX(-50%)',
+            zIndex: 50,
+          }}
+        >
+          <button
+            onClick={handleSaveToMemory}
+            disabled={savingMemory}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg shadow-lg hover:opacity-90 disabled:opacity-50 transition-opacity whitespace-nowrap"
+          >
+            {savingMemory ? <Loader2 className="w-3 h-3 animate-spin" /> : <BookmarkPlus className="w-3 h-3" />}
+            Remember
+          </button>
+        </div>
+      )}
+
+      {/* "Saved to memory" toast */}
+      {memorySaved && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg shadow-lg">
+            <Check className="w-3 h-3" />
+            Saved to memory
+          </div>
+        </div>
+      )}
+
       {/* Memory extraction indicator */}
       {memoryTask && (
         <div className="px-4 py-0.5 text-xs text-muted-foreground/40 italic select-none">
@@ -728,6 +813,7 @@ export function ChatPane() {
           />
           <button
             type="submit"
+            aria-label="Send"
             disabled={!input.trim() || streaming}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
           >

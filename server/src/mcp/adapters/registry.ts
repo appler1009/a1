@@ -137,7 +137,6 @@ class AdapterRegistry {
     adapterClass: typeof StdioAdapter
   ): void {
     this.adapters.set(serverKey, { type: 'stdio', adapterClass });
-    console.log(`[AdapterRegistry] Registered stdio adapter for ${serverKey}`);
   }
 
   /**
@@ -149,7 +148,6 @@ class AdapterRegistry {
     factory: InProcessModuleFactory
   ): void {
     this.adapters.set(serverKey, { type: 'in-process', factory });
-    console.log(`[AdapterRegistry] Registered in-process adapter for ${serverKey}`);
   }
 
   /**
@@ -175,7 +173,6 @@ class AdapterRegistry {
       throw new Error(`No in-process adapter registered for ${serverKey}`);
     }
 
-    console.log(`[AdapterRegistry] Creating raw module for ${serverKey}`);
     return entry.factory(userId, tokenData);
   }
 
@@ -194,8 +191,6 @@ class AdapterRegistry {
       throw new Error(`No in-process adapter registered for ${serverKey}`);
     }
 
-    console.log(`[AdapterRegistry] Creating in-process adapter for ${serverKey}`);
-    
     const module = await entry.factory(userId, tokenData);
     return new InProcessAdapter(id, userId, serverKey, module);
   }
@@ -214,9 +209,7 @@ class AdapterRegistry {
   ): BaseStdioAdapter {
     const entry = this.adapters.get(serverKey);
 
-    // If no entry or in-process, use default StdioAdapter
     if (!entry || entry.type === 'in-process') {
-      console.log(`[AdapterRegistry] Creating default stdio adapter for ${serverKey}`);
       return new StdioAdapter(
         id,
         userId,
@@ -229,7 +222,6 @@ class AdapterRegistry {
     }
 
     const AdapterClass = entry.adapterClass;
-    console.log(`[AdapterRegistry] Creating adapter for ${serverKey} using ${(AdapterClass as any).name}`);
 
     // Default instantiation for StdioAdapter
     return new (AdapterClass as any)(

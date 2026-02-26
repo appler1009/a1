@@ -548,6 +548,14 @@ export class MainDatabase {
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
   }
 
+  deleteUser(id: string): boolean {
+    // Messages don't have ON DELETE CASCADE, so delete explicitly
+    this.db.prepare('DELETE FROM messages WHERE userId = ?').run(id);
+    // Remaining tables (sessions, roles, oauth_tokens, memberships) cascade automatically
+    const result = this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    return result.changes > 0;
+  }
+
   // ============================================
   // Group Operations
   // ============================================

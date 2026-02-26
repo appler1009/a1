@@ -160,6 +160,7 @@ export class GoogleDriveInProcess implements InProcessMCPModule {
     const query = args.query ? this.convertQuerySyntax(args.query) : undefined;
     try {
       const result = await listFiles({
+        orderBy: 'modifiedTime desc',
         ...args,
         query,
         tokens: this.tokens,
@@ -258,6 +259,7 @@ export class GoogleDriveInProcess implements InProcessMCPModule {
 
     try {
       const result = await searchFiles({
+        orderBy: 'modifiedTime desc',
         ...args,
         query: convertedQuery,
         tokens: this.tokens,

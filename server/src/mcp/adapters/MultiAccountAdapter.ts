@@ -107,22 +107,29 @@ export class MultiAccountAdapter implements McpAdapter {
     if (specifiedEmail) {
       // Route to the specified account only
       const module = this.accounts.get(specifiedEmail) ?? this.accounts.get(emails[0])!;
-      console.log(`[MultiAccountAdapter:${this.serverKey}] callTool ${name} → account: ${specifiedEmail}`);
-      return this.callOneModule(module, name, restArgs);
+      const resolved = this.accounts.has(specifiedEmail) ? specifiedEmail : emails[0];
+      console.log(`[MultiAccountAdapter:${this.serverKey}] callTool ${name} → single account: ${resolved}`);
+      const result = await this.callOneModule(module, name, restArgs);
+      (result as any).accounts = [resolved];
+      return result;
     }
 
     // No account specified — fan out to all accounts in parallel
-    console.log(`[MultiAccountAdapter:${this.serverKey}] callTool ${name} → all ${emails.length} accounts`);
+    console.log(`[MultiAccountAdapter:${this.serverKey}] callTool ${name} → fan-out across ${emails.length} account(s): ${emails.join(', ')}`);
 
     const results = await Promise.all(
       emails.map(async email => {
+        console.log(`[MultiAccountAdapter:${this.serverKey}]   → calling ${name} on ${email}...`);
         const module = this.accounts.get(email)!;
         const result = await this.callOneModule(module, name, restArgs);
+        console.log(`[MultiAccountAdapter:${this.serverKey}]   ← ${email}: ${result.type}${result.type === 'error' ? ` — ${(result as any).error}` : ''}`);
         return { email, result };
       })
     );
 
-    return this.mergeResults(results);
+    const merged = this.mergeResults(results);
+    (merged as any).accounts = emails;
+    return merged;
   }
 
   // ---- Resources (not supported for multi-account) ----
