@@ -634,35 +634,53 @@ export class MCPManager {
               const accountEmail = (typedConfig as any).accountEmail as string | undefined;
               const userId = (typedConfig as any).userId as string | undefined;
 
-              try {
-                let oauthToken: any = null;
-
+              if (provider === 'alphavantage' || provider === 'twelvedata') {
+                // API key servers: read the key from mcp_servers table
                 if (userId) {
-                  // Preferred: look up by userId + provider
-                  console.log(`[MCPManager] Retrieving ${provider} token for user ${userId} for server ${serverId}`);
-                  const { authService } = await import('../auth/index.js');
-                  oauthToken = await authService.getOAuthToken(userId, provider, accountEmail);
-                } else if (accountEmail) {
-                  // Fallback: look up by accountEmail directly (no userId in legacy configs)
-                  console.log(`[MCPManager] Retrieving ${provider} token by accountEmail ${accountEmail} for server ${serverId}`);
-                  oauthToken = this.db!.getOAuthTokenByAccountEmail(provider, accountEmail);
-                }
-
-                if (oauthToken) {
-                  userToken = {
-                    access_token: oauthToken.accessToken,
-                    refresh_token: oauthToken.refreshToken,
-                    expiry_date: oauthToken.expiryDate,
-                    token_type: 'Bearer',
-                  };
-                  console.log(`[MCPManager] Successfully retrieved ${provider} token for server ${serverId}`);
+                  const baseServerId = getBaseServerId(serverId);
+                  const storedConfig = this.db!.getMCPServerConfig(`${baseServerId}:${userId}`);
+                  if (storedConfig?.apiKey) {
+                    userToken = { apiKey: storedConfig.apiKey as string };
+                    console.log(`[MCPManager] Retrieved API key for ${serverId} (userId=${userId})`);
+                  } else {
+                    console.log(`[MCPManager] No API key found for ${serverId} (userId=${userId}), skipping`);
+                    continue;
+                  }
                 } else {
-                  console.log(`[MCPManager] No ${provider} token found for server ${serverId} (userId=${userId}, accountEmail=${accountEmail}), skipping`);
+                  console.log(`[MCPManager] No userId in config for ${provider} server ${serverId}, skipping`);
                   continue;
                 }
-              } catch (error) {
-                console.error(`[MCPManager] Failed to retrieve ${provider} token for server ${serverId}:`, error);
-                continue;
+              } else {
+                try {
+                  let oauthToken: any = null;
+
+                  if (userId) {
+                    // Preferred: look up by userId + provider
+                    console.log(`[MCPManager] Retrieving ${provider} token for user ${userId} for server ${serverId}`);
+                    const { authService } = await import('../auth/index.js');
+                    oauthToken = await authService.getOAuthToken(userId, provider, accountEmail);
+                  } else if (accountEmail) {
+                    // Fallback: look up by accountEmail directly (no userId in legacy configs)
+                    console.log(`[MCPManager] Retrieving ${provider} token by accountEmail ${accountEmail} for server ${serverId}`);
+                    oauthToken = this.db!.getOAuthTokenByAccountEmail(provider, accountEmail);
+                  }
+
+                  if (oauthToken) {
+                    userToken = {
+                      access_token: oauthToken.accessToken,
+                      refresh_token: oauthToken.refreshToken,
+                      expiry_date: oauthToken.expiryDate,
+                      token_type: 'Bearer',
+                    };
+                    console.log(`[MCPManager] Successfully retrieved ${provider} token for server ${serverId}`);
+                  } else {
+                    console.log(`[MCPManager] No ${provider} token found for server ${serverId} (userId=${userId}, accountEmail=${accountEmail}), skipping`);
+                    continue;
+                  }
+                } catch (error) {
+                  console.error(`[MCPManager] Failed to retrieve ${provider} token for server ${serverId}:`, error);
+                  continue;
+                }
               }
             }
 
@@ -872,6 +890,14 @@ export class MCPManager {
     if (this.clients.has(serverId) || this.inProcessAdapters.has(serverId)) {
       // Server already exists - idempotent: just return without error
       console.log(`[MCPManager] Server ${serverId} already exists, skipping add`);
+      return;
+    }
+
+    // For non-multi-account in-process servers (e.g. alpha-vantage), start the in-process adapter
+    if (predefinedServer?.inProcess && adapterRegistry.isInProcess(baseId)) {
+      await this.startInProcessServer(predefinedServer, undefined, userToken, (config as any).userId, serverId);
+      this.configs.set(serverId, config);
+      await this.persistConfig(serverId, config);
       return;
     }
 

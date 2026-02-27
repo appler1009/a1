@@ -19,7 +19,7 @@ interface PredefinedMCPServer {
   command: string;
   args: string[];
   auth?: {
-    provider: 'google' | 'github' | 'none';
+    provider: 'google' | 'github' | 'none' | 'alphavantage' | 'twelvedata';
   };
   icon?: string;
   hidden?: boolean; // If true, won't show in UI feature list but can still be used
@@ -296,6 +296,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   const [authProvider, setAuthProvider] = React.useState<string | null>(null);
   const [connecting, setConnecting] = React.useState(false);
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [activeTab, setActiveTab] = React.useState<'features' | 'region' | 'discord'>('features');
 
   // Prevent duplicate add calls during OAuth flow
   const pendingAddRef = React.useRef<string | null>(null);
@@ -620,6 +621,34 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
       return;
     }
 
+    // API key servers: prompt for the key and POST it directly (no OAuth flow)
+    if (server.auth?.provider === 'alphavantage' || server.auth?.provider === 'twelvedata') {
+      const apiKey = prompt(`Enter your ${server.name} API key:`);
+      if (!apiKey?.trim()) {
+        setToast({ message: 'API key is required', type: 'error' });
+        return;
+      }
+      setAdding(true);
+      try {
+        const response = await apiFetch('/api/mcp/servers/add-predefined', {
+          method: 'POST',
+          body: JSON.stringify({ serverId, apiKey: apiKey.trim() }),
+        });
+        const data = await response.json();
+        if (response.ok) {
+          setToast({ message: `✅ Successfully connected ${server.name}!`, type: 'success' });
+          fetchServers();
+        } else {
+          setToast({ message: `Failed: ${data.error?.message || 'Unknown error'}`, type: 'error' });
+        }
+      } catch (error) {
+        setToast({ message: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`, type: 'error' });
+      } finally {
+        setAdding(false);
+      }
+      return;
+    }
+
     // Check if this server requires authentication
     const requiresAuth = server.auth?.provider && server.auth.provider !== 'none';
 
@@ -773,25 +802,39 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
 
   return (
     <div className="bg-background border border-border rounded-lg p-6 w-full max-w-2xl max-h-[70vh] overflow-y-auto">
-      {/* Toast notification */}
-      {toast && (
-        <div className={`mb-4 p-3 rounded-lg text-sm animate-in fade-in ${
-          toast.type === 'success'
-            ? 'bg-green-500/20 text-green-700 border border-green-300'
-            : 'bg-red-500/20 text-red-700 border border-red-300'
-        }`}>
-          {toast.message}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-semibold">Manage Features</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-semibold">Settings</h2>
         <button
-          onClick={onClose}
+          onClick={() => {
+            // Stop any ongoing OAuth polling when closing the dialog
+            if (oauthPollIntervalRef.current) {
+              clearInterval(oauthPollIntervalRef.current);
+              oauthPollIntervalRef.current = null;
+            }
+            clearOAuthState();
+            onClose();
+          }}
           className="text-muted-foreground hover:text-foreground"
         >
           ✕
         </button>
+      </div>
+
+      {/* Tab bar */}
+      <div className="flex gap-1 mb-5 border-b border-border">
+        {(['features', 'region', 'discord'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-4 py-2 text-sm font-medium capitalize rounded-t transition-colors ${
+              activeTab === tab
+                ? 'border-b-2 border-primary text-foreground -mb-px'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {tab === 'region' ? 'Region' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+          </button>
+        ))}
       </div>
 
       {connecting ? (
@@ -837,123 +880,113 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
         </div>
       ) : (
         <>
-          {/* Current Features — grouped by service */}
-          {groupedServers.size > 0 && (
-            <div className="mb-6">
-              <h3 className="text-sm font-semibold mb-3">Active Features</h3>
-              <div className="space-y-2">
-                {Array.from(groupedServers.entries()).map(([baseId, groupServers]) => {
-                  const displayName = groupServers[0]?.name || baseId;
-                  const isMultiAccount = groupServers.some(s => (s.id || '').includes('~'));
-                  const predefined = predefinedServers.find(p => p.id === baseId);
-                  const supportsMultiAccount = predefined?.auth?.provider && predefined.auth.provider !== 'none';
+          {/* Features tab */}
+          {activeTab === 'features' && (
+            <>
+              {/* Active Features */}
+              {groupedServers.size > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-sm font-semibold mb-3">Active Features</h3>
+                  <div className="space-y-2">
+                    {Array.from(groupedServers.entries()).map(([baseId, groupServers]) => {
+                      const displayName = groupServers[0]?.name || baseId;
+                      const isMultiAccount = groupServers.some(s => (s.id || '').includes('~'));
+                      const predefined = predefinedServers.find(p => p.id === baseId);
+                      const supportsMultiAccount = predefined?.auth?.provider && predefined.auth.provider !== 'none';
 
-                  return (
-                    <div key={baseId} className="border border-border rounded-lg overflow-hidden">
-                      {/* Service header row */}
-                      <div className="flex items-center justify-between px-3 py-2 bg-muted/30">
-                        <h4 className="font-semibold text-sm">{displayName}</h4>
-                        {isMultiAccount && supportsMultiAccount ? (
-                          <button
-                            onClick={() => handleAddServer(baseId)}
-                            disabled={adding}
-                            className="text-xs text-blue-600 hover:underline disabled:opacity-50 whitespace-nowrap"
-                          >
-                            + Add account
-                          </button>
-                        ) : !isMultiAccount ? (
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => handleToggleServer(groupServers[0].id!)}
-                              className="px-2 py-1 text-xs bg-blue-500/20 text-blue-600 rounded hover:bg-blue-500/30 whitespace-nowrap"
-                            >
-                              {groupServers[0].enabled ? 'Disable' : 'Enable'}
-                            </button>
-                            <button
-                              onClick={() => handleRemoveServer(groupServers[0].id!)}
-                              className="px-2 py-1 text-xs bg-red-500/20 text-red-600 rounded hover:bg-red-500/30 whitespace-nowrap"
-                            >
-                              Remove
-                            </button>
+                      return (
+                        <div key={baseId} className="border border-border rounded-lg overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 bg-muted/30">
+                            <h4 className="font-semibold text-sm">{displayName}</h4>
+                            {isMultiAccount && supportsMultiAccount ? (
+                              <button
+                                onClick={() => handleAddServer(baseId)}
+                                disabled={adding}
+                                className="text-xs text-blue-600 hover:underline disabled:opacity-50 whitespace-nowrap"
+                              >
+                                + Add account
+                              </button>
+                            ) : !isMultiAccount ? (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => handleToggleServer(groupServers[0].id!)}
+                                  className="px-2 py-1 text-xs bg-blue-500/20 text-blue-600 rounded hover:bg-blue-500/30 whitespace-nowrap"
+                                >
+                                  {groupServers[0].enabled ? 'Disable' : 'Enable'}
+                                </button>
+                                <button
+                                  onClick={() => handleRemoveServer(groupServers[0].id!)}
+                                  className="px-2 py-1 text-xs bg-red-500/20 text-red-600 rounded hover:bg-red-500/30 whitespace-nowrap"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
-                        ) : null}
-                      </div>
-                      {/* Account rows (for multi-account services) */}
-                      {isMultiAccount && groupServers.map(server => {
-                        const accountEmail = server.config?.accountEmail || server.id?.split('~')[1];
-                        return (
-                          <div key={server.id} className="flex items-center justify-between px-3 py-1.5 border-t border-border/50">
-                            <span className="text-xs text-muted-foreground">{accountEmail || server.id}</span>
-                            <button
-                              onClick={() => handleRemoveServer(server.id!)}
-                              className="px-2 py-1 text-xs bg-red-500/20 text-red-600 rounded hover:bg-red-500/30 whitespace-nowrap"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        );
-                      })}
+                          {isMultiAccount && groupServers.map(server => {
+                            const accountEmail = server.config?.accountEmail || server.id?.split('~')[1];
+                            return (
+                              <div key={server.id} className="flex items-center justify-between px-3 py-1.5 border-t border-border/50">
+                                <span className="text-xs text-muted-foreground">{accountEmail || server.id}</span>
+                                <button
+                                  onClick={() => handleRemoveServer(server.id!)}
+                                  className="px-2 py-1 text-xs bg-red-500/20 text-red-600 rounded hover:bg-red-500/30 whitespace-nowrap"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <hr className="my-4" />
+                </div>
+              )}
+
+              {/* Available Features */}
+              <h3 className="text-sm font-semibold mb-3">Available Features</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {predefinedServers.map((server) => (
+                  <button
+                    key={server.id}
+                    onClick={() => handleAddServer(server.id)}
+                    disabled={adding}
+                    className="p-4 text-left border border-border rounded-lg hover:bg-muted/50 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                  >
+                    <div className="mb-2">
+                      <h4 className="font-semibold text-sm">{server.name}</h4>
+                      {server.auth?.provider && server.auth.provider !== 'none' && (
+                        <span className="inline-block text-xs bg-blue-500/20 text-blue-600 px-2 py-1 rounded mt-1">
+                          🔐 {server.auth.provider}
+                        </span>
+                      )}
                     </div>
-                  );
-                })}
+                    <p className="text-xs text-muted-foreground">{server.description}</p>
+                  </button>
+                ))}
               </div>
-              <hr className="my-4" />
+            </>
+          )}
+
+          {/* Region tab */}
+          {activeTab === 'region' && (
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold mb-3">Locale & Timezone</h3>
+              <LocaleTimezoneSettings />
             </div>
           )}
 
-          {/* Locale & Timezone */}
-          <div className="mb-6">
-            <h3 className="text-sm font-semibold mb-3">Locale & Timezone</h3>
-            <LocaleTimezoneSettings />
-          </div>
-
-          {/* Discord Integration */}
-          <div className="mb-6">
-            <h3 className="text-sm font-semibold mb-3">Discord Integration</h3>
-            <DiscordSettings onUpdate={fetchServers} />
-          </div>
-
-          {/* Available Features */}
-          <h3 className="text-sm font-semibold mb-3">Available Features</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {predefinedServers.map((server) => (
-              <button
-                key={server.id}
-                onClick={() => handleAddServer(server.id)}
-                disabled={adding}
-                className="p-4 text-left border border-border rounded-lg hover:bg-muted/50 transition-colors disabled:opacity-50 disabled:cursor-wait"
-              >
-                <div className="mb-2">
-                  <h4 className="font-semibold text-sm">{server.name}</h4>
-                  {server.auth?.provider && server.auth.provider !== 'none' && (
-                    <span className="inline-block text-xs bg-blue-500/20 text-blue-600 px-2 py-1 rounded mt-1">
-                      🔐 {server.auth.provider}
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">{server.description}</p>
-              </button>
-            ))}
-          </div>
+          {/* Discord tab */}
+          {activeTab === 'discord' && (
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold mb-3">Discord Integration</h3>
+              <DiscordSettings onUpdate={fetchServers} />
+            </div>
+          )}
         </>
       )}
-
-      <div className="flex gap-2 mt-6 pt-4 border-t border-border">
-        <button
-          onClick={() => {
-            // Stop any ongoing OAuth polling when closing the dialog
-            if (oauthPollIntervalRef.current) {
-              clearInterval(oauthPollIntervalRef.current);
-              oauthPollIntervalRef.current = null;
-            }
-            clearOAuthState();
-            onClose();
-          }}
-          className="flex-1 px-4 py-2 bg-muted rounded-lg hover:bg-muted/80"
-        >
-          Close
-        </button>
-      </div>
     </div>
   );
 }

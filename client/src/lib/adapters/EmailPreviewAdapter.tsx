@@ -134,9 +134,34 @@ function EmailBody({ email }: { email: EmailMessage }) {
             border: none !important;
             border-collapse: collapse;
           }
+          .email-html-body {
+            color: inherit !important;
+            font-family: inherit !important;
+          }
+          .email-html-body * {
+            color: inherit !important;
+            font-family: inherit !important;
+          }
+          .email-html-body h1,
+          .email-html-body h2,
+          .email-html-body h3,
+          .email-html-body h4,
+          .email-html-body h5,
+          .email-html-body h6 {
+            font-weight: 600;
+            margin-top: 0.75rem;
+            margin-bottom: 0.5rem;
+          }
+          .email-html-body a {
+            color: hsl(var(--primary)) !important;
+            text-decoration: underline;
+          }
+          .email-html-body a:hover {
+            opacity: 0.8;
+          }
         `}</style>
         <div
-          className="email-html-body prose prose-sm dark:prose-invert max-w-none p-4 leading-[2]"
+          className="email-html-body max-w-none p-4 text-base leading-relaxed"
           dangerouslySetInnerHTML={{ __html: processedHtml }}
           // WARNING: dangerouslySetInnerHTML can be a security risk
           // Only use if email content is from a trusted source
@@ -147,7 +172,7 @@ function EmailBody({ email }: { email: EmailMessage }) {
 
   // Plain text - render as markdown for formatting
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none p-4 leading-[2]">
+    <div className="max-w-none p-4 text-base leading-relaxed">
       <ReactMarkdown
         components={{
           a: ({ href, children }) => (

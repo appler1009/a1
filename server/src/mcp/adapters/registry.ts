@@ -9,6 +9,8 @@ import { GmailInProcess } from '../in-process/gmail.js';
 import { DisplayEmailInProcess } from '../in-process/display-email.js';
 import { ProcessEachInProcess } from '../in-process/process-each.js';
 import { RoleManagerInProcess } from '../in-process/role-manager.js';
+import { AlphaVantageInProcess } from '../in-process/alpha-vantage.js';
+import { TwelveDataInProcess } from '../in-process/twelve-data.js';
 import { getMainDatabase } from '../../storage/index.js';
 
 /**
@@ -123,6 +125,30 @@ class AdapterRegistry {
     this.registerInProcess('Role Manager', (userId: string) => {
       const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
       return new RoleManagerInProcess(userId, mainDb);
+    });
+
+    // Alpha Vantage - in-process financial data (requires API key)
+    this.registerInProcess('alpha-vantage', (_userId: string, tokenData?: any) => {
+      const apiKey = tokenData?.apiKey;
+      if (!apiKey) throw new Error('Alpha Vantage API key not configured');
+      return new AlphaVantageInProcess(apiKey);
+    });
+    this.registerInProcess('Alpha Vantage', (_userId: string, tokenData?: any) => {
+      const apiKey = tokenData?.apiKey;
+      if (!apiKey) throw new Error('Alpha Vantage API key not configured');
+      return new AlphaVantageInProcess(apiKey);
+    });
+
+    // Twelve Data - in-process financial data (requires API key)
+    this.registerInProcess('twelve-data', (_userId: string, tokenData?: any) => {
+      const apiKey = tokenData?.apiKey;
+      if (!apiKey) throw new Error('Twelve Data API key not configured');
+      return new TwelveDataInProcess(apiKey);
+    });
+    this.registerInProcess('Twelve Data', (_userId: string, tokenData?: any) => {
+      const apiKey = tokenData?.apiKey;
+      if (!apiKey) throw new Error('Twelve Data API key not configured');
+      return new TwelveDataInProcess(apiKey);
     });
 
     // Future: this.register('github', GithubAdapter);

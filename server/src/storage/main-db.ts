@@ -35,6 +35,21 @@ export interface OAuthTokenEntry {
 }
 
 /**
+ * Skill record stored in the skills table
+ */
+export interface SkillRecord {
+  id: string;
+  name: string;
+  description?: string;
+  content: string;
+  type: string;
+  config?: Record<string, unknown>;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
  * Main database schema for user registration and role mapping
  * This is the central database that maps users to their roles
  * Each role has its own separate SQLite database for complete isolation
@@ -184,6 +199,19 @@ export class MainDatabase {
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      );
+
+      -- Skills table (text documentation for AI capabilities / MCP tools)
+      CREATE TABLE IF NOT EXISTS skills (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        content TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'mcp-in-process',
+        config TEXT,
+        enabled INTEGER DEFAULT 1,
+        createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL
       );
     `);
@@ -1362,6 +1390,106 @@ export class MainDatabase {
       }
     }
     return result;
+  }
+
+  // ============================================
+  // Skills Operations
+  // ============================================
+
+  upsertSkill(skill: {
+    id: string;
+    name: string;
+    description?: string;
+    content: string;
+    type?: string;
+    config?: Record<string, unknown>;
+    enabled?: boolean;
+  }): void {
+    const now = new Date().toISOString();
+    const configJson = skill.config ? JSON.stringify(skill.config) : null;
+    const enabled = skill.enabled !== false ? 1 : 0;
+    const type = skill.type || 'mcp-in-process';
+
+    this.db.prepare(`
+      INSERT INTO skills (id, name, description, content, type, config, enabled, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        description = excluded.description,
+        content = excluded.content,
+        type = excluded.type,
+        config = excluded.config,
+        enabled = excluded.enabled,
+        updatedAt = excluded.updatedAt
+    `).run(
+      skill.id,
+      skill.name,
+      skill.description || null,
+      skill.content,
+      type,
+      configJson,
+      enabled,
+      now,
+      now
+    );
+  }
+
+  getSkill(id: string): SkillRecord | null {
+    const row = this.db.prepare('SELECT * FROM skills WHERE id = ?').get(id) as {
+      id: string;
+      name: string;
+      description: string | null;
+      content: string;
+      type: string;
+      config: string | null;
+      enabled: number;
+      createdAt: string;
+      updatedAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description || undefined,
+      content: row.content,
+      type: row.type,
+      config: row.config ? JSON.parse(row.config) : undefined,
+      enabled: row.enabled === 1,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    };
+  }
+
+  listSkills(enabledOnly = false): SkillRecord[] {
+    const query = enabledOnly
+      ? 'SELECT * FROM skills WHERE enabled = 1 ORDER BY name'
+      : 'SELECT * FROM skills ORDER BY name';
+
+    const rows = this.db.prepare(query).all() as Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      content: string;
+      type: string;
+      config: string | null;
+      enabled: number;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      description: row.description || undefined,
+      content: row.content,
+      type: row.type,
+      config: row.config ? JSON.parse(row.config) : undefined,
+      enabled: row.enabled === 1,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    }));
   }
 
   // ============================================

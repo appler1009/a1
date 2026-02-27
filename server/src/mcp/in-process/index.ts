@@ -12,3 +12,5 @@ export { MetaMcpSearchInProcess, updateToolManifest, searchTools, isSearchEngine
 export { DisplayEmailInProcess, getDisplayEmailToolDefinition, isDisplayEmailMarker, extractEmailDataFromMarker } from './display-email.js';
 export { GmailInProcess } from './gmail.js';
 export { RoleManagerInProcess } from './role-manager.js';
+export { AlphaVantageInProcess } from './alpha-vantage.js';
+export { TwelveDataInProcess } from './twelve-data.js';

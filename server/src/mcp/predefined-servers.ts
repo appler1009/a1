@@ -12,7 +12,7 @@ export interface PredefinedMCPServer {
   args: string[];
   env?: Record<string, string>;
   auth?: {
-    provider: 'google' | 'github' | 'none';
+    provider: 'google' | 'github' | 'none' | 'alphavantage' | 'twelvedata';
     credentialsFilename?: string;
     tokenFilename?: string;
   };
@@ -162,6 +162,32 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     },
     hidden: true, // Hidden from UI - system tool for role switching
     inProcess: true, // Use InProcessAdapter for direct function calls
+  },
+
+  {
+    id: 'alpha-vantage',
+    name: 'Alpha Vantage',
+    description: 'Real-time and historical financial data: stocks, forex, crypto, commodities, economic indicators, and 50+ technical indicators. Requires a free API key from alphavantage.co.',
+    command: '',
+    args: [],
+    auth: {
+      provider: 'alphavantage',
+    },
+    icon: 'trending-up',
+    inProcess: true,
+  },
+
+  {
+    id: 'twelve-data',
+    name: 'Twelve Data',
+    description: 'Professional-grade financial market data: real-time quotes, historical OHLCV, fundamentals, earnings, dividends, financial statements. Covers 1M+ stocks, ETFs, crypto, and forex. Free tier with API key from twelvedata.com.',
+    command: '',
+    args: [],
+    auth: {
+      provider: 'twelvedata',
+    },
+    icon: 'trending-up',
+    inProcess: true,
   },
 
   // DISABLED: Testing email preview with cache IDs instead

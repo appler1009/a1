@@ -5,7 +5,7 @@ import { S3StorageAdapter } from './s3-adapter.js';
 import type { IStorage, IMessageStorage, ChatMessageEntry } from './interface.js';
 
 // Export main storage
-export { MainDatabase, getMainDatabase, closeMainDatabase, type RoleDefinition, type OAuthTokenEntry } from './main-db.js';
+export { MainDatabase, getMainDatabase, closeMainDatabase, type RoleDefinition, type OAuthTokenEntry, type SkillRecord } from './main-db.js';
 export { migrateToRoleBasedStorage, autoMigrate } from './migrate.js';
 
 export type { IStorage, IMessageStorage, ChatMessageEntry };

@@ -17,7 +17,7 @@ import fastifyStatic from '@fastify/static';
 import { v4 as uuidv4 } from 'uuid';
 import type { User, Session } from '@local-agent/shared';
 import { createStorage, autoMigrate, getMainDatabase } from './storage/index.js';
-import type { RoleDefinition } from './storage/index.js';
+import type { RoleDefinition, MainDatabase } from './storage/index.js';
 import { createLLMRouter } from './ai/router.js';
 import { mcpManager, getMcpAdapter, closeUserAdapters, listPredefinedServers, getPredefinedServer, requiresAuth, PREDEFINED_MCP_SERVERS } from './mcp/index.js';
 import { authRoutes } from './api/auth.js';
@@ -218,6 +218,111 @@ async function initializeDefaultSettings(): Promise<void> {
       mainDb.setSetting(key, value);
     }
   }
+}
+
+const ALPHA_VANTAGE_API_REFERENCE = `# Alpha Vantage Financial Data API Reference
+
+Alpha Vantage provides real-time and historical financial data via REST API.
+Base URL: https://www.alphavantage.co/query
+Free API key required: https://www.alphavantage.co/support/#api-key
+
+## Core Stock Data
+
+### GLOBAL_QUOTE
+Latest price, volume, and change for a stock.
+Parameters: symbol (required)
+Returns: open, high, low, price, volume, previous close, change, change percent
+
+### TIME_SERIES_DAILY
+Daily OHLCV time series for a stock.
+Parameters: symbol (required), outputsize (compact=100 points, full=20+ years)
+Returns: daily open, high, low, close, volume
+
+### TIME_SERIES_INTRADAY
+Intraday OHLCV time series.
+Parameters: symbol (required), interval (1min/5min/15min/30min/60min), outputsize
+Returns: intraday bars at specified interval
+
+## Search & Discovery
+
+### SYMBOL_SEARCH
+Search for stock symbols and company names.
+Parameters: keywords (required)
+Returns: matching symbols, names, regions, and types
+
+## Market Intelligence
+
+### NEWS_SENTIMENT
+News articles with sentiment scores for stocks or topics.
+Parameters: tickers (optional), topics (optional), time_from, time_to, limit
+Topics: earnings, ipo, mergers_and_acquisitions, financial_markets, economy_fiscal,
+        economy_monetary, economy_macro, energy_transportation, finance, life_sciences,
+        manufacturing, real_estate, retail_wholesale, technology
+Returns: articles with title, url, source, summary, sentiment scores per ticker
+
+### TOP_GAINERS_LOSERS
+Top gaining, losing, and most active US stocks for the current trading day.
+Parameters: none
+Returns: top_gainers, top_losers, most_actively_traded arrays with price/volume data
+
+## Fundamentals
+
+### COMPANY_OVERVIEW
+Complete fundamental data for a company.
+Parameters: symbol (required)
+Returns: description, sector, industry, market cap, P/E ratio, EPS, dividend yield,
+         52-week high/low, 50-day and 200-day moving averages, book value, beta, and 50+ more
+
+### EARNINGS
+Quarterly and annual EPS history.
+Parameters: symbol (required)
+Returns: annualEarnings and quarterlyEarnings arrays with reported/estimated EPS and surprise
+
+## Foreign Exchange (Forex)
+
+### CURRENCY_EXCHANGE_RATE
+Real-time exchange rate between any two currencies or crypto.
+Parameters: from_currency (e.g. USD, EUR, BTC), to_currency (e.g. JPY, GBP, ETH)
+Returns: exchange rate, bid/ask prices, last refreshed timestamp
+
+## Economic Indicators
+
+### REAL_GDP
+US real gross domestic product.
+Parameters: interval (annual or quarterly)
+Returns: time series of real GDP values in billions of USD
+
+### CPI
+US Consumer Price Index (inflation measure).
+Parameters: interval (monthly or semiannual)
+Returns: time series of CPI values (base year 1982-1984 = 100)
+
+### WTI
+West Texas Intermediate crude oil prices.
+Parameters: interval (daily, weekly, or monthly)
+Returns: time series of WTI crude oil prices in USD per barrel
+
+## Rate Limits
+Free tier: 25 API calls per day, 5 per minute.
+For higher limits, see https://www.alphavantage.co/premium/
+
+## Common Error Responses
+- "Error Message": Invalid API call (bad function name or parameters)
+- "Information": API rate limit exceeded
+- "Note": Occasional API rate limit note (data may still be returned)
+`;
+
+/**
+ * Seed skills into the database on startup
+ */
+function seedSkills(mainDb: MainDatabase): void {
+  mainDb.upsertSkill({
+    id: 'alpha-vantage',
+    name: 'Alpha Vantage',
+    description: 'Financial data API: stocks, forex, crypto, commodities, economic indicators, technical indicators.',
+    content: ALPHA_VANTAGE_API_REFERENCE,
+    type: 'mcp-in-process',
+  });
 }
 
 /**
@@ -1961,6 +2066,20 @@ When showing email search results from gmailSearchMessages:
   - Brief preview/snippet if available
 - **IMPORTANT**: Any emails shown as links in your response MUST be downloaded using gmailGetMessage - never show raw email data or message IDs as links. Always use the cache-id from gmailGetMessage responses.
 
+## GMAIL EMAIL DRAFT CREATION
+**CRITICAL RULES for gmailCreateDraft:**
+1. **ALWAYS show the exact draft to the user BEFORE and AFTER creation:**
+   - Display the full draft with: To, Subject, and complete Body text
+   - Show exactly what will be saved to drafts
+   - Never paraphrase or summarize the draft content
+2. **When replying to an email:**
+   - ONLY create the draft to the same email account that received the original email
+   - If the original email was sent to user@example.com, create the draft replying to that address
+   - Do NOT create drafts to different accounts unless explicitly requested
+3. **Draft content verification:**
+   - Format the draft display clearly with labeled sections
+   - Verify subject, body, and recipient(s) match what the user intended
+
 ${roleSection}${accountsSection}## MEMORY SYSTEM
 You have access to a knowledge graph memory system with the following tools:
 - **memory_search_nodes**: Search for relevant entities, relationships, and observations by query (e.g., "customer preferences", "project decisions")
@@ -3003,7 +3122,7 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
-    const { serverId, accountEmail } = request.body as { serverId: string; accountEmail?: string };
+    const { serverId, accountEmail, apiKey } = request.body as { serverId: string; accountEmail?: string; apiKey?: string };
     console.log(`[AddPredefinedServer:${requestId}] serverId: ${serverId}, accountEmail: ${accountEmail || 'auto'}`);
 
     if (!serverId) {
@@ -3058,6 +3177,23 @@ fastify.register(async (instance) => {
           console.log(`[AddPredefinedServer:${requestId}] OAuth token found (account: ${oauthToken.accountEmail})`);
         }
         // Add other auth providers as needed
+        if (predefinedServer.auth?.provider === 'alphavantage' || predefinedServer.auth?.provider === 'twelvedata') {
+          if (!apiKey) {
+            return reply.code(400).send({
+              success: false,
+              error: {
+                code: 'NO_API_KEY',
+                message: `${predefinedServer.name} requires an API key. Please provide apiKey in the request.`,
+                authRequired: true,
+                authProvider: predefinedServer.auth.provider,
+              },
+            });
+          }
+          // Store the API key in mcp_servers under serverId:userId
+          const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+          mainDb.saveMCPServerConfig(`${serverId}:${request.user.id}`, { apiKey });
+          console.log(`[AddPredefinedServer:${requestId}] Stored API key for ${serverId}:${request.user.id}`);
+        }
       }
 
       // Create config from predefined server
@@ -3098,6 +3234,9 @@ fastify.register(async (instance) => {
           };
           console.log(`[AddPredefinedServer:${requestId}] Using user-level token (account: ${oauthToken.accountEmail})`);
         }
+      } else if ((config.auth?.provider === 'alphavantage' || config.auth?.provider === 'twelvedata') && apiKey) {
+        userToken = { apiKey };
+        console.log(`[AddPredefinedServer:${requestId}] Using API key for ${serverId}`);
       }
 
       // Add server via MCPManager
@@ -3379,6 +3518,37 @@ fastify.register(async (instance) => {
   });
 }, { prefix: '/api' });
 
+// Skills routes
+fastify.register(async (instance) => {
+  // List all skills (content omitted for brevity in list)
+  instance.get('/skills', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const skills = mainDb.listSkills();
+    // Omit content from list for bandwidth reasons
+    const summary = skills.map(({ content: _content, ...rest }) => rest);
+    return reply.send({ success: true, data: summary });
+  });
+
+  // Get a single skill with full content
+  instance.get('/skills/:id', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const { id } = request.params as { id: string };
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const skill = mainDb.getSkill(id);
+    if (!skill) {
+      return reply.code(404).send({ success: false, error: { message: 'Skill not found' } });
+    }
+    return reply.send({ success: true, data: skill });
+  });
+}, { prefix: '/api' });
+
 // Gmail attachment download proxy
 fastify.register(async (instance) => {
   // All IDs come as query params to avoid Fastify's 100-char maxParamLength limit
@@ -3498,6 +3668,10 @@ const start = async () => {
     // Initialize default settings
     await initializeDefaultSettings();
     fastify.log.info('Default settings initialized');
+
+    // Seed skills
+    seedSkills(mainDb);
+    fastify.log.info('Skills seeded');
 
     // Initialize auth service
     await authService.initialize();

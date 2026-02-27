@@ -230,6 +230,13 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
     const predefinedServer = getPredefinedServer(baseServerId);
     if (predefinedServer?.auth?.provider === 'google') {
       tokenData = await getGoogleTokenData(userId);
+    } else if (predefinedServer?.auth?.provider === 'alphavantage' || predefinedServer?.auth?.provider === 'twelvedata') {
+      const mainDb = getMainDatabase();
+      const storedConfig = mainDb.getMCPServerConfig(`${baseServerId}:${userId}`);
+      if (!storedConfig?.apiKey) {
+        throw new Error(`API key not configured for ${baseServerId}. Please connect in Settings.`);
+      }
+      tokenData = { apiKey: storedConfig.apiKey as string };
     }
 
     const adapter = await adapterRegistry.createInProcess(baseServerId, userId, `mcp-${serverKey}`, tokenData);
