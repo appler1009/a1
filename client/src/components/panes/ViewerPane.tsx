@@ -188,6 +188,91 @@ function DiscordSettings({ onUpdate: _onUpdate }: DiscordSettingsProps) {
   );
 }
 
+function AccountSettings() {
+  const { user } = useAuthStore();
+  const [displayName, setDisplayName] = React.useState(user?.name || '');
+  const [loading, setLoading] = React.useState(false);
+  const [savedMessage, setSavedMessage] = React.useState('');
+
+  React.useEffect(() => {
+    setDisplayName(user?.name || '');
+  }, [user?.name]);
+
+  const handleSave = async () => {
+    setLoading(true);
+    try {
+      const response = await apiFetch('/api/auth/me', {
+        method: 'PATCH',
+        body: JSON.stringify({ name: displayName }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setSavedMessage('Name saved successfully');
+        if (data.data.user) {
+          useAuthStore.getState().setUser(data.data.user);
+        }
+        setTimeout(() => setSavedMessage(''), 3000);
+      } else {
+        setSavedMessage('Failed to save name');
+        setTimeout(() => setSavedMessage(''), 3000);
+      }
+    } catch {
+      setSavedMessage('Error saving name');
+      setTimeout(() => setSavedMessage(''), 3000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-4 border border-border rounded-lg bg-muted/20">
+      <p className="text-sm text-muted-foreground mb-3">
+        Manage your account information.
+      </p>
+      <div className="space-y-3">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground block mb-1">
+            Display Name
+          </label>
+          <input
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="Your display name"
+            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground block mb-1">
+            Email
+          </label>
+          <input
+            type="email"
+            value={user?.email || ''}
+            disabled
+            className="w-full px-3 py-2 bg-muted border border-border rounded-lg text-sm opacity-60 cursor-not-allowed"
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Email cannot be changed
+          </p>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={loading}
+          className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-wait text-sm font-medium"
+        >
+          {loading ? 'Saving...' : 'Save'}
+        </button>
+        {savedMessage && (
+          <p className={`text-xs ${savedMessage.includes('success') ? 'text-green-600' : 'text-red-600'}`}>
+            {savedMessage}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LocaleTimezoneSettings() {
   const { user } = useAuthStore();
   const detectedLocale = navigator.language;
@@ -296,7 +381,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   const [authProvider, setAuthProvider] = React.useState<string | null>(null);
   const [connecting, setConnecting] = React.useState(false);
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [activeTab, setActiveTab] = React.useState<'features' | 'region' | 'discord'>('features');
+  const [activeTab, setActiveTab] = React.useState<'features' | 'region' | 'discord' | 'account'>('features');
 
   // Prevent duplicate add calls during OAuth flow
   const pendingAddRef = React.useRef<string | null>(null);
@@ -822,7 +907,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
 
       {/* Tab bar */}
       <div className="flex gap-1 mb-5 border-b border-border">
-        {(['features', 'region', 'discord'] as const).map((tab) => (
+        {(['account', 'features', 'region', 'discord'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -880,6 +965,14 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
         </div>
       ) : (
         <>
+          {/* Account tab */}
+          {activeTab === 'account' && (
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold mb-3">Account</h3>
+              <AccountSettings />
+            </div>
+          )}
+
           {/* Features tab */}
           {activeTab === 'features' && (
             <>

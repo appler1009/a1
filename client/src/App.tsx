@@ -17,6 +17,25 @@ function MainApp() {
   const { showMcpManager, setShowMcpManager } = useUIStore();
   const { currentRole, rolesLoaded } = useRolesStore();
 
+  // Handle keyboard shortcuts: CMD+SHIFT+, to open Settings, ESC to close
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+      const isSettingsShortcut = (isMac ? e.metaKey : e.ctrlKey) && e.shiftKey && e.key === ',';
+
+      if (isSettingsShortcut) {
+        e.preventDefault();
+        setShowMcpManager(true);
+      } else if (e.key === 'Escape' && showMcpManager) {
+        e.preventDefault();
+        setShowMcpManager(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [setShowMcpManager, showMcpManager]);
+
   if (!user) {
     return <Navigate to="/login" replace />;
   }
