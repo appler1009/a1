@@ -7,11 +7,13 @@ import {
   ChevronDown,
   ChevronRight,
   Users,
-  Brain
+  Brain,
+  Clock
 } from 'lucide-react';
 import { useAuthStore, useRolesStore, useUIStore, useEnvironmentStore } from '../store';
 import { CreateRoleDialog } from './CreateRoleDialog';
 import { MemoryOverviewDialog } from './MemoryOverviewDialog';
+import { ScheduledJobsDialog } from './ScheduledJobsDialog';
 import { LoadingOverlay } from './LoadingOverlay';
 import { apiFetch } from '../lib/api';
 
@@ -23,7 +25,7 @@ export function Sidebar() {
 
   const { user, currentGroup, groups, setCurrentGroup, logout } = useAuthStore();
   const { roles, currentRole, switchRole, addRole } = useRolesStore();
-  const { sidebarOpen, toggleSidebar, setShowMcpManager, roleSwitching, setRoleSwitching } = useUIStore();
+  const { sidebarOpen, toggleSidebar, setShowMcpManager, showScheduledJobs, setShowScheduledJobs, roleSwitching, setRoleSwitching } = useUIStore();
   const environment = useEnvironmentStore((state) => state.environment);
 
   useEffect(() => {
@@ -203,7 +205,7 @@ export function Sidebar() {
                 </span>
               </div>
             )}
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 pb-2">
               <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
                 <span className="text-sm font-medium">
                   {user?.name?.[0] || user?.email?.[0] || '?'}
@@ -221,7 +223,17 @@ export function Sidebar() {
           </>
         )}
 
-        <div className={`flex ${sidebarOpen ? 'items-center gap-2' : 'flex-col gap-2'}`}>
+        <div className="border-t border-border my-2" />
+
+        <div className="flex flex-col gap-1">
+          <button
+            onClick={() => setShowScheduledJobs(true)}
+            className="p-2 hover:bg-muted rounded-lg flex items-center gap-2 text-sm"
+            title="Scheduled Jobs"
+          >
+            <Clock className="w-4 h-4" />
+            {sidebarOpen && <span>Scheduled</span>}
+          </button>
           <button
             onClick={() => setShowMcpManager(true)}
             className="p-2 hover:bg-muted rounded-lg flex items-center gap-2 text-sm"
@@ -250,6 +262,10 @@ export function Sidebar() {
       <MemoryOverviewDialog
         role={memoryDialogRole}
         onClose={() => setMemoryDialogRole(null)}
+      />
+      <ScheduledJobsDialog
+        open={showScheduledJobs}
+        onClose={() => setShowScheduledJobs(false)}
       />
     </div>
     </>

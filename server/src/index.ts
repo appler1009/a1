@@ -24,6 +24,8 @@ import { authRoutes } from './api/auth.js';
 import { authService } from './auth/index.js';
 import { GoogleOAuthHandler } from './auth/google-oauth.js';
 import { startDiscordBot } from './discord/bot.js';
+import { JobRunner } from './scheduler/job-runner.js';
+import { Scheduler } from './scheduler/scheduler.js';
 import fs from 'fs';
 
 // Configuration
@@ -187,6 +189,9 @@ const fastify = Fastify({
 
 // Global LLM router instance
 let llmRouter: ReturnType<typeof createLLMRouter>;
+
+// Global scheduler instance
+let scheduler: Scheduler | null = null;
 
 // Global storage instance - initialized before routes (deprecated, kept for backward compatibility)
 const storage = createStorage({
@@ -3636,6 +3641,79 @@ fastify.register(async (instance) => {
       return reply.code(500).send({ success: false, error: { message: 'Failed to download attachment' } });
     }
   });
+
+  // ============================================
+  // Scheduled Jobs API
+  // ============================================
+
+  // List scheduled jobs
+  instance.get('/scheduled-jobs', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+    const query = request.query as { status?: string; roleId?: string };
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const jobs = mainDb.listScheduledJobs(request.user.id, {
+      status: query.status,
+      roleId: query.roleId,
+    });
+    return reply.send({ success: true, data: jobs.map(j => ({
+      id: j.id,
+      userId: j.userId,
+      roleId: j.roleId,
+      description: j.description,
+      scheduleType: j.scheduleType,
+      status: j.status,
+      runAt: j.runAt?.toISOString() ?? null,
+      lastRunAt: j.lastRunAt?.toISOString() ?? null,
+      lastError: j.lastError,
+      runCount: j.runCount,
+      createdAt: j.createdAt.toISOString(),
+      updatedAt: j.updatedAt.toISOString(),
+    })) });
+  });
+
+  // Get a single scheduled job
+  instance.get('/scheduled-jobs/:id', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+    const { id } = request.params as { id: string };
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const job = mainDb.getScheduledJob(id);
+    if (!job || job.userId !== request.user.id) {
+      return reply.code(404).send({ success: false, error: { message: 'Job not found' } });
+    }
+    return reply.send({ success: true, data: {
+      id: job.id,
+      userId: job.userId,
+      roleId: job.roleId,
+      description: job.description,
+      scheduleType: job.scheduleType,
+      status: job.status,
+      runAt: job.runAt?.toISOString() ?? null,
+      lastRunAt: job.lastRunAt?.toISOString() ?? null,
+      lastError: job.lastError,
+      runCount: job.runCount,
+      createdAt: job.createdAt.toISOString(),
+      updatedAt: job.updatedAt.toISOString(),
+    } });
+  });
+
+  // Cancel a scheduled job
+  instance.delete('/scheduled-jobs/:id', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+    const { id } = request.params as { id: string };
+    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const cancelled = mainDb.cancelScheduledJob(id, request.user.id);
+    if (!cancelled) {
+      return reply.code(404).send({ success: false, error: { message: 'Job not found or cannot be cancelled' } });
+    }
+    return reply.send({ success: true });
+  });
+
 }, { prefix: '/api' });
 
 // Start server
@@ -3689,6 +3767,12 @@ const start = async () => {
     llmRouter = createLLMRouter(config.llm);
     fastify.log.info({ provider: config.llm.provider, hasGrokKey: !!config.llm.grokKey }, 'LLM router initialized');
 
+    // Initialize and start scheduler
+    const jobRunner = new JobRunner(llmRouter, mainDb, executeToolWithAdapters);
+    scheduler = new Scheduler(mainDb, jobRunner, llmRouter);
+    scheduler.start();
+    fastify.log.info('Scheduler started');
+
     // Start listening
     await fastify.listen({
       port: config.port,
@@ -3708,6 +3792,7 @@ const start = async () => {
 // Handle shutdown
 process.on('SIGTERM', async () => {
   console.log('Shutting down...');
+  scheduler?.stop();
   await mcpManager.disconnectAll();
   // (no role storage to close - using main database)
   await fastify.close();
@@ -3716,6 +3801,7 @@ process.on('SIGTERM', async () => {
 
 process.on('SIGINT', async () => {
   console.log('Shutting down...');
+  scheduler?.stop();
   await mcpManager.disconnectAll();
   // (no role storage to close - using main database)
   await fastify.close();

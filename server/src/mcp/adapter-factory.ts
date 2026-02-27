@@ -214,17 +214,22 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
     // memory is role-scoped (each role has its own DB); all other in-process servers
     // (gmail, google-drive, etc.) are user-scoped and should use the manager's
     // MultiAccountAdapter regardless of whether a roleId was passed.
-    const isRoleScoped = baseServerId === 'memory' || baseServerId === 'Memory';
+    const isRoleScoped = baseServerId === 'memory' || baseServerId === 'Memory' || baseServerId === 'scheduler';
 
     if (baseServerId !== 'role-manager' && !isRoleScoped) {
       const managerAdapter = mcpManager.getInProcessAdapter(baseServerId);
       if (managerAdapter) return managerAdapter;
     }
 
-    // Role-scoped (memory) or no manager adapter yet — create a fresh in-process instance
-    let tokenData: any = isRoleScoped && roleId
-      ? { roleId, dbPath: path.join(process.env.STORAGE_ROOT || './data', `memory_${roleId}.db`) }
-      : undefined;
+    // Role-scoped (memory/scheduler) or no manager adapter yet — create a fresh in-process instance
+    let tokenData: any;
+    if (isRoleScoped && roleId) {
+      if (baseServerId === 'memory' || baseServerId === 'Memory') {
+        tokenData = { roleId, dbPath: path.join(process.env.STORAGE_ROOT || './data', `memory_${roleId}.db`) };
+      } else {
+        tokenData = { roleId };
+      }
+    }
 
     const { getPredefinedServer } = await import('./predefined-servers.js');
     const predefinedServer = getPredefinedServer(baseServerId);

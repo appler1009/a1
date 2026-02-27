@@ -11,6 +11,7 @@ import { ProcessEachInProcess } from '../in-process/process-each.js';
 import { RoleManagerInProcess } from '../in-process/role-manager.js';
 import { AlphaVantageInProcess } from '../in-process/alpha-vantage.js';
 import { TwelveDataInProcess } from '../in-process/twelve-data.js';
+import { SchedulerInProcess } from '../in-process/scheduler.js';
 import { getMainDatabase } from '../../storage/index.js';
 
 /**
@@ -149,6 +150,12 @@ class AdapterRegistry {
       const apiKey = tokenData?.apiKey;
       if (!apiKey) throw new Error('Twelve Data API key not configured');
       return new TwelveDataInProcess(apiKey);
+    });
+
+    // Scheduler - role-scoped in-process task scheduler
+    this.registerInProcess('scheduler', (userId: string, tokenData?: any) => {
+      const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+      return new SchedulerInProcess(mainDb, userId, tokenData?.roleId || '');
     });
 
     // Future: this.register('github', GithubAdapter);

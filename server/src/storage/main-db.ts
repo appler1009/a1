@@ -50,6 +50,24 @@ export interface SkillRecord {
 }
 
 /**
+ * Scheduled job stored in the main database
+ */
+export interface ScheduledJob {
+  id: string;
+  userId: string;
+  roleId: string;
+  description: string;
+  scheduleType: 'once' | 'recurring';
+  runAt: Date | null;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  lastRunAt: Date | null;
+  lastError: string | null;
+  runCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
  * Main database schema for user registration and role mapping
  * This is the central database that maps users to their roles
  * Each role has its own separate SQLite database for complete isolation
@@ -214,6 +232,26 @@ export class MainDatabase {
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL
       );
+
+      -- Scheduled jobs table
+      CREATE TABLE IF NOT EXISTS scheduled_jobs (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        roleId TEXT NOT NULL,
+        description TEXT NOT NULL,
+        scheduleType TEXT NOT NULL CHECK (scheduleType IN ('once', 'recurring')),
+        runAt TEXT,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+        lastRunAt TEXT,
+        lastError TEXT,
+        runCount INTEGER NOT NULL DEFAULT 0,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_user ON scheduled_jobs(userId, status);
+      CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_once ON scheduled_jobs(runAt, status);
     `);
 
     // Migrate old MCP server IDs to new package names
@@ -1490,6 +1528,142 @@ export class MainDatabase {
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     }));
+  }
+
+  // ============================================
+  // Scheduled Job Operations
+  // ============================================
+
+  private rowToScheduledJob(row: {
+    id: string;
+    userId: string;
+    roleId: string;
+    description: string;
+    scheduleType: string;
+    runAt: string | null;
+    status: string;
+    lastRunAt: string | null;
+    lastError: string | null;
+    runCount: number;
+    createdAt: string;
+    updatedAt: string;
+  }): ScheduledJob {
+    return {
+      id: row.id,
+      userId: row.userId,
+      roleId: row.roleId,
+      description: row.description,
+      scheduleType: row.scheduleType as 'once' | 'recurring',
+      runAt: row.runAt ? new Date(row.runAt) : null,
+      status: row.status as ScheduledJob['status'],
+      lastRunAt: row.lastRunAt ? new Date(row.lastRunAt) : null,
+      lastError: row.lastError,
+      runCount: row.runCount,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    };
+  }
+
+  createScheduledJob(params: {
+    userId: string;
+    roleId: string;
+    description: string;
+    scheduleType: 'once' | 'recurring';
+    runAt?: Date | null;
+  }): ScheduledJob {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+    const runAt = params.runAt ? params.runAt.toISOString() : null;
+
+    this.db.prepare(`
+      INSERT INTO scheduled_jobs (id, userId, roleId, description, scheduleType, runAt, status, runCount, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+    `).run(id, params.userId, params.roleId, params.description, params.scheduleType, runAt, now, now);
+
+    return this.getScheduledJob(id)!;
+  }
+
+  getScheduledJob(id: string): ScheduledJob | null {
+    const row = this.db.prepare('SELECT * FROM scheduled_jobs WHERE id = ?').get(id) as any;
+    if (!row) return null;
+    return this.rowToScheduledJob(row);
+  }
+
+  listScheduledJobs(userId: string, opts?: { status?: string; roleId?: string }): ScheduledJob[] {
+    let query = 'SELECT * FROM scheduled_jobs WHERE userId = ?';
+    const params: (string | number)[] = [userId];
+
+    if (opts?.status) {
+      query += ' AND status = ?';
+      params.push(opts.status);
+    }
+    if (opts?.roleId) {
+      query += ' AND roleId = ?';
+      params.push(opts.roleId);
+    }
+
+    query += ' ORDER BY createdAt DESC';
+    const rows = this.db.prepare(query).all(...params) as any[];
+    return rows.map(r => this.rowToScheduledJob(r));
+  }
+
+  getDueOnceJobs(): ScheduledJob[] {
+    const now = new Date().toISOString();
+    const rows = this.db.prepare(`
+      SELECT * FROM scheduled_jobs
+      WHERE scheduleType = 'once' AND runAt <= ? AND status = 'pending'
+    `).all(now) as any[];
+    return rows.map(r => this.rowToScheduledJob(r));
+  }
+
+  getPendingRecurringJobs(userId?: string): ScheduledJob[] {
+    let query = `SELECT * FROM scheduled_jobs WHERE scheduleType = 'recurring' AND status = 'pending'`;
+    const params: string[] = [];
+    if (userId) {
+      query += ' AND userId = ?';
+      params.push(userId);
+    }
+    const rows = this.db.prepare(query).all(...params) as any[];
+    return rows.map(r => this.rowToScheduledJob(r));
+  }
+
+  updateScheduledJobStatus(id: string, update: {
+    status?: ScheduledJob['status'];
+    lastRunAt?: Date;
+    lastError?: string;
+    runCount?: number;
+  }): void {
+    const now = new Date().toISOString();
+    const fields: string[] = ['updatedAt = ?'];
+    const values: (string | number | null)[] = [now];
+
+    if (update.status !== undefined) {
+      fields.push('status = ?');
+      values.push(update.status);
+    }
+    if (update.lastRunAt !== undefined) {
+      fields.push('lastRunAt = ?');
+      values.push(update.lastRunAt.toISOString());
+    }
+    if (update.lastError !== undefined) {
+      fields.push('lastError = ?');
+      values.push(update.lastError);
+    }
+    if (update.runCount !== undefined) {
+      fields.push('runCount = ?');
+      values.push(update.runCount);
+    }
+
+    values.push(id);
+    this.db.prepare(`UPDATE scheduled_jobs SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  }
+
+  cancelScheduledJob(id: string, userId: string): boolean {
+    const result = this.db.prepare(`
+      UPDATE scheduled_jobs SET status = 'cancelled', updatedAt = ?
+      WHERE id = ? AND userId = ? AND status IN ('pending', 'failed')
+    `).run(new Date().toISOString(), id, userId);
+    return result.changes > 0;
   }
 
   // ============================================

@@ -190,6 +190,19 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     inProcess: true,
   },
 
+  {
+    id: 'scheduler',
+    name: 'Scheduler',
+    description: 'Schedule tasks for future autonomous execution.',
+    command: '',
+    args: [],
+    auth: {
+      provider: 'none',
+    },
+    hidden: true,
+    inProcess: true,
+  },
+
   // DISABLED: Testing email preview with cache IDs instead
   // {
   //   id: 'display-email',

@@ -26,6 +26,7 @@ interface DiscordSession {
 }
 
 const sessions = new Map<string, DiscordSession>();
+let discordClient: Client | null = null;
 
 /**
  * Configuration for Discord bot
@@ -80,8 +81,49 @@ export async function startDiscordBot(port: number): Promise<void> {
 
   try {
     await client.login(token);
+    discordClient = client;
   } catch (error) {
     console.error('[Discord] Failed to log in:', error);
+  }
+}
+
+/**
+ * Send a Discord notification about a scheduled job completion
+ */
+export async function notifyScheduledJobCompletion(
+  appUserId: string,
+  roleName: string,
+  jobDescription: string,
+): Promise<void> {
+  if (!discordClient) {
+    console.log('[Discord] Discord bot not initialized, skipping notification');
+    return;
+  }
+
+  try {
+    // Find Discord user(s) associated with this app user
+    const discordUserIds = Array.from(sessions.entries())
+      .filter(([, session]) => session.appUserId === appUserId)
+      .map(([discordUserId]) => discordUserId);
+
+    if (discordUserIds.length === 0) {
+      console.log(`[Discord] No active Discord sessions for app user ${appUserId}`);
+      return;
+    }
+
+    const message = `✅ Scheduled job completed in role **${roleName}**:\n\n${jobDescription.slice(0, 100)}${jobDescription.length > 100 ? '…' : ''}`;
+
+    for (const discordUserId of discordUserIds) {
+      try {
+        const user = await discordClient.users.fetch(discordUserId);
+        await user.send(message);
+        console.log(`[Discord] Sent job notification to ${user.tag}`);
+      } catch (err) {
+        console.error(`[Discord] Failed to send notification to user ${discordUserId}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error('[Discord] Failed to send scheduled job notification:', err);
   }
 }
 
