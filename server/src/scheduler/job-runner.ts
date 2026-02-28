@@ -45,7 +45,15 @@ export class JobRunner {
       }
     }
 
-    const tools = this.llmRouter.convertMCPToolsToOpenAI(mcpTools);
+    // Deduplicate by tool name — role-scoped tools may already appear in the manager list
+    const seen = new Set<string>();
+    const uniqueTools = mcpTools.filter(t => {
+      if (seen.has(t.name)) return false;
+      seen.add(t.name);
+      return true;
+    });
+
+    const tools = this.llmRouter.convertMCPToolsToOpenAI(uniqueTools);
 
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
