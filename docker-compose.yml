@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   app:
     build: .
@@ -14,12 +12,35 @@ services:
       - STORAGE_TYPE=fs
       - STORAGE_ROOT=/app/data
       - AUTH_SECRET=${AUTH_SECRET:-change-me-in-production}
+      # LLM provider: grok | openai | anthropic (defaults to grok)
+      - LLM_PROVIDER=${LLM_PROVIDER:-grok}
+      - GROK_API_KEY=${GROK_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DEFAULT_MODEL=${DEFAULT_MODEL}
       - ROUTER_ENABLED=${ROUTER_ENABLED:-false}
+      # Google OAuth (Gmail + Drive)
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:3000/api/auth/google/callback}
+      # Legacy Gmail-specific OAuth (if different from Google OAuth above)
       - GMAIL_CLIENT_ID=${GMAIL_CLIENT_ID}
       - GMAIL_CLIENT_SECRET=${GMAIL_CLIENT_SECRET}
       - GMAIL_REDIRECT_URI=${GMAIL_REDIRECT_URI:-http://localhost:3000/api/gmail/callback}
+      # GitHub OAuth
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:3000/api/auth/github/callback}
+      # Discord bot (optional)
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
+      - DISCORD_CHANNEL_IDS=${DISCORD_CHANNEL_IDS}
+      # Frontend URL for OAuth redirect callbacks
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Feature flags
+      - ENABLE_META_MCP_SEARCH=${ENABLE_META_MCP_SEARCH:-true}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]

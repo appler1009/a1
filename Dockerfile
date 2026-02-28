@@ -1,16 +1,16 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
+COPY package.json package-lock.json ./
 COPY shared/package.json ./shared/
 COPY server/package.json ./server/
 COPY client/package.json ./client/
 
 # Install dependencies
-RUN npm install
+RUN npm ci
 
 # Copy source files
 COPY shared ./shared
@@ -22,7 +22,7 @@ COPY tsconfig.json ./
 RUN npm run build
 
 # Production stage
-FROM node:20-alpine AS production
+FROM node:22-alpine AS production
 
 WORKDIR /app
 
