@@ -1,16 +1,16 @@
 # Build stage
-FROM node:22-alpine AS builder
+FROM oven/bun:1-alpine AS builder
 
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json ./
+COPY package.json bun.lock* ./
 COPY shared/package.json ./shared/
 COPY server/package.json ./server/
 COPY client/package.json ./client/
 
 # Install dependencies
-RUN npm ci
+RUN bun install --frozen-lockfile
 
 # Copy source files
 COPY shared ./shared
@@ -19,10 +19,10 @@ COPY client ./client
 COPY tsconfig.json ./
 
 # Build all packages
-RUN npm run build
+RUN bun run build
 
 # Production stage
-FROM node:22-alpine AS production
+FROM oven/bun:1-alpine AS production
 
 WORKDIR /app
 
@@ -51,7 +51,7 @@ EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+  CMD ["bun", "-e", "const r = await fetch('http://localhost:3000/health'); if (!r.ok) process.exit(1);"]
 
 # Start server
-CMD ["node", "server/dist/index.js"]
+CMD ["bun", "server/dist/index.js"]

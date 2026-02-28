@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import type { User, Session, Group, GroupMember, Invitation } from '@local-agent/shared';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
@@ -74,7 +74,7 @@ export interface ScheduledJob {
  * Each role has its own separate SQLite database for complete isolation
  */
 export class MainDatabase {
-  private db: Database.Database;
+  private db: Database;
   private dbPath: string;
 
   constructor(dataDir: string) {

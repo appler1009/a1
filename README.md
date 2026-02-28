@@ -16,7 +16,7 @@ Self-hosted Docker solution for local AI agents with MCP (Model Context Protocol
 ## Tech Stack
 
 ### Backend
-- Node.js 20, TypeScript
+- Bun, TypeScript
 - Fastify (web framework)
 - Lucia (authentication)
 - OpenAI SDK
@@ -50,7 +50,7 @@ docker-compose --profile s3 up -d
 
 ```bash
 # Install dependencies
-npm install
+bun install
 
 # Copy environment file
 cp .env.example .env
@@ -59,7 +59,7 @@ cp .env.example .env
 # Required: OPENAI_API_KEY
 
 # Start development servers
-npm run dev
+bun run dev
 ```
 
 The application will be available at:

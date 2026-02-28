@@ -9,23 +9,23 @@
     "client"
   ],
   "scripts": {
-    "dev": "concurrently --names server,client --prefix [\\{name\\}] --kill-others-on-exit \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:server": "npm run dev -w server",
-    "dev:client": "npm run dev -w client",
-    "dev:clean": "rm -rf node_modules/*/dist .parcel-cache && npm run dev",
-    "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
-    "build:dev": "NODE_ENV=development npm run build",
-    "build:prod": "NODE_ENV=production npm run build",
-    "start": "npm run start -w server",
-    "start:dev": "npm run start:dev -w server",
-    "start:test": "npm run start:test -w server",
-    "lint": "npm run lint -ws",
-    "typecheck": "npm run typecheck -ws",
+    "dev": "concurrently --names server,client --prefix [\\{name\\}] --kill-others-on-exit \"bun run dev:server\" \"bun run dev:client\"",
+    "dev:server": "bun run --filter './server' dev",
+    "dev:client": "bun run --filter './client' dev",
+    "dev:clean": "rm -rf node_modules/*/dist .parcel-cache && bun run dev",
+    "build": "bun run --filter './shared' build && bun run --filter './server' build && bun run --filter './client' build",
+    "build:dev": "NODE_ENV=development bun run build",
+    "build:prod": "NODE_ENV=production bun run build",
+    "start": "bun run --filter './server' start",
+    "start:dev": "bun run --filter './server' start:dev",
+    "start:test": "bun run --filter './server' start:test",
+    "lint": "bun run lint --filter '*'",
+    "typecheck": "bun run typecheck --filter '*'",
     "docker:build": "docker build -t local-agent-ui .",
     "docker:run": "docker run -p 3000:3000 -v $(pwd)/data:/app/data local-agent-ui",
-    "test": "npm run test:unit",
-    "test:unit": "npm run test --workspaces --if-present",
-    "test:coverage": "npm run test:coverage --workspaces --if-present",
+    "test": "bun run test:unit",
+    "test:unit": "bun run --filter '*' test",
+    "test:coverage": "bun run --filter '*' test:coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },
@@ -36,7 +36,7 @@
     "typescript": "^5.3.3"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "bun": ">=1.0.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.76.0",

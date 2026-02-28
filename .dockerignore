@@ -7,6 +7,8 @@ node_modules
 dist
 */dist
 **/.parcel-cache
+*.tsbuildinfo
+**/*.tsbuildinfo
 
 # Data directory
 data

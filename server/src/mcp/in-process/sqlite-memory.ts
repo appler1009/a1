@@ -13,7 +13,7 @@
 
 import type { MCPToolInfo } from '@local-agent/shared';
 import type { InProcessMCPModule } from '../adapters/InProcessAdapter.js';
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 
 /**
  * Entity in the knowledge graph
@@ -48,7 +48,7 @@ interface Relation {
  * - Opening specific nodes
  */
 export class SQLiteMemoryInProcess implements InProcessMCPModule {
-  private db: Database.Database | null = null;
+  private db: Database | null = null;
   private dbPath: string;
 
   // Index signature for dynamic tool access
@@ -62,7 +62,7 @@ export class SQLiteMemoryInProcess implements InProcessMCPModule {
   /**
    * Initialize the SQLite database
    */
-  private ensureDb(): Database.Database {
+  private ensureDb(): Database {
     if (this.db) {
       return this.db;
     }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import type { MCPToolInfo } from '@local-agent/shared';
 
 // Import the class indirectly via the singleton — we create a fresh instance per test
@@ -49,6 +49,10 @@ describe('ToolCache.updateServerTools / getServerTools', () => {
 });
 
 describe('ToolCache.findToolServer', () => {
+  afterEach(() => {
+    setSystemTime(); // reset after any time manipulation
+  });
+
   it('returns server and tool for a cached tool', async () => {
     const cache = await freshCache();
     cache.updateServerTools('server-b', [makeTool('my-tool')]);
@@ -66,10 +70,11 @@ describe('ToolCache.findToolServer', () => {
 
   it('returns null after TTL expires', async () => {
     const cache = await freshCache();
+    const now = Date.now();
     cache.updateServerTools('server-c', [makeTool('ttl-tool')]);
 
     // Advance time past TTL (5 min + 1ms)
-    vi.setSystemTime(Date.now() + 5 * 60 * 1000 + 1);
+    setSystemTime(new Date(now + 5 * 60 * 1000 + 1));
 
     expect(cache.findToolServer('ttl-tool')).toBeNull();
   });
@@ -77,7 +82,7 @@ describe('ToolCache.findToolServer', () => {
 
 describe('ToolCache.hasTool', () => {
   afterEach(() => {
-    vi.useRealTimers();
+    setSystemTime();
   });
 
   it('returns true for a cached tool', async () => {
@@ -129,7 +134,7 @@ describe('ToolCache.getAllTools', () => {
 
 describe('ToolCache.needsRefresh', () => {
   afterEach(() => {
-    vi.useRealTimers();
+    setSystemTime();
   });
 
   it('returns true for a server not in cache', async () => {
@@ -144,11 +149,11 @@ describe('ToolCache.needsRefresh', () => {
   });
 
   it('returns true after TTL expires', async () => {
-    vi.useFakeTimers();
     const cache = await freshCache();
+    const now = Date.now();
     cache.updateServerTools('s', [makeTool('x')]);
 
-    vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+    setSystemTime(new Date(now + 5 * 60 * 1000 + 1));
     expect(cache.needsRefresh('s')).toBe(true);
   });
 });
@@ -169,16 +174,16 @@ describe('ToolCache.getStats / getToolCount', () => {
 
 describe('ToolCache.getServersNeedingRefresh', () => {
   afterEach(() => {
-    vi.useRealTimers();
+    setSystemTime();
   });
 
   it('returns servers past TTL', async () => {
-    vi.useFakeTimers();
     const cache = await freshCache();
+    const now = Date.now();
     cache.updateServerTools('stale', [makeTool('x')]);
     cache.updateServerTools('fresh', [makeTool('y')]);
 
-    vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+    setSystemTime(new Date(now + 5 * 60 * 1000 + 1));
     // Update 'fresh' after time advance so it has a current timestamp
     cache.updateServerTools('fresh', [makeTool('y')]);
 

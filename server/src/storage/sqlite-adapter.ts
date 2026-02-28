@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import Fuse from 'fuse.js';
 import type { MemoryEntry } from '@local-agent/shared';
 import { BaseStorage, type ChatMessageEntry, type IMessageStorage } from './interface.js';
@@ -15,7 +15,7 @@ export interface SQLiteStorageConfig {
  * Also implements IMessageStorage for chat messages
  */
 export class SQLiteStorageAdapter extends BaseStorage implements IMessageStorage {
-  private db: Database.Database;
+  private db: Database;
   private root: string;
   private memoryIndex: Map<string, MemoryEntry> = new Map();
 

@@ -1,17 +1,22 @@
 /**
- * Integration tests for auth HTTP routes using Fastify's inject() API.
+ * Integration tests for auth HTTP routes.
  *
- * The global `authService` singleton is mocked with vi.mock so we don't
- * touch the filesystem or a real database. Each test controls the mock's
- * return values, giving full isolation and determinism.
+ * Uses bun:test's mock.module() with upfront mock function references and a
+ * top-level dynamic import so that mocks are registered before the route
+ * module (and its dependencies) are first loaded.
+ *
+ * Fastify's inject() / light-my-request is incompatible with Bun's
+ * http.ServerResponse, so tests use a real listener on a random port with
+ * Bun's native fetch().
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
+import type { AddressInfo } from 'net';
 
 // ---------------------------------------------------------------------------
-// Mock the authService singleton before importing the route module
+// Fixtures
 // ---------------------------------------------------------------------------
 
 const mockUser = {
@@ -30,66 +35,67 @@ const mockSession = {
   createdAt: new Date('2024-01-01'),
 };
 
-// vi.mock hoists to the top of the file, so the mock is applied before imports
-vi.mock('../auth/index.js', () => ({
-  authService: {
-    getUserByEmail: vi.fn(),
-    createUser: vi.fn(),
-    createSession: vi.fn(),
-    getUser: vi.fn(),
-    updateUser: vi.fn(),
-    createGroup: vi.fn(),
-    getGroupByUrl: vi.fn(),
-    createGroupUser: vi.fn(),
-    addMember: vi.fn(),
-    createInvitation: vi.fn(),
-    acceptInvitation: vi.fn(),
-    getOAuthToken: vi.fn(),
-    saveOAuthToken: vi.fn(),
-    revokeOAuthToken: vi.fn(),
-    initialize: vi.fn(),
-  },
-}));
+// ---------------------------------------------------------------------------
+// Module mocks — registered before the route module is dynamically imported
+// ---------------------------------------------------------------------------
 
-// Also mock GoogleOAuthHandler and GitHubOAuthHandler so they don't try to
-// load credentials from the filesystem during route registration.
-vi.mock('../auth/google-oauth.js', () => ({
+const authServiceMock = {
+  getUserByEmail: mock(),
+  createUser: mock(),
+  createSession: mock(),
+  getUser: mock(),
+  updateUser: mock(),
+  createGroup: mock(),
+  getGroupByUrl: mock(),
+  createGroupUser: mock(),
+  addMember: mock(),
+  createInvitation: mock(),
+  acceptInvitation: mock(),
+  getOAuthToken: mock(),
+  saveOAuthToken: mock(),
+  revokeOAuthToken: mock(),
+  initialize: mock(),
+};
+
+mock.module('../auth/index.js', () => ({ authService: authServiceMock }));
+
+mock.module('../auth/google-oauth.js', () => ({
   GoogleOAuthHandler: class {
     getAuthUrl() { return 'https://accounts.google.com/mock'; }
     handleCallback() { return { tokens: {}, email: 'test@gmail.com' }; }
   },
 }));
 
-vi.mock('../auth/github-oauth.js', () => ({
+mock.module('../auth/github-oauth.js', () => ({
   GitHubOAuthHandler: class {
     getAuthUrl() { return 'https://github.com/login/oauth/authorize?mock'; }
     handleCallback() { return { token: 'gh-token', username: 'testuser' }; }
   },
 }));
 
-// Mock getMainDatabase so it doesn't touch the filesystem
-vi.mock('../storage/index.js', () => ({
-  getMainDatabase: vi.fn(() => ({
-    saveOAuthToken: vi.fn(),
-    getOAuthToken: vi.fn(),
-    getAllUserOAuthTokens: vi.fn().mockReturnValue([]),
+mock.module('../storage/index.js', () => ({
+  getMainDatabase: mock(() => ({
+    saveOAuthToken: mock(),
+    getOAuthToken: mock(),
+    getAllUserOAuthTokens: mock().mockReturnValue([]),
   })),
 }));
 
-// Import after mocks are registered
-import { authService } from '../auth/index.js';
-import { authRoutes } from '../api/auth.js';
+// Import the route module after mocks are registered.
+const { authRoutes } = await import('../api/auth.js');
 
 // ---------------------------------------------------------------------------
-// Test app factory — create a fresh Fastify instance per describe block
+// Test app factory — real listener on a random port, torn down after each test
 // ---------------------------------------------------------------------------
 
 async function buildApp() {
   const app = Fastify({ logger: false });
   await app.register(cookie);
   await app.register(authRoutes, { prefix: '/api/auth' });
-  await app.ready();
-  return app;
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const { port } = app.server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${port}/api/auth`;
+  return { app, baseUrl };
 }
 
 // ---------------------------------------------------------------------------
@@ -101,39 +107,39 @@ describe('POST /api/auth/check-email', () => {
 
   beforeEach(async () => {
     app = await buildApp();
-    vi.mocked(authService.getUserByEmail).mockReset();
+    authServiceMock.getUserByEmail.mockReset();
   });
 
   afterEach(async () => {
-    await app.close();
+    await app.app.close();
   });
 
   it('returns exists: true when the user is found', async () => {
-    vi.mocked(authService.getUserByEmail).mockResolvedValue(mockUser);
+    authServiceMock.getUserByEmail.mockResolvedValue(mockUser);
 
-    const res = await app.inject({
+    const res = await fetch(`${app.baseUrl}/check-email`, {
       method: 'POST',
-      url: '/api/auth/check-email',
-      payload: { email: 'alice@example.com' },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'alice@example.com' }),
     });
 
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
+    expect(res.status).toBe(200);
+    const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.data.exists).toBe(true);
   });
 
   it('returns exists: false when the user is not found', async () => {
-    vi.mocked(authService.getUserByEmail).mockResolvedValue(null);
+    authServiceMock.getUserByEmail.mockResolvedValue(null);
 
-    const res = await app.inject({
+    const res = await fetch(`${app.baseUrl}/check-email`, {
       method: 'POST',
-      url: '/api/auth/check-email',
-      payload: { email: 'new@example.com' },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'new@example.com' }),
     });
 
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
+    expect(res.status).toBe(200);
+    const body = await res.json();
     expect(body.data.exists).toBe(false);
   });
 });
@@ -147,55 +153,55 @@ describe('POST /api/auth/login', () => {
 
   beforeEach(async () => {
     app = await buildApp();
-    vi.mocked(authService.getUserByEmail).mockReset();
-    vi.mocked(authService.createSession).mockReset();
+    authServiceMock.getUserByEmail.mockReset();
+    authServiceMock.createSession.mockReset();
   });
 
   afterEach(async () => {
-    await app.close();
+    await app.app.close();
   });
 
   it('returns 200 with user and session on success', async () => {
-    vi.mocked(authService.getUserByEmail).mockResolvedValue(mockUser);
-    vi.mocked(authService.createSession).mockResolvedValue(mockSession);
+    authServiceMock.getUserByEmail.mockResolvedValue(mockUser);
+    authServiceMock.createSession.mockResolvedValue(mockSession);
 
-    const res = await app.inject({
+    const res = await fetch(`${app.baseUrl}/login`, {
       method: 'POST',
-      url: '/api/auth/login',
-      payload: { email: 'alice@example.com' },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'alice@example.com' }),
     });
 
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
+    expect(res.status).toBe(200);
+    const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.data.user.email).toBe('alice@example.com');
     expect(body.data.session.id).toBe('session-test-1');
   });
 
   it('sets a session_id cookie on success', async () => {
-    vi.mocked(authService.getUserByEmail).mockResolvedValue(mockUser);
-    vi.mocked(authService.createSession).mockResolvedValue(mockSession);
+    authServiceMock.getUserByEmail.mockResolvedValue(mockUser);
+    authServiceMock.createSession.mockResolvedValue(mockSession);
 
-    const res = await app.inject({
+    const res = await fetch(`${app.baseUrl}/login`, {
       method: 'POST',
-      url: '/api/auth/login',
-      payload: { email: 'alice@example.com' },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'alice@example.com' }),
     });
 
-    expect(res.headers['set-cookie']).toMatch(/session_id=/);
+    expect(res.headers.get('set-cookie')).toMatch(/session_id=/);
   });
 
   it('returns 404 when user does not exist', async () => {
-    vi.mocked(authService.getUserByEmail).mockResolvedValue(null);
+    authServiceMock.getUserByEmail.mockResolvedValue(null);
 
-    const res = await app.inject({
+    const res = await fetch(`${app.baseUrl}/login`, {
       method: 'POST',
-      url: '/api/auth/login',
-      payload: { email: 'nobody@example.com' },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'nobody@example.com' }),
     });
 
-    expect(res.statusCode).toBe(404);
-    const body = JSON.parse(res.body);
+    expect(res.status).toBe(404);
+    const body = await res.json();
     expect(body.success).toBe(false);
     expect(body.error.message).toBe('User not found');
   });
@@ -210,44 +216,44 @@ describe('POST /api/auth/signup/individual', () => {
 
   beforeEach(async () => {
     app = await buildApp();
-    vi.mocked(authService.getUserByEmail).mockReset();
-    vi.mocked(authService.createUser).mockReset();
-    vi.mocked(authService.createSession).mockReset();
+    authServiceMock.getUserByEmail.mockReset();
+    authServiceMock.createUser.mockReset();
+    authServiceMock.createSession.mockReset();
   });
 
   afterEach(async () => {
-    await app.close();
+    await app.app.close();
   });
 
   it('creates user and returns 200 with session', async () => {
-    vi.mocked(authService.getUserByEmail).mockResolvedValue(null);
-    vi.mocked(authService.createUser).mockResolvedValue(mockUser);
-    vi.mocked(authService.createSession).mockResolvedValue(mockSession);
+    authServiceMock.getUserByEmail.mockResolvedValue(null);
+    authServiceMock.createUser.mockResolvedValue(mockUser);
+    authServiceMock.createSession.mockResolvedValue(mockSession);
 
-    const res = await app.inject({
+    const res = await fetch(`${app.baseUrl}/signup/individual`, {
       method: 'POST',
-      url: '/api/auth/signup/individual',
-      payload: { email: 'new@example.com', name: 'New User' },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'new@example.com', name: 'New User' }),
     });
 
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
+    expect(res.status).toBe(200);
+    const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.data.user).toBeDefined();
     expect(body.data.session).toBeDefined();
   });
 
   it('returns 400 when email is already registered', async () => {
-    vi.mocked(authService.getUserByEmail).mockResolvedValue(mockUser);
+    authServiceMock.getUserByEmail.mockResolvedValue(mockUser);
 
-    const res = await app.inject({
+    const res = await fetch(`${app.baseUrl}/signup/individual`, {
       method: 'POST',
-      url: '/api/auth/signup/individual',
-      payload: { email: 'alice@example.com', name: 'Alice' },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'alice@example.com', name: 'Alice' }),
     });
 
-    expect(res.statusCode).toBe(400);
-    const body = JSON.parse(res.body);
+    expect(res.status).toBe(400);
+    const body = await res.json();
     expect(body.error.message).toBe('Email already registered');
   });
 });
@@ -261,50 +267,50 @@ describe('POST /api/auth/signup/group', () => {
 
   beforeEach(async () => {
     app = await buildApp();
-    vi.mocked(authService.getUserByEmail).mockReset();
-    vi.mocked(authService.getGroupByUrl).mockReset();
-    vi.mocked(authService.createGroupUser).mockReset();
-    vi.mocked(authService.createSession).mockReset();
+    authServiceMock.getUserByEmail.mockReset();
+    authServiceMock.getGroupByUrl.mockReset();
+    authServiceMock.createGroupUser.mockReset();
+    authServiceMock.createSession.mockReset();
   });
 
   afterEach(async () => {
-    await app.close();
+    await app.app.close();
   });
 
   it('creates group user and returns 200', async () => {
-    vi.mocked(authService.getUserByEmail).mockResolvedValue(null);
-    vi.mocked(authService.getGroupByUrl).mockResolvedValue(null);
-    vi.mocked(authService.createGroupUser).mockResolvedValue({
+    authServiceMock.getUserByEmail.mockResolvedValue(null);
+    authServiceMock.getGroupByUrl.mockResolvedValue(null);
+    authServiceMock.createGroupUser.mockResolvedValue({
       user: mockUser,
       group: { id: 'g1', name: 'Acme', createdAt: new Date() },
       invitation: { id: 'inv-1', code: 'TESTCODE', groupId: 'g1', createdBy: mockUser.id, createdAt: new Date() },
     });
-    vi.mocked(authService.createSession).mockResolvedValue(mockSession);
+    authServiceMock.createSession.mockResolvedValue(mockSession);
 
-    const res = await app.inject({
+    const res = await fetch(`${app.baseUrl}/signup/group`, {
       method: 'POST',
-      url: '/api/auth/signup/group',
-      payload: { email: 'admin@acme.com', name: 'Admin', groupName: 'Acme', groupUrl: 'acme' },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@acme.com', name: 'Admin', groupName: 'Acme', groupUrl: 'acme' }),
     });
 
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
+    expect(res.status).toBe(200);
+    const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.data.user).toBeDefined();
   });
 
   it('returns 400 when group URL is already taken', async () => {
-    vi.mocked(authService.getUserByEmail).mockResolvedValue(null);
-    vi.mocked(authService.getGroupByUrl).mockResolvedValue({ id: 'g-existing', name: 'Existing', createdAt: new Date() });
+    authServiceMock.getUserByEmail.mockResolvedValue(null);
+    authServiceMock.getGroupByUrl.mockResolvedValue({ id: 'g-existing', name: 'Existing', createdAt: new Date() });
 
-    const res = await app.inject({
+    const res = await fetch(`${app.baseUrl}/signup/group`, {
       method: 'POST',
-      url: '/api/auth/signup/group',
-      payload: { email: 'other@acme.com', name: 'Other', groupName: 'Other Corp', groupUrl: 'taken-url' },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'other@acme.com', name: 'Other', groupName: 'Other Corp', groupUrl: 'taken-url' }),
     });
 
-    expect(res.statusCode).toBe(400);
-    const body = JSON.parse(res.body);
+    expect(res.status).toBe(400);
+    const body = await res.json();
     expect(body.error.message).toBe('Group URL is already taken');
   });
 });
