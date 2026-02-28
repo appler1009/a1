@@ -86,6 +86,7 @@ secrets/
 credentials.json
 token.json
 tokens.json
+gcp-oauth.keys.json
 
 # Docker
 .docker/
