@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import type { LLMRouter } from '../ai/router.js';
 import type { MainDatabase, ScheduledJob } from '../storage/main-db.js';
 import { evaluateRecurringJobs } from './evaluator.js';
@@ -91,13 +92,38 @@ export class Scheduler {
       });
       console.log(`[Scheduler] Job ${job.id} completed, status → ${status}`);
     } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
       this.db.updateScheduledJobStatus(job.id, {
         status: 'failed',
-        lastError: String(err),
+        lastError: errorMsg,
         lastRunAt: new Date(),
         runCount: job.runCount + 1,
       });
       console.error(`[Scheduler] Job ${job.id} failed:`, err);
+
+      // Save error to role's chat so the user sees it without opening the dialog
+      const shortDesc = job.description.length > 60
+        ? job.description.slice(0, 60) + '…'
+        : job.description;
+      const now = new Date().toISOString();
+      this.db.saveMessage({
+        id: uuidv4(),
+        userId: job.userId,
+        roleId: job.roleId,
+        groupId: null,
+        role: 'system',
+        content: `*Scheduled job failed: ${shortDesc}*`,
+        createdAt: now,
+      });
+      this.db.saveMessage({
+        id: uuidv4(),
+        userId: job.userId,
+        roleId: job.roleId,
+        groupId: null,
+        role: 'assistant',
+        content: `**Error running scheduled task:**\n\`\`\`\n${errorMsg}\n\`\`\``,
+        createdAt: new Date().toISOString(),
+      });
     }
   }
 }
