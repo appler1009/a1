@@ -1,11 +1,16 @@
 import type { LLMRouter } from '../ai/router.js';
 import type { ScheduledJob } from '../storage/main-db.js';
 
+export interface EvaluatorResult {
+  run: string[];
+  hold: Array<{ id: string; until: string }>;
+}
+
 export async function evaluateRecurringJobs(
   jobs: ScheduledJob[],
   llmRouter: LLMRouter,
-): Promise<string[]> {
-  if (jobs.length === 0) return [];
+): Promise<EvaluatorResult> {
+  if (jobs.length === 0) return { run: [], hold: [] };
 
   const now = new Date();
   const timeStr = now.toLocaleString('en-US', {
@@ -20,15 +25,22 @@ export async function evaluateRecurringJobs(
 
   const prompt = `You are a job scheduler evaluator. Current time: ${timeStr}
 
-Evaluate which of these recurring scheduled jobs should run right now. The scheduler checks every 5 minutes. Consider:
-- Does the job description indicate it should run at approximately this time?
-- When did it last run? Avoid re-triggering a job within its expected interval (e.g. an hourly job that ran 3 minutes ago should NOT run again).
+Evaluate each recurring scheduled job below. For each job decide:
+- RUN: the job description indicates it should execute now, and enough time has passed since last run
+- HOLD: too early to run (e.g. a daily job that ran this morning), set holdUntil to when it should next be checked (ISO 8601)
+- SKIP: cannot determine schedule or no action needed — omit from response
+
+The scheduler re-checks every 5 minutes, but a HOLD skips a job entirely until its holdUntil time, saving unnecessary AI evaluation.
 
 Jobs to evaluate:
 ${jobLines}
 
-Reply with ONLY a valid JSON array of job IDs to trigger now. If none, reply [].
-Example: ["id1","id2"]`;
+Reply with ONLY a valid JSON object like:
+{
+  "run": ["id-of-job-to-run"],
+  "hold": [{"id": "id-of-job-to-hold", "until": "2026-02-27T09:00:00Z"}]
+}
+Both arrays may be empty. Do not include any other text.`;
 
   try {
     console.log(`[Evaluator] Prompt:\n${prompt}\n`);
@@ -39,17 +51,24 @@ Example: ["id1","id2"]`;
 
     console.log(`[Evaluator] AI response (${response.model}):`, response.content);
 
-    const text = response.content?.trim() || '[]';
-    const match = text.match(/\[.*\]/s);
+    const text = response.content?.trim() || '{}';
+    const match = text.match(/\{[\s\S]*\}/);
     if (!match) {
-      console.log('[Evaluator] No JSON array found in response, assuming no jobs to run');
-      return [];
+      console.log('[Evaluator] No JSON object found in response, skipping all jobs');
+      return { run: [], hold: [] };
     }
-    const jobIds = JSON.parse(match[0]) as string[];
-    console.log(`[Evaluator] Parsed job IDs to run:`, jobIds);
-    return jobIds;
+
+    const parsed = JSON.parse(match[0]) as { run?: string[]; hold?: Array<{ id: string; until: string }> };
+    const result: EvaluatorResult = {
+      run: Array.isArray(parsed.run) ? parsed.run : [],
+      hold: Array.isArray(parsed.hold) ? parsed.hold : [],
+    };
+
+    console.log(`[Evaluator] Jobs to run:`, result.run);
+    console.log(`[Evaluator] Jobs to hold:`, result.hold);
+    return result;
   } catch (err) {
     console.error('[Evaluator] Failed to evaluate recurring jobs:', err);
-    return [];
+    return { run: [], hold: [] };
   }
 }

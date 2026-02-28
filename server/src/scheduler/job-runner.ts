@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { LLMRouter } from '../ai/router.js';
 import type { MainDatabase, ScheduledJob } from '../storage/main-db.js';
 import type { LLMMessage } from '@local-agent/shared';
-import { mcpManager } from '../mcp/index.js';
+import { mcpManager, getMcpAdapter } from '../mcp/index.js';
 import { notifyScheduledJobCompletion } from '../discord/bot.js';
 
 export class JobRunner {
@@ -30,6 +30,21 @@ export class JobRunner {
 
     const allTools = await mcpManager.listAllTools();
     const mcpTools = allTools.flatMap(({ tools: t }) => t);
+
+    // Role-scoped servers (memory, scheduler) are not in mcpManager.listAllTools()
+    // because they are created on-demand per role. Fetch their tools explicitly.
+    const roleScopedServerIds = ['memory', 'scheduler'];
+    for (const serverId of roleScopedServerIds) {
+      try {
+        const adapter = await getMcpAdapter(job.userId, serverId, job.roleId);
+        const roleTools = await adapter.listTools();
+        mcpTools.push(...roleTools);
+        console.log(`[JobRunner] Job ${job.id} — loaded ${roleTools.length} tools from role-scoped '${serverId}'`);
+      } catch (err) {
+        console.warn(`[JobRunner] Job ${job.id} — could not load tools from '${serverId}':`, err);
+      }
+    }
+
     const tools = this.llmRouter.convertMCPToolsToOpenAI(mcpTools);
 
     const messages: LLMMessage[] = [

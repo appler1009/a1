@@ -2127,7 +2127,17 @@ You have access to role management tools. When the user asks to change or switch
 - ALWAYS call switch_role when asked to switch, even if you believe the role is already active
 - NEVER say "you're already in that role" or skip the tool call for any reason — the system requires switch_role to be called to apply the change
 - NEVER ask the user to switch the role themselves
-- Call list_roles first if you are unsure of the exact role name, then call switch_role${documentContext}`,
+- Call list_roles first if you are unsure of the exact role name, then call switch_role
+
+## SCHEDULED TASKS
+When the user asks to schedule, automate, or run something in the future (e.g. "every morning", "remind me", "check this daily", "run this at 9am"), you MUST use \`search_tool\` to find the scheduler tools:
+- search_tool("schedule a task") → finds \`schedule_task\` and \`list_scheduled_jobs\`
+
+**Rules:**
+- ALWAYS use \`schedule_task\` when the user wants something done automatically in the future — never just describe how to do it
+- For recurring jobs, embed the full schedule in the description (e.g. "Every weekday at 8am, fetch AAPL stock price and save to memory")
+- For one-time jobs, extract the exact datetime from the user's intent and pass it as ISO 8601 in \`runAt\`
+- Use \`list_scheduled_jobs\` when the user asks what tasks are scheduled${documentContext}`,
       };
       
       let conversationMessages = [systemMessage, ...body.messages];

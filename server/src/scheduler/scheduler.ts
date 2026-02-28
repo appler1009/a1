@@ -56,8 +56,21 @@ export class Scheduler {
     const recurring = this.db.getPendingRecurringJobs();
     if (recurring.length > 0) {
       console.log(`[Scheduler] Evaluating ${recurring.length} recurring job(s)`);
-      const toRun = await evaluateRecurringJobs(recurring, this.llmRouter);
-      for (const id of toRun) {
+      const { run, hold } = await evaluateRecurringJobs(recurring, this.llmRouter);
+
+      // Apply hold decisions first
+      for (const { id, until } of hold) {
+        const holdUntil = new Date(until);
+        if (!isNaN(holdUntil.getTime())) {
+          this.db.updateScheduledJobStatus(id, { holdUntil });
+          console.log(`[Scheduler] Job ${id} held until ${holdUntil.toISOString()}`);
+        } else {
+          console.warn(`[Scheduler] Job ${id} hold has invalid date: ${until}`);
+        }
+      }
+
+      // Run triggered jobs
+      for (const id of run) {
         const job = recurring.find(j => j.id === id);
         if (job) await this.runJob(job);
       }
@@ -74,6 +87,7 @@ export class Scheduler {
         status,
         lastRunAt: new Date(),
         runCount: job.runCount + 1,
+        holdUntil: null,  // clear any hold — evaluator will re-set it next poll if needed
       });
       console.log(`[Scheduler] Job ${job.id} completed, status → ${status}`);
     } catch (err) {

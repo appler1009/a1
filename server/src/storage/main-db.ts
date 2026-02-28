@@ -62,6 +62,7 @@ export interface ScheduledJob {
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
   lastRunAt: Date | null;
   lastError: string | null;
+  holdUntil: Date | null;
   runCount: number;
   createdAt: Date;
   updatedAt: Date;
@@ -245,6 +246,7 @@ export class MainDatabase {
           CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
         lastRunAt TEXT,
         lastError TEXT,
+        holdUntil TEXT,
         runCount INTEGER NOT NULL DEFAULT 0,
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL,
@@ -265,6 +267,9 @@ export class MainDatabase {
 
     // Migrate users table to add locale and timezone columns if needed
     this.migrateLocaleTimezoneSchema();
+
+    // Migrate scheduled_jobs table to add holdUntil column if needed
+    this.migrateScheduledJobsHoldUntil();
   }
 
   /**
@@ -382,6 +387,20 @@ export class MainDatabase {
       }
     } catch (error) {
       console.warn('[MainDatabase] Error during locale/timezone schema migration:', error);
+    }
+  }
+
+  private migrateScheduledJobsHoldUntil(): void {
+    try {
+      const tableInfo = this.db.prepare(`PRAGMA table_info(scheduled_jobs)`).all() as Array<{ name: string }>;
+      const hasHoldUntil = tableInfo.some(col => col.name === 'holdUntil');
+      if (!hasHoldUntil) {
+        console.log('[MainDatabase] Adding holdUntil column to scheduled_jobs table...');
+        this.db.exec(`ALTER TABLE scheduled_jobs ADD COLUMN holdUntil TEXT;`);
+        console.log('[MainDatabase] holdUntil column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during scheduled_jobs holdUntil migration:', error);
     }
   }
 
@@ -1544,6 +1563,7 @@ export class MainDatabase {
     status: string;
     lastRunAt: string | null;
     lastError: string | null;
+    holdUntil: string | null;
     runCount: number;
     createdAt: string;
     updatedAt: string;
@@ -1558,6 +1578,7 @@ export class MainDatabase {
       status: row.status as ScheduledJob['status'],
       lastRunAt: row.lastRunAt ? new Date(row.lastRunAt) : null,
       lastError: row.lastError,
+      holdUntil: row.holdUntil ? new Date(row.holdUntil) : null,
       runCount: row.runCount,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
@@ -1617,8 +1638,10 @@ export class MainDatabase {
   }
 
   getPendingRecurringJobs(userId?: string): ScheduledJob[] {
-    let query = `SELECT * FROM scheduled_jobs WHERE scheduleType = 'recurring' AND status = 'pending'`;
-    const params: string[] = [];
+    const now = new Date().toISOString();
+    let query = `SELECT * FROM scheduled_jobs WHERE scheduleType = 'recurring' AND status = 'pending'
+      AND (holdUntil IS NULL OR holdUntil <= ?)`;
+    const params: string[] = [now];
     if (userId) {
       query += ' AND userId = ?';
       params.push(userId);
@@ -1631,6 +1654,7 @@ export class MainDatabase {
     status?: ScheduledJob['status'];
     lastRunAt?: Date;
     lastError?: string;
+    holdUntil?: Date | null;
     runCount?: number;
   }): void {
     const now = new Date().toISOString();
@@ -1648,6 +1672,10 @@ export class MainDatabase {
     if (update.lastError !== undefined) {
       fields.push('lastError = ?');
       values.push(update.lastError);
+    }
+    if ('holdUntil' in update) {
+      fields.push('holdUntil = ?');
+      values.push(update.holdUntil ? update.holdUntil.toISOString() : null);
     }
     if (update.runCount !== undefined) {
       fields.push('runCount = ?');

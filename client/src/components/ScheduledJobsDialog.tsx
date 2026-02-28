@@ -12,6 +12,7 @@ interface ScheduledJob {
   runAt: string | null;
   lastRunAt: string | null;
   lastError: string | null;
+  holdUntil: string | null;
   runCount: number;
   createdAt: string;
   updatedAt: string;
@@ -150,6 +151,7 @@ export function ScheduledJobsDialog({ open, onClose }: ScheduledJobsDialogProps)
                       <span className="capitalize">{job.scheduleType}</span>
                       {job.runAt && <span>Scheduled: {formatDate(job.runAt)}</span>}
                       {job.lastRunAt && <span>Last run: {formatDate(job.lastRunAt)}</span>}
+                      {job.holdUntil && <span className="text-yellow-500">Held until: {formatDate(job.holdUntil)}</span>}
                       {job.runCount > 0 && <span>Runs: {job.runCount}</span>}
                     </div>
                     {job.lastError && (
