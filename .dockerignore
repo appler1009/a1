@@ -1,11 +1,4 @@
-# Dependencies
-node_modules
-*/node_modules
-**/node_modules
-
-# Build artifacts (will be rebuilt inside Docker)
-dist
-*/dist
+# Build artifacts cache (not needed — we copy pre-built dist/)
 **/.parcel-cache
 *.tsbuildinfo
 **/*.tsbuildinfo
