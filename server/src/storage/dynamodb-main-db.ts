@@ -160,13 +160,13 @@ function toScheduledJob(item: Record<string, unknown>): ScheduledJob {
   };
 }
 
-function toMessageRow(item: Record<string, unknown>) {
+function toMessageRow(item: Record<string, unknown>): import('./main-db-interface.js').MessageRow {
   return {
     id: item.messageId as string,
     userId: item.userId as string,
     roleId: item.roleId as string,
     groupId: (item.groupId as string) || null,
-    role: item.role as string,
+    from: item.from as import('./main-db-interface.js').MessageFrom,
     content: item.content as string,
     createdAt: item.createdAt as string,
   };
@@ -843,7 +843,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     userId: string;
     roleId: string;
     groupId: string | null;
-    role: string;
+    from: import('./main-db-interface.js').MessageFrom;
     content: string;
     createdAt: string | Date;
   }): Promise<void> {
@@ -854,7 +854,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       messageId: entry.id,
       userId: entry.userId,
       roleId: entry.roleId,
-      role: entry.role,
+      from: entry.from,
       content: entry.content,
       createdAt,
     };

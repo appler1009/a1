@@ -104,7 +104,7 @@ export class JobRunner {
       userId: job.userId,
       roleId: job.roleId,
       groupId: null,
-      role: 'system',
+      from: 'system' as const,
       content: `*Scheduled job: ${shortDesc}*`,
       createdAt: now,
     });
@@ -116,7 +116,7 @@ export class JobRunner {
         userId: job.userId,
         roleId: job.roleId,
         groupId: null,
-        role: 'assistant',
+        from: 'system' as const,
         content: lastAssistant.content,
         createdAt: new Date().toISOString(),
       });

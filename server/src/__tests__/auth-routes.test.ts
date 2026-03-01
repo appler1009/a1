@@ -81,6 +81,16 @@ mock.module('../storage/index.js', () => ({
   })),
 }));
 
+mock.module('../config/index.js', () => ({
+  config: {
+    env: { nodeEnv: 'test', isDevelopment: false, isTest: true, isProduction: false },
+    frontendUrl: 'http://localhost:5173',
+    storage: { type: 'fs', root: './data' },
+    google: { clientId: '', clientSecret: '', redirectUri: 'http://localhost:3000/api/auth/google/callback' },
+    github: { clientId: '', clientSecret: '', redirectUri: 'http://localhost:3000/api/auth/github/callback' },
+  },
+}));
+
 // Import the route module after mocks are registered.
 const { authRoutes } = await import('../api/auth.js');
 

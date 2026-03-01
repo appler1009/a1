@@ -111,7 +111,7 @@ export class Scheduler {
         userId: job.userId,
         roleId: job.roleId,
         groupId: null,
-        role: 'system',
+        from: 'system' as const,
         content: `*Scheduled job failed: ${shortDesc}*`,
         createdAt: now,
       });
@@ -120,7 +120,7 @@ export class Scheduler {
         userId: job.userId,
         roleId: job.roleId,
         groupId: null,
-        role: 'assistant',
+        from: 'system' as const,
         content: `**Error running scheduled task:**\n\`\`\`\n${errorMsg}\n\`\`\``,
         createdAt: new Date().toISOString(),
       });

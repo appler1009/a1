@@ -37,11 +37,13 @@ export interface Role {
   createdAt: string;
 }
 
+export type MessageFrom = 'user' | 'assistant' | 'tool' | 'system';
+
 export interface Message {
   id: string;
   roleId: string;
   content: string;
-  role: 'user' | 'assistant' | 'system';
+  from: MessageFrom;
   createdAt: string;
 }
 
@@ -175,7 +177,17 @@ export const useRolesStore = create<RolesState>()(
                 }
               }
 
-              // If neither worked, use the first available role
+              // If localStorage didn't work, try the server's per-user current role (cross-device restore)
+              if (!newCurrentRole && serverCurrentRoleId) {
+                const existingRole = fetchedRoles.find(r => r.id === serverCurrentRoleId);
+                if (existingRole) {
+                  console.log('[Roles] Restored role from server per-user currentRoleId:', serverCurrentRoleId);
+                  newCurrentRole = existingRole;
+                  newCurrentRoleId = existingRole.id;
+                }
+              }
+
+              // Final fallback: first available role
               if (!newCurrentRole && fetchedRoles.length > 0) {
                 console.log('[Roles] No stored role found, using first available role:', fetchedRoles[0].id);
                 newCurrentRole = fetchedRoles[0];
@@ -296,7 +308,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         body: JSON.stringify({
           id: message.id,
           roleId: message.roleId,
-          role: message.role,
+          from: message.from,
           content: message.content,
         }),
       });

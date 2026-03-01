@@ -25,7 +25,7 @@ function makeMessage(overrides: Partial<Message> = {}): Message {
     id: 'msg-1',
     roleId: 'role-1',
     content: 'Hello world',
-    role: 'user',
+    from: 'user',
     createdAt: new Date('2024-03-01T12:00:00Z').toISOString(),
     ...overrides,
   };
@@ -38,37 +38,37 @@ describe('MessageItem rendering', () => {
   });
 
   it('user messages are right-aligned (justify-end)', () => {
-    const { container } = render(<MessageItem message={makeMessage({ role: 'user' })} />);
+    const { container } = render(<MessageItem message={makeMessage({ from: 'user' })} />);
     const wrapper = container.firstElementChild;
     expect(wrapper?.className).toContain('justify-end');
   });
 
   it('assistant messages are left-aligned (justify-start)', () => {
     const { container } = render(
-      <MessageItem message={makeMessage({ role: 'assistant', content: 'Hi there' })} />,
+      <MessageItem message={makeMessage({ from: 'assistant', content: 'Hi there' })} />,
     );
     const wrapper = container.firstElementChild;
     expect(wrapper?.className).toContain('justify-start');
   });
 
-  it('system messages are left-aligned and styled differently', () => {
+  it('tool call messages are left-aligned and styled differently', () => {
     const { container } = render(
-      <MessageItem message={makeMessage({ role: 'system', content: '*tool call*' })} />,
+      <MessageItem message={makeMessage({ from: 'tool', content: '*tool call*' })} />,
     );
     const wrapper = container.firstElementChild;
     expect(wrapper?.className).toContain('justify-start');
   });
 
   it('shows timestamp for user messages', () => {
-    render(<MessageItem message={makeMessage({ role: 'user' })} />);
+    render(<MessageItem message={makeMessage({ from: 'user' })} />);
     // The timestamp is rendered as a localeTimeString — just check something is there
     const timestamps = document.querySelectorAll('.text-xs.opacity-70');
     expect(timestamps.length).toBeGreaterThan(0);
   });
 
-  it('does NOT show timestamp for system messages', () => {
+  it('does NOT show timestamp for tool call messages', () => {
     const { container } = render(
-      <MessageItem message={makeMessage({ role: 'system', content: '*search*' })} />,
+      <MessageItem message={makeMessage({ from: 'tool', content: '*search*' })} />,
     );
     const timestamps = container.querySelectorAll('.text-xs.opacity-70');
     expect(timestamps.length).toBe(0);

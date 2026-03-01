@@ -1334,7 +1334,7 @@ export class MainDatabase implements IMainDatabase {
     userId: string;
     roleId: string;
     groupId: string | null;
-    role: string;
+    from: import('./main-db-interface.js').MessageFrom;
     content: string;
     createdAt: string | Date;
   }): Promise<void> {
@@ -1345,14 +1345,14 @@ export class MainDatabase implements IMainDatabase {
     this.db.prepare(`
       INSERT OR IGNORE INTO messages (id, userId, roleId, groupId, role, content, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(entry.id, entry.userId, entry.roleId, entry.groupId ?? null, entry.role, entry.content, createdAt);
+    `).run(entry.id, entry.userId, entry.roleId, entry.groupId ?? null, entry.from, entry.content, createdAt);
   }
 
   async listMessages(
     userId: string,
     roleId: string,
     options: { limit?: number; before?: string } = {}
-  ): Promise<Array<{ id: string; userId: string; roleId: string; groupId: string | null; role: string; content: string; createdAt: string }>> {
+  ): Promise<import('./main-db-interface.js').MessageRow[]> {
     const limit = options.limit ?? 50;
 
     let query = `SELECT * FROM messages WHERE userId = ? AND roleId = ?`;
@@ -1377,7 +1377,10 @@ export class MainDatabase implements IMainDatabase {
     }>;
 
     // Return in ascending order (oldest first)
-    return rows.reverse();
+    return rows.reverse().map(row => ({
+      ...row,
+      from: row.role as import('./main-db-interface.js').MessageFrom,
+    }));
   }
 
   async searchMessages(
@@ -1385,7 +1388,7 @@ export class MainDatabase implements IMainDatabase {
     roleId: string,
     keyword: string,
     options: { limit?: number } = {}
-  ): Promise<Array<{ id: string; userId: string; roleId: string; groupId: string | null; role: string; content: string; createdAt: string }>> {
+  ): Promise<import('./main-db-interface.js').MessageRow[]> {
     const limit = options.limit ?? 100;
 
     const rows = this.db.prepare(`
@@ -1403,7 +1406,7 @@ export class MainDatabase implements IMainDatabase {
       createdAt: string;
     }>;
 
-    return rows;
+    return rows.map(row => ({ ...row, from: row.role as import('./main-db-interface.js').MessageFrom }));
   }
 
   async clearMessages(userId: string, roleId: string): Promise<void> {

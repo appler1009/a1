@@ -1013,8 +1013,9 @@ fastify.register(async (instance) => {
       roles = await mainDb.getUserRoles(request.user.id);
     }
 
-    // Include the currently active role ID
-    const currentRoleId = serverCurrentRoleId;
+    // Return the per-user current role ID (persisted across devices)
+    const userCurrentRoleId = await mainDb.getSetting<string>(`user:${request.user.id}:currentRoleId`);
+    const currentRoleId = userCurrentRoleId || serverCurrentRoleId;
 
     console.log(`[/api/roles] ✓ Found ${roles.length} roles`);
     if (roles.length > 0) {
@@ -1022,7 +1023,7 @@ fastify.register(async (instance) => {
     } else {
       console.log(`[/api/roles] ⚠️  NO ROLES FOUND FOR THIS USER!`);
     }
-    console.log(`[/api/roles] Current role ID from server: ${currentRoleId}`);
+    console.log(`[/api/roles] Current role ID (per-user): ${currentRoleId}`);
 
     return reply.send({
       success: true,
@@ -1205,9 +1206,10 @@ fastify.register(async (instance) => {
       return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
     }
 
-    // Set the current role
+    // Set the current role (global and per-user)
     serverCurrentRoleId = params.id;
-    
+    await mainDb.setSetting(`user:${request.user.id}:currentRoleId`, params.id);
+
     // Switch MCP servers to the new role
     // This will disconnect auth-required servers and load role-specific MCP configs
     await mcpManager.switchRole(params.id, request.user.id);
@@ -1492,6 +1494,11 @@ fastify.register(async (instance) => {
     console.log(`[/api/messages GET] Previous role: ${previousRoleId || 'none'}, Role changed: ${roleChanged}`);
     serverCurrentRoleId = roleId;
 
+    // Persist the user's current role for cross-device restoration (on initial fetch only, not pagination)
+    if (!query.before) {
+      await mainDb.setSetting(`user:${request.user.id}:currentRoleId`, roleId);
+    }
+
     // Switch MCP servers if role changed
     if (roleChanged) {
       console.log(`[/api/messages GET] Role changed, switching MCP servers...`);
@@ -1515,11 +1522,11 @@ fastify.register(async (instance) => {
       id?: string;
       roleId: string;
       groupId?: string;
-      role: 'user' | 'assistant' | 'system';
+      from: import('./storage/main-db-interface.js').MessageFrom;
       content: string;
     };
 
-    console.log(`[/api/messages POST] User: ${request.user.id}, RoleId: ${body.roleId}, Message role: ${body.role}`);
+    console.log(`[/api/messages POST] User: ${request.user.id}, RoleId: ${body.roleId}, from: ${body.from}`);
 
     const mainDb = await getMainDatabase(config.storage.root);
 
@@ -1535,7 +1542,7 @@ fastify.register(async (instance) => {
       roleId: body.roleId,
       groupId: body.groupId || null,
       userId: request.user.id,
-      role: body.role,
+      from: body.from,
       content: body.content,
       createdAt: new Date().toISOString(),
     };
@@ -1617,7 +1624,7 @@ fastify.register(async (instance) => {
         roleId: string;
         groupId?: string | null;
         userId?: string;
-        role: 'user' | 'assistant' | 'system';
+        from: import('./storage/main-db-interface.js').MessageFrom;
         content: string;
         createdAt: string;
       }>;

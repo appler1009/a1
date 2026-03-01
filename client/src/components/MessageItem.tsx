@@ -80,23 +80,25 @@ export const MessageItem = memo(function MessageItem({ message, highlightKeyword
     }
   };
 
+  const isToolCall = message.from === 'tool';
+
   return (
     <div
       data-message-id={message.id}
       className={`flex ${
-        message.role === 'user' ? 'justify-end' : 'justify-start'
-      } ${message.role === 'system' ? '-my-2' : ''}`}
+        message.from === 'user' ? 'justify-end' : 'justify-start'
+      } ${isToolCall ? '-my-2' : ''}`}
     >
       <div
         className={`max-w-[80%] rounded-lg ${
-          message.role === 'user'
+          message.from === 'user'
             ? 'bg-primary text-primary-foreground px-4 py-2'
-            : message.role === 'system'
+            : isToolCall
             ? 'bg-transparent text-xs italic text-muted-foreground leading-none'
             : 'bg-muted px-4 py-2'
         }`}
       >
-        <div className={message.role === 'system' ? 'system-message' : `prose prose-sm dark:prose-invert max-w-none leading-[1.5]`}>
+        <div className={isToolCall ? 'system-message' : `prose prose-sm dark:prose-invert max-w-none leading-[1.5]`}>
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
@@ -133,7 +135,7 @@ export const MessageItem = memo(function MessageItem({ message, highlightKeyword
             {message.content}
           </ReactMarkdown>
         </div>
-        {message.role !== 'system' && (
+        {!isToolCall && (
           <p className="text-xs opacity-70 mt-1 mb-0">
             {new Date(message.createdAt).toLocaleTimeString()}
           </p>
@@ -147,7 +149,7 @@ export const MessageItem = memo(function MessageItem({ message, highlightKeyword
   return (
     prevProps.message.id === nextProps.message.id &&
     prevProps.message.content === nextProps.message.content &&
-    prevProps.message.role === nextProps.message.role &&
+    prevProps.message.from === nextProps.message.from &&
     prevProps.highlightKeyword === nextProps.highlightKeyword
   );
 });

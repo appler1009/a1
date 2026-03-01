@@ -3,12 +3,14 @@ import type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob } from 
 
 export type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob };
 
+export type MessageFrom = 'user' | 'assistant' | 'tool' | 'system';
+
 export type MessageRow = {
   id: string;
   userId: string;
   roleId: string;
   groupId: string | null;
-  role: string;
+  from: MessageFrom;
   content: string;
   createdAt: string;
 };
@@ -102,7 +104,7 @@ export interface IMainDatabase {
     userId: string;
     roleId: string;
     groupId: string | null;
-    role: string;
+    from: MessageFrom;
     content: string;
     createdAt: string | Date;
   }): Promise<void>;

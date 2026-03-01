@@ -331,7 +331,7 @@ export function ChatPane() {
       roleId: activeRoleId,
       groupId: currentGroup?.id || null,
       userId: user.id,
-      role: 'user' as const,
+      from: 'user' as const,
       content: input.trim(),
       createdAt: new Date().toISOString(),
     };
@@ -345,10 +345,12 @@ export function ChatPane() {
       const response = await apiFetch('/api/chat/stream', {
         method: 'POST',
         body: JSON.stringify({
-          messages: [...roleMessages, userMessage].map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
+          messages: [...roleMessages, userMessage]
+            .filter(m => m.from === 'user' || m.from === 'assistant')
+            .map((m) => ({
+              role: m.from,
+              content: m.content,
+            })),
           roleId: currentRole?.id,
           groupId: currentGroup?.id,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -412,7 +414,7 @@ export function ChatPane() {
                       roleId: activeRoleId,
                       groupId: currentGroup?.id || null,
                       userId: user.id,
-                      role: 'assistant' as const,
+                      from: 'assistant' as const,
                       content: fullContent.trim(),
                       createdAt: new Date().toISOString(),
                     };
@@ -497,7 +499,7 @@ export function ChatPane() {
                     roleId: activeRoleId,
                     groupId: currentGroup?.id || null,
                     userId: user.id,
-                    role: 'system' as const,
+                    from: 'tool' as const,
                     content: `*${toolLabel}*${accountSuffix}`,
                     createdAt: new Date().toISOString(),
                   };
@@ -537,7 +539,7 @@ export function ChatPane() {
             roleId: activeRoleId,
             groupId: currentGroup?.id || null,
             userId: user.id,
-            role: 'assistant' as const,
+            from: 'assistant' as const,
             content: fullContent,
             createdAt: new Date().toISOString(),
           };
