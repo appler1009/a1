@@ -1,5 +1,6 @@
 # Build stage
 FROM oven/bun:1-alpine AS builder
+RUN apt-get update && apt-get install -y libc6 libgomp1 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
