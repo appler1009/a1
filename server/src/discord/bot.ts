@@ -11,6 +11,7 @@ import { getMainDatabase } from '../storage/index.js';
 import { authService } from '../auth/index.js';
 import { pendingRoleChanges } from './pending-role-changes.js';
 import { extractEmailDataFromMarker, isDisplayEmailMarker } from '../mcp/in-process/display-email.js';
+import { config as appConfig } from '../config/index.js';
 
 /**
  * Session tracking for Discord users
@@ -43,17 +44,16 @@ interface DiscordBotConfig {
  * Called from the main server after Fastify starts
  */
 export async function startDiscordBot(port: number): Promise<void> {
-  const token = process.env.DISCORD_BOT_TOKEN;
-  const clientId = process.env.DISCORD_CLIENT_ID;
-  const channelIdsEnv = process.env.DISCORD_CHANNEL_IDS || '';
-  const channelIds = channelIdsEnv.split(',').map(id => id.trim()).filter(id => id.length > 0);
+  const token = appConfig.discord.botToken;
+  const clientId = appConfig.discord.clientId;
+  const channelIds = appConfig.discord.channelIds;
 
   if (!token) {
     console.log('[Discord] Bot token not set - Discord bot disabled');
     return;
   }
 
-  const config: DiscordBotConfig = {
+  const botConfig: DiscordBotConfig = {
     token,
     clientId,
     channelIds,
@@ -76,7 +76,7 @@ export async function startDiscordBot(port: number): Promise<void> {
   });
 
   client.on(Events.MessageCreate, async (message) => {
-    await handleMessage(message, config);
+    await handleMessage(message, botConfig);
   });
 
   try {
@@ -147,7 +147,7 @@ async function handleMessage(message: any, config: DiscordBotConfig): Promise<vo
     console.log(`[Discord] Message from ${message.author.username}: ${message.content.substring(0, 50)}`);
 
     // Look up app user
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(appConfig.storage.root);
     const appUser = await mainDb.getUserByDiscordId(message.author.id);
 
     if (!appUser) {

@@ -6,6 +6,7 @@ import path from 'path';
 import { PREDEFINED_MCP_SERVERS, PredefinedMCPServer } from './predefined-servers.js';
 import { adapterRegistry } from './adapters/registry.js';
 import { MultiAccountAdapter } from './adapters/MultiAccountAdapter.js';
+import { config as appConfig } from '../config/index.js';
 
 /** Server IDs that support multiple authenticated accounts simultaneously */
 const MULTI_ACCOUNT_SERVER_IDS = new Set(['gmail-mcp-lib', 'google-drive-mcp-lib']);
@@ -38,7 +39,7 @@ export class MCPManager {
   private inProcessAdapters: Map<string, McpAdapter> = new Map();
   private db: IMainDatabase | null = null;
   private currentRoleId: string | null = null;
-  private dataDir: string = process.env.STORAGE_ROOT || './data';
+  private get dataDir(): string { return appConfig.storage.root; }
 
   /**
    * Initialize the MCP manager and load persisted configs
@@ -782,9 +783,9 @@ export class MCPManager {
 
       const credentials = {
         installed: {
-          client_id: process.env.GOOGLE_CLIENT_ID || '',
-          client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
-          redirect_uris: [process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback'],
+          client_id: appConfig.google.clientId,
+          client_secret: appConfig.google.clientSecret,
+          redirect_uris: [appConfig.google.redirectUri],
         },
       };
 

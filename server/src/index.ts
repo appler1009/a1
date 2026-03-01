@@ -9,6 +9,14 @@ const nodeEnv = process.env.NODE_ENV || 'development';
 const envFile = path.join(__dirname, '..', `.env.${nodeEnv}`);
 dotenvConfig({ path: envFile });
 
+// Load secrets from AWS Secrets Manager before config is assembled.
+// No-op when AWS_SECRETS_ENABLED is not set (local development).
+import { loadSecrets } from './config/secrets.js';
+await loadSecrets();
+
+import { initConfig, config } from './config/index.js';
+initConfig();
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
@@ -28,45 +36,6 @@ import { JobRunner } from './scheduler/job-runner.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import fs from 'fs';
 
-// Configuration
-const config = {
-  env: {
-    nodeEnv,
-    isDevelopment: nodeEnv === 'development',
-    isTest: nodeEnv === 'test',
-    isProduction: nodeEnv === 'production',
-  },
-  port: parseInt(process.env.PORT || '3000', 10),
-  host: process.env.HOST || '0.0.0.0',
-  database: {
-    type: 'sqlite' as const,
-    path: process.env.DATABASE_PATH || './data/metadata.db',
-  },
-  storage: {
-    type: (process.env.STORAGE_TYPE as 'fs' | 'sqlite' | 's3') || 'fs',
-    root: process.env.STORAGE_ROOT || './data',
-    bucket: process.env.STORAGE_BUCKET || undefined,
-    endpoint: process.env.STORAGE_ENDPOINT || undefined,
-    region: process.env.STORAGE_REGION || undefined,
-  },
-  auth: {
-    secret: process.env.AUTH_SECRET || uuidv4(),
-    sessionTTL: 30 * 24 * 60 * 60 * 1000, // 30 days
-  },
-  gmail: {
-    clientId: process.env.GMAIL_CLIENT_ID || '',
-    clientSecret: process.env.GMAIL_CLIENT_SECRET || '',
-    redirectUri: process.env.GMAIL_REDIRECT_URI || 'http://localhost:3000/api/gmail/callback',
-  },
-  llm: {
-    provider: (process.env.LLM_PROVIDER as 'grok' | 'openai' | 'anthropic') || 'grok',
-    grokKey: process.env.GROK_API_KEY || '',
-    openaiKey: process.env.OPENAI_API_KEY || '',
-    anthropicKey: process.env.ANTHROPIC_API_KEY || '',
-    defaultModel: process.env.DEFAULT_MODEL,
-    routerEnabled: process.env.ROUTER_ENABLED === 'true',
-  },
-};
 
 // Helper function to get file extension for a programming language
 function getExtensionForLanguage(language: string): string {
@@ -183,7 +152,7 @@ declare module 'fastify' {
 // Create Fastify instance
 const fastify = Fastify({
   logger: {
-    level: process.env.LOG_LEVEL || 'info',
+    level: config.logLevel,
   },
 });
 
@@ -195,11 +164,11 @@ let scheduler: Scheduler | null = null;
 
 // Global storage instance - initialized before routes (deprecated, kept for backward compatibility)
 const storage = createStorage({
-  type: (process.env.STORAGE_TYPE as 'fs' | 'sqlite' | 's3') || 'fs',
-  root: process.env.STORAGE_ROOT || './data',
-  bucket: process.env.STORAGE_BUCKET || '',
-  endpoint: process.env.STORAGE_ENDPOINT,
-  region: process.env.STORAGE_REGION,
+  type: config.storage.type,
+  root: config.storage.root,
+  bucket: config.storage.bucket || '',
+  endpoint: config.storage.endpoint,
+  region: config.storage.region,
 });
 
 // Module-level current role tracking (replaces roleStorage.currentRoleId)
@@ -215,7 +184,7 @@ const DEFAULT_SETTINGS: Record<string, unknown> = {
  * Only sets values that don't already exist
  */
 async function initializeDefaultSettings(): Promise<void> {
-  const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+  const mainDb = await getMainDatabase(config.storage.root);
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     const existing = await mainDb.getSetting(key);
     if (existing === null) {
@@ -334,7 +303,7 @@ async function seedSkills(mainDb: IMainDatabase): Promise<void> {
  * Get a setting value with fallback to default
  */
 async function getSettingWithDefault<T>(key: string, defaultValue: T): Promise<T> {
-  const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+  const mainDb = await getMainDatabase(config.storage.root);
   const value = await mainDb.getSetting<T>(key);
   return value !== null ? value : defaultValue;
 }
@@ -404,9 +373,9 @@ async function downloadGoogleDriveFile(
       
       try {
         const googleOAuth = new GoogleOAuthHandler({
-          clientId: process.env.GOOGLE_CLIENT_ID || '',
-          clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-          redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
+          clientId: config.google.clientId,
+          clientSecret: config.google.clientSecret,
+          redirectUri: config.google.redirectUri,
         });
         
         const newTokens = await googleOAuth.refreshAccessToken(oauthToken.refreshToken);
@@ -687,7 +656,7 @@ if (!config.env.isProduction) {
     if (!body.email) {
       return reply.code(400).send({ success: false, error: { message: 'email required' } });
     }
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
     const user = await mainDb.getUserByEmail(body.email);
     if (user) {
       await mainDb.deleteUser(user.id);
@@ -734,7 +703,7 @@ fastify.addHook('onRequest', async (request) => {
   const headerRoleId = request.headers['x-role-id'] as string | undefined;
   if (headerRoleId && request.user) {
     // Verify the user owns this role before setting it
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
     const role = await mainDb.getRole(headerRoleId);
     if (role && role.userId === request.user.id) {
       // Set the current role for this request
@@ -1033,7 +1002,7 @@ fastify.register(async (instance) => {
     console.log(`[/api/roles] User email: ${request.user.email}`);
 
     const query = request.query as { groupId?: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     let roles: RoleDefinition[];
     if (query.groupId) {
@@ -1082,7 +1051,7 @@ fastify.register(async (instance) => {
       });
     }
 
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
     const role = await mainDb.getRole(currentRoleId);
 
     // Verify ownership
@@ -1115,7 +1084,7 @@ fastify.register(async (instance) => {
     const body = request.body as { groupId?: string; name: string; jobDesc?: string; systemPrompt?: string; model?: string };
 
     try {
-      const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+      const mainDb = await getMainDatabase(config.storage.root);
       const role = await mainDb.createRole(
         request.user.id,
         body.name,
@@ -1140,7 +1109,7 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
     const role = await mainDb.getRole(params.id);
 
     if (!role) {
@@ -1163,7 +1132,7 @@ fastify.register(async (instance) => {
 
     const params = request.params as { id: string };
     const body = request.body as { name?: string; jobDesc?: string; systemPrompt?: string; model?: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify ownership
     const existingRole = await mainDb.getRole(params.id);
@@ -1186,7 +1155,7 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify ownership
     const existingRole = await mainDb.getRole(params.id);
@@ -1204,7 +1173,7 @@ fastify.register(async (instance) => {
     }
 
     // Delete memory DB file if it exists
-    const dataDir = process.env.STORAGE_ROOT || './data';
+    const dataDir = config.storage.root;
     (mainDb as MainDatabase).deleteMemoryDb(dataDir, params.id);
 
     // Delete role messages from main.db
@@ -1224,7 +1193,7 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify ownership
     const role = await mainDb.getRole(params.id);
@@ -1262,7 +1231,7 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify ownership
     const role = await mainDb.getRole(params.id);
@@ -1328,7 +1297,7 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     const role = await mainDb.getRole(params.id);
     if (!role) {
@@ -1390,7 +1359,7 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     const role = await mainDb.getRole(params.id);
     if (!role) {
@@ -1454,7 +1423,7 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     const role = await mainDb.getRole(params.id);
     if (!role) {
@@ -1503,7 +1472,7 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify role ownership
     const role = await mainDb.getRole(roleId);
@@ -1552,7 +1521,7 @@ fastify.register(async (instance) => {
 
     console.log(`[/api/messages POST] User: ${request.user.id}, RoleId: ${body.roleId}, Message role: ${body.role}`);
 
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify role ownership
     const role = await mainDb.getRole(body.roleId);
@@ -1591,7 +1560,7 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify role ownership
     const role = await mainDb.getRole(roleId);
@@ -1616,7 +1585,7 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify role ownership
     const role = await mainDb.getRole(roleId);
@@ -1654,7 +1623,7 @@ fastify.register(async (instance) => {
       }>;
     };
 
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify role ownership
     const role = await mainDb.getRole(body.roleId);
@@ -2715,9 +2684,9 @@ fastify.register(async (instance) => {
           try {
             // Create Google OAuth handler for token refresh
             const googleOAuth = new GoogleOAuthHandler({
-              clientId: process.env.GOOGLE_CLIENT_ID || '',
-              clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-              redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
+              clientId: config.google.clientId,
+              clientSecret: config.google.clientSecret,
+              redirectUri: config.google.redirectUri,
             });
 
             console.log('[ViewerDownload] Refreshing access token...');
@@ -2784,9 +2753,9 @@ fastify.register(async (instance) => {
           
           try {
             const googleOAuth = new GoogleOAuthHandler({
-              clientId: process.env.GOOGLE_CLIENT_ID || '',
-              clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-              redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
+              clientId: config.google.clientId,
+              clientSecret: config.google.clientSecret,
+              redirectUri: config.google.redirectUri,
             });
 
             const newTokens = await googleOAuth.refreshAccessToken(oauthToken.refreshToken);
@@ -3205,7 +3174,7 @@ fastify.register(async (instance) => {
             });
           }
           // Store the API key in mcp_servers under serverId:userId
-          const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+          const mainDb = await getMainDatabase(config.storage.root);
           await mainDb.saveMCPServerConfig(`${serverId}:${request.user.id}`, { apiKey });
           console.log(`[AddPredefinedServer:${requestId}] Stored API key for ${serverId}:${request.user.id}`);
         }
@@ -3215,7 +3184,7 @@ fastify.register(async (instance) => {
       console.log(`[AddPredefinedServer:${requestId}] Creating server config...`);
       // Generate unique instance ID for multi-account support (e.g., gmail-mcp-lib~user@gmail.com)
       const instanceId = accountEmail ? `${predefinedServer.id}~${accountEmail}` : predefinedServer.id;
-      const config = {
+      const serverConfig = {
         id: instanceId,
         name: predefinedServer.name,
         transport: 'stdio' as const,
@@ -3234,7 +3203,7 @@ fastify.register(async (instance) => {
 
       // Prepare token if needed
       let userToken: any;
-      if (config.auth?.provider === 'google') {
+      if (serverConfig.auth?.provider === 'google') {
         console.log(`[AddPredefinedServer:${requestId}] Preparing Google token for account: ${accountEmail || 'auto'}...`);
 
         // Always use user-level OAuth token (role-specific tokens have been migrated)
@@ -3249,7 +3218,7 @@ fastify.register(async (instance) => {
           };
           console.log(`[AddPredefinedServer:${requestId}] Using user-level token (account: ${oauthToken.accountEmail})`);
         }
-      } else if ((config.auth?.provider === 'alphavantage' || config.auth?.provider === 'twelvedata') && apiKey) {
+      } else if ((serverConfig.auth?.provider === 'alphavantage' || serverConfig.auth?.provider === 'twelvedata') && apiKey) {
         userToken = { apiKey };
         console.log(`[AddPredefinedServer:${requestId}] Using API key for ${serverId}`);
       }
@@ -3258,7 +3227,7 @@ fastify.register(async (instance) => {
       // Note: MCP servers are user-level (stored in main.db, shared across roles)
       // No need to call switchRole() - servers work regardless of current role context
       console.log(`[AddPredefinedServer:${requestId}] Calling mcpManager.addServer...`);
-      await mcpManager.addServer(config, userToken);
+      await mcpManager.addServer(serverConfig, userToken);
       console.log(`[AddPredefinedServer:${requestId}] Server added successfully`);
 
       console.log(`[AddPredefinedServer:${requestId}] Sending success response`);
@@ -3429,7 +3398,7 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify role ownership
     const role = await mainDb.getRole(roleId);
@@ -3455,7 +3424,7 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify role ownership
     const role = await mainDb.getRole(roleId);
@@ -3490,7 +3459,7 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'Value is required' } });
     }
 
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify role ownership
     const role = await mainDb.getRole(roleId);
@@ -3518,7 +3487,7 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     // Verify role ownership
     const role = await mainDb.getRole(roleId);
@@ -3541,7 +3510,7 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
     const skills = await mainDb.listSkills();
     // Omit content from list for bandwidth reasons
     const summary = skills.map(({ content: _content, ...rest }) => rest);
@@ -3555,7 +3524,7 @@ fastify.register(async (instance) => {
     }
 
     const { id } = request.params as { id: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
     const skill = await mainDb.getSkill(id);
     if (!skill) {
       return reply.code(404).send({ success: false, error: { message: 'Skill not found' } });
@@ -3590,7 +3559,7 @@ fastify.register(async (instance) => {
 
       // With multi-account support a user can have several Google tokens.
       // Try each one in turn — the right account will return 200; others 403.
-      const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+      const mainDb = await getMainDatabase(config.storage.root);
       const allTokens = await mainDb.getAllUserOAuthTokens(request.user.id, 'google');
       if (allTokens.length === 0) {
         return reply.code(401).send({ success: false, error: { message: 'Google OAuth token not found. Please authenticate first.' } });
@@ -3600,9 +3569,9 @@ fastify.register(async (instance) => {
       for (const oauthToken of allTokens) {
         try {
           const oauth2Client = new OAuth2Client(
-            process.env.GOOGLE_CLIENT_ID,
-            process.env.GOOGLE_CLIENT_SECRET,
-            process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
+            config.google.clientId,
+            config.google.clientSecret,
+            config.google.redirectUri,
           );
           oauth2Client.setCredentials({
             access_token: oauthToken.accessToken,
@@ -3662,7 +3631,7 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
     const query = request.query as { status?: string; roleId?: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
     const jobs = await mainDb.listScheduledJobs(request.user.id, {
       status: query.status,
       roleId: query.roleId,
@@ -3689,7 +3658,7 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
     const { id } = request.params as { id: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
     const job = await mainDb.getScheduledJob(id);
     if (!job || job.userId !== request.user.id) {
       return reply.code(404).send({ success: false, error: { message: 'Job not found' } });
@@ -3716,7 +3685,7 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
     const { id } = request.params as { id: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
     const cancelled = await mainDb.cancelScheduledJob(id, request.user.id);
     if (!cancelled) {
       return reply.code(404).send({ success: false, error: { message: 'Job not found or cannot be cancelled' } });
@@ -3741,7 +3710,7 @@ const start = async () => {
     }
 
     // Initialize main database
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
     await mainDb.initialize();
     if ('schema' in migrationResult) console.log(`[Storage] Using ${migrationResult.schema.toUpperCase()} schema`);
     fastify.log.info('Main database initialized');
@@ -3776,8 +3745,15 @@ const start = async () => {
     // re-register here with a shared path as that would overwrite the role-aware factory.
 
     // Initialize LLM router
-    llmRouter = createLLMRouter(config.llm);
-    fastify.log.info({ provider: config.llm.provider, hasGrokKey: !!config.llm.grokKey }, 'LLM router initialized');
+    llmRouter = createLLMRouter({
+      provider: config.llm.provider,
+      grokKey: config.llm.grokApiKey,
+      openaiKey: config.llm.openaiApiKey,
+      anthropicKey: config.llm.anthropicApiKey,
+      defaultModel: config.llm.defaultModel,
+      routerEnabled: config.llm.routerEnabled,
+    });
+    fastify.log.info({ provider: config.llm.provider, hasGrokKey: !!config.llm.grokApiKey }, 'LLM router initialized');
 
     // Initialize and start scheduler
     const jobRunner = new JobRunner(llmRouter, mainDb, executeToolWithAdapters);

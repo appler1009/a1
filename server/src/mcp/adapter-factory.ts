@@ -5,6 +5,7 @@ import { adapterRegistry } from './adapters/registry.js';
 import { authService } from '../auth/index.js';
 import { getMainDatabase } from '../storage/main-db.js';
 import { mcpManager } from './manager.js';
+import { config } from '../config/index.js';
 
 /**
  * Extract the base server ID from a potentially unique instance ID.
@@ -80,9 +81,9 @@ async function getGoogleTokenData(userId: string, credentialsPath?: string): Pro
     try {
       const { GoogleOAuthHandler } = await import('../auth/google-oauth.js');
       const googleOAuth = new GoogleOAuthHandler({
-        clientId: process.env.GOOGLE_CLIENT_ID || '',
-        clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-        redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
+        clientId: config.google.clientId,
+        clientSecret: config.google.clientSecret,
+        redirectUri: config.google.redirectUri,
       });
 
       const newTokens = await googleOAuth.refreshAccessToken(oauthToken.refreshToken);
@@ -136,9 +137,9 @@ async function prepareUserMcpDir(
     const credentialsPath = path.join(cwd, 'gcp-oauth.keys.json');
     const credentials = {
       installed: {
-        client_id: process.env.GOOGLE_CLIENT_ID || '',
-        client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
-        redirect_uris: [process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback'],
+        client_id: config.google.clientId,
+        client_secret: config.google.clientSecret,
+        redirect_uris: [config.google.redirectUri],
       },
     };
     await fs.mkdir(path.dirname(credentialsPath), { recursive: true });
@@ -225,7 +226,7 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
     let tokenData: any;
     if (isRoleScoped && roleId) {
       if (baseServerId === 'memory' || baseServerId === 'Memory') {
-        tokenData = { roleId, dbPath: path.join(process.env.STORAGE_ROOT || './data', `memory_${roleId}.db`) };
+        tokenData = { roleId, dbPath: path.join(config.storage.root, `memory_${roleId}.db`) };
       } else {
         tokenData = { roleId };
       }

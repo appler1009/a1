@@ -5,6 +5,7 @@ import { authService } from '../auth/index.js';
 import { GoogleOAuthHandler } from '../auth/google-oauth.js';
 import { GitHubOAuthHandler } from '../auth/github-oauth.js';
 import { getMainDatabase } from '../storage/index.js';
+import { config } from '../config/index.js';
 
 export async function authRoutes(fastify: FastifyInstance) {
   // Check if email exists
@@ -39,7 +40,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     reply.setCookie('session_id', session.id, {
       path: '/',
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.env.isProduction,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
@@ -71,7 +72,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     reply.setCookie('session_id', session.id, {
       path: '/',
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.env.isProduction,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
@@ -120,7 +121,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     reply.setCookie('session_id', session.id, {
       path: '/',
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.env.isProduction,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
@@ -197,7 +198,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     reply.setCookie('session_id', session.id, {
       path: '/',
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.env.isProduction,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
@@ -281,7 +282,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
 
     const body = request.body as { name?: string; discordUserId?: string; locale?: string; timezone?: string };
-    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(config.storage.root);
 
     const updates: Partial<{ name?: string; discordUserId?: string; locale?: string; timezone?: string }> = {};
     if (body.name !== undefined) updates.name = body.name;
@@ -311,9 +312,9 @@ export async function authRoutes(fastify: FastifyInstance) {
 
   // Google OAuth flow
   const googleOAuth = new GoogleOAuthHandler({
-    clientId: process.env.GOOGLE_CLIENT_ID || '',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-    redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback',
+    clientId: config.google.clientId,
+    clientSecret: config.google.clientSecret,
+    redirectUri: config.google.redirectUri,
   });
 
   // Start Google OAuth flow
@@ -401,7 +402,7 @@ export async function authRoutes(fastify: FastifyInstance) {
 
       // Redirect to the frontend callback page with provider info
       // This page will show success message and close the popup
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const frontendUrl = config.frontendUrl;
       const callbackUrl = new URL('/auth/google/callback', frontendUrl);
       callbackUrl.searchParams.set('code', code);
       callbackUrl.searchParams.set('state', state);
@@ -414,7 +415,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     } catch (error) {
       console.error('[GoogleOAuth] Token exchange failed:', error);
       // Redirect to error page instead of sending JSON
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const frontendUrl = config.frontendUrl;
       const errorUrl = new URL('/auth/google/callback', frontendUrl);
       errorUrl.searchParams.set('error', 'token_exchange_failed');
       errorUrl.searchParams.set('state', state);
@@ -488,9 +489,9 @@ export async function authRoutes(fastify: FastifyInstance) {
 
   // GitHub OAuth flow
   const githubOAuth = new GitHubOAuthHandler({
-    clientId: process.env.GITHUB_CLIENT_ID || '',
-    clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
-    redirectUri: process.env.GITHUB_REDIRECT_URI || 'http://localhost:3000/api/auth/github/callback',
+    clientId: config.github.clientId,
+    clientSecret: config.github.clientSecret,
+    redirectUri: config.github.redirectUri,
   });
 
   // Start GitHub OAuth flow
@@ -553,7 +554,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       }
 
       // Redirect to the frontend callback page with provider info
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const frontendUrl = config.frontendUrl;
       const callbackUrl = new URL('/auth/github/callback', frontendUrl);
       callbackUrl.searchParams.set('code', code);
       callbackUrl.searchParams.set('state', state);
@@ -563,7 +564,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     } catch (error) {
       console.error('[GitHubOAuth] Token exchange failed:', error);
       // Redirect to error page
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const frontendUrl = config.frontendUrl;
       const errorUrl = new URL('/auth/github/callback', frontendUrl);
       errorUrl.searchParams.set('error', 'token_exchange_failed');
       errorUrl.searchParams.set('state', state);
