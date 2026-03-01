@@ -134,26 +134,34 @@ The container exposes `GET /health` on port 3000. Configure the ALB target group
 
 ### Task definition (key sections)
 
+Secrets are loaded by the app at startup (not via ECS `secrets` injection). Set `AWS_SECRETS_ENABLED=true` in `environment` and the app calls `loadSecrets()` before building the config.
+
 ```json
 {
   "cpu": "512",
   "memory": "1024",
   "portMappings": [{ "containerPort": 3000 }],
   "environment": [
-    { "name": "NODE_ENV", "value": "production" },
-    { "name": "PORT", "value": "3000" },
-    { "name": "MAIN_DB_TYPE", "value": "dynamodb" },
-    { "name": "DYNAMODB_REGION", "value": "us-east-1" },
-    { "name": "STORAGE_TYPE", "value": "s3" },
-    { "name": "STORAGE_BUCKET", "value": "<bucket>" },
-    { "name": "STORAGE_REGION", "value": "us-east-1" }
-  ],
-  "secrets": [
-    { "name": "AUTH_SECRET", "valueFrom": "arn:aws:secretsmanager:...:secret:app/auth-secret" },
-    { "name": "ANTHROPIC_API_KEY", "valueFrom": "arn:aws:secretsmanager:...:secret:app/llm-keys:anthropic::" }
+    { "name": "NODE_ENV",              "value": "production" },
+    { "name": "PORT",                  "value": "3000" },
+    { "name": "FRONTEND_URL",          "value": "https://<your-domain>" },
+    { "name": "AWS_SECRETS_ENABLED",   "value": "true" },
+    { "name": "AWS_REGION",            "value": "us-east-1" },
+    { "name": "MAIN_DB_TYPE",          "value": "dynamodb" },
+    { "name": "DYNAMODB_REGION",       "value": "us-east-1" },
+    { "name": "STORAGE_TYPE",          "value": "s3" },
+    { "name": "STORAGE_BUCKET",        "value": "<bucket>" },
+    { "name": "STORAGE_REGION",        "value": "us-east-1" },
+    { "name": "LLM_PROVIDER",          "value": "anthropic" },
+    { "name": "DEFAULT_MODEL",         "value": "claude-sonnet-4-6" },
+    { "name": "GOOGLE_REDIRECT_URI",   "value": "https://<your-domain>/api/auth/google/callback" },
+    { "name": "GMAIL_REDIRECT_URI",    "value": "https://<your-domain>/api/gmail/callback" },
+    { "name": "GITHUB_REDIRECT_URI",   "value": "https://<your-domain>/api/auth/github/callback" }
   ]
 }
 ```
+
+All secrets (`AUTH_SECRET`, API keys, OAuth credentials, Discord token) are fetched from Secrets Manager by the app — no `secrets` array is needed in the task definition.
 
 ### OAuth redirect URIs
 
@@ -238,17 +246,23 @@ Enable **SSE-KMS** on the bucket and block all public access.
 
 ### Secrets Management
 
-Store in AWS Secrets Manager:
+The app fetches secrets from Secrets Manager at startup when `AWS_SECRETS_ENABLED=true` is set (via `loadSecrets()` in `server/src/config/secrets.ts`). Each secret is read and written to `process.env`, then `initConfig()` snapshots those values into the typed `AppConfig` singleton. Existing env vars always win over Secrets Manager, so individual values can be overridden in the task definition without editing the secret.
 
-| Secret path | Contents |
-|---|---|
-| `app/auth-secret` | `AUTH_SECRET` value |
-| `app/llm-keys` | JSON: `{ anthropic, openai, grok }` |
-| `app/oauth-google` | JSON: `{ clientId, clientSecret }` |
-| `app/oauth-github` | JSON: `{ clientId, clientSecret }` |
-| `app/oauth-gmail` | JSON: `{ clientId, clientSecret }` |
+| Secret path | Format | Env vars populated |
+|---|---|---|
+| `app/auth-secret` | Plain string | `AUTH_SECRET` |
+| `app/llm-keys` | JSON `{ anthropic, openai, grok }` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROK_API_KEY` |
+| `app/oauth-google` | JSON `{ clientId, clientSecret }` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` |
+| `app/oauth-gmail` | JSON `{ clientId, clientSecret }` | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` |
+| `app/oauth-github` | JSON `{ clientId, clientSecret }` | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` |
+| `app/discord` | JSON `{ token, clientId }` | `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID` |
 
-Reference secrets by ARN in the ECS task definition `secrets` array (injected as env vars at container startup). **Do not put secrets in `environment` — those are stored in plaintext in the task definition.**
+`app/auth-secret` is **required** — startup fails if it cannot be loaded. All other secrets are optional and produce a warning if missing.
+
+**Not stored in Secrets Manager** — set these in the task definition `environment` array:
+- OAuth redirect URIs (`GOOGLE_REDIRECT_URI`, `GMAIL_REDIRECT_URI`, `GITHUB_REDIRECT_URI`) — must point to your production domain
+- `DISCORD_CHANNEL_IDS` — comma-separated list of channel IDs the bot listens in
+- All infrastructure variables (`MAIN_DB_TYPE`, `DYNAMODB_REGION`, `STORAGE_TYPE`, etc.)
 
 ### Why not AWS Secrets Manager for OAuth tokens
 
