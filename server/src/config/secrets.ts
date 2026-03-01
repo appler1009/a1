@@ -50,11 +50,17 @@ function parseJson(raw: string): Record<string, string> {
 
 // ── Secret mappings ───────────────────────────────────────────────────────────
 
+function appEnv(): string {
+  const nodeEnv = process.env.NODE_ENV ?? 'development';
+  return nodeEnv === 'production' ? 'prod' : nodeEnv;
+}
+
 function buildMappings(): SecretMapping[] {
+  const env = appEnv();
   return [
     // ── AUTH_SECRET ─────────────────────────────────────────────────────────
     {
-      secretId: process.env.SECRET_AUTH_NAME ?? 'app/auth-secret',
+      secretId: process.env.SECRET_AUTH_NAME ?? `a1/${env}/auth-secret`,
       required: true,
       apply(value) {
         setIfUnset('AUTH_SECRET', value.trim());
@@ -64,7 +70,7 @@ function buildMappings(): SecretMapping[] {
     // ── LLM API keys ────────────────────────────────────────────────────────
     // Secret value: JSON { "anthropic": "sk-ant-...", "openai": "...", "grok": "..." }
     {
-      secretId: process.env.SECRET_LLM_KEYS_NAME ?? 'app/llm-keys',
+      secretId: process.env.SECRET_LLM_KEYS_NAME ?? `a1/${env}/llm-keys`,
       apply(value) {
         const keys = parseJson(value);
         setIfUnset('ANTHROPIC_API_KEY', keys.anthropic);
@@ -76,7 +82,7 @@ function buildMappings(): SecretMapping[] {
     // ── Google OAuth ─────────────────────────────────────────────────────────
     // Secret value: JSON { "clientId": "...", "clientSecret": "..." }
     {
-      secretId: process.env.SECRET_OAUTH_GOOGLE_NAME ?? 'app/oauth-google',
+      secretId: process.env.SECRET_OAUTH_GOOGLE_NAME ?? `a1/${env}/oauth-google`,
       apply(value) {
         const creds = parseJson(value);
         setIfUnset('GOOGLE_CLIENT_ID', creds.clientId);
@@ -87,7 +93,7 @@ function buildMappings(): SecretMapping[] {
     // ── Gmail OAuth ──────────────────────────────────────────────────────────
     // Secret value: JSON { "clientId": "...", "clientSecret": "..." }
     {
-      secretId: process.env.SECRET_OAUTH_GMAIL_NAME ?? 'app/oauth-gmail',
+      secretId: process.env.SECRET_OAUTH_GMAIL_NAME ?? `a1/${env}/oauth-gmail`,
       apply(value) {
         const creds = parseJson(value);
         setIfUnset('GMAIL_CLIENT_ID', creds.clientId);
@@ -98,7 +104,7 @@ function buildMappings(): SecretMapping[] {
     // ── GitHub OAuth ─────────────────────────────────────────────────────────
     // Secret value: JSON { "clientId": "...", "clientSecret": "..." }
     {
-      secretId: process.env.SECRET_OAUTH_GITHUB_NAME ?? 'app/oauth-github',
+      secretId: process.env.SECRET_OAUTH_GITHUB_NAME ?? `a1/${env}/oauth-github`,
       apply(value) {
         const creds = parseJson(value);
         setIfUnset('GITHUB_CLIENT_ID', creds.clientId);
@@ -109,7 +115,7 @@ function buildMappings(): SecretMapping[] {
     // ── Discord ──────────────────────────────────────────────────────────────
     // Secret value: JSON { "token": "...", "clientId": "..." }
     {
-      secretId: process.env.SECRET_DISCORD_NAME ?? 'app/discord',
+      secretId: process.env.SECRET_DISCORD_NAME ?? `a1/${env}/discord`,
       apply(value) {
         const creds = parseJson(value);
         setIfUnset('DISCORD_BOT_TOKEN', creds.token);

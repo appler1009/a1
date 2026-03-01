@@ -105,8 +105,7 @@ ALB (public subnets, port 443/80)
 ECS Fargate task (private subnets, port 3000)
     ├── DynamoDB (via VPC Gateway Endpoint)
     ├── S3 (via VPC Gateway Endpoint)
-    ├── KMS (via VPC Interface Endpoint)
-    └── Secrets Manager (via VPC Interface Endpoint)
+    └── Secrets Manager (via NAT Gateway — fetched once at startup)
 ```
 
 ### Container image
@@ -250,14 +249,14 @@ The app fetches secrets from Secrets Manager at startup when `AWS_SECRETS_ENABLE
 
 | Secret path | Format | Env vars populated |
 |---|---|---|
-| `app/auth-secret` | Plain string | `AUTH_SECRET` |
-| `app/llm-keys` | JSON `{ anthropic, openai, grok }` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROK_API_KEY` |
-| `app/oauth-google` | JSON `{ clientId, clientSecret }` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` |
-| `app/oauth-gmail` | JSON `{ clientId, clientSecret }` | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` |
-| `app/oauth-github` | JSON `{ clientId, clientSecret }` | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` |
-| `app/discord` | JSON `{ token, clientId }` | `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID` |
+| `a1/prod/auth-secret` | Plain string | `AUTH_SECRET` |
+| `a1/prod/llm-keys` | JSON `{ anthropic, openai, grok }` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROK_API_KEY` |
+| `a1/prod/oauth-google` | JSON `{ clientId, clientSecret }` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` |
+| `a1/prod/oauth-gmail` | JSON `{ clientId, clientSecret }` | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` |
+| `a1/prod/oauth-github` | JSON `{ clientId, clientSecret }` | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` |
+| `a1/prod/discord` | JSON `{ token, clientId }` | `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID` |
 
-`app/auth-secret` is **required** — startup fails if it cannot be loaded. All other secrets are optional and produce a warning if missing.
+`a1/prod/auth-secret` is **required** — startup fails if it cannot be loaded. All other secrets are optional and produce a warning if missing.
 
 **Not stored in Secrets Manager** — set these in the task definition `environment` array:
 - OAuth redirect URIs (`GOOGLE_REDIRECT_URI`, `GMAIL_REDIRECT_URI`, `GITHUB_REDIRECT_URI`) — must point to your production domain
@@ -344,9 +343,10 @@ Application-level encryption on message content would break keyword search. KMS 
       "Effect": "Allow",
       "Action": ["secretsmanager:GetSecretValue"],
       "Resource": [
-        "arn:aws:secretsmanager:<region>:<account>:secret:app/auth-secret-*",
-        "arn:aws:secretsmanager:<region>:<account>:secret:app/llm-keys-*",
-        "arn:aws:secretsmanager:<region>:<account>:secret:app/oauth-*"
+        "arn:aws:secretsmanager:<region>:<account>:secret:a1/prod/auth-secret-*",
+        "arn:aws:secretsmanager:<region>:<account>:secret:a1/prod/llm-keys-*",
+        "arn:aws:secretsmanager:<region>:<account>:secret:a1/prod/oauth-*",
+        "arn:aws:secretsmanager:<region>:<account>:secret:a1/prod/discord-*"
       ]
     }
   ]
@@ -370,7 +370,6 @@ Application-level encryption on message content would break keyword search. KMS 
 - [ ] DynamoDB VPC Gateway Endpoint
 - [ ] DynamoDB tables (see Storage Architecture above) with on-demand billing
 - [ ] Secrets Manager secrets (see table above)
-- [ ] Secrets Manager VPC Interface Endpoint
 - [ ] KMS key for OAuth token encryption (optional, add later)
 - [ ] ECR repository for container image
 - [ ] ECS cluster + Fargate task definition
