@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { LLMRouter } from '../ai/router.js';
-import type { MainDatabase, ScheduledJob } from '../storage/main-db.js';
+import type { IMainDatabase, ScheduledJob } from '../storage/main-db.js';
 import { evaluateRecurringJobs } from './evaluator.js';
 import type { JobRunner } from './job-runner.js';
 
@@ -10,7 +10,7 @@ export class Scheduler {
   private static readonly POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
   constructor(
-    private readonly db: MainDatabase,
+    private readonly db: IMainDatabase,
     private readonly jobRunner: JobRunner,
     private readonly llmRouter: LLMRouter,
   ) {}
@@ -45,7 +45,7 @@ export class Scheduler {
     console.log('[Scheduler] Polling...');
 
     // Step 1: Once jobs — pure time comparison
-    const dueOnce = this.db.getDueOnceJobs();
+    const dueOnce = await this.db.getDueOnceJobs();
     if (dueOnce.length > 0) {
       console.log(`[Scheduler] Found ${dueOnce.length} due once-job(s)`);
     }
@@ -54,7 +54,7 @@ export class Scheduler {
     }
 
     // Step 2: Recurring jobs — AI evaluates which to run
-    const recurring = this.db.getPendingRecurringJobs();
+    const recurring = await this.db.getPendingRecurringJobs();
     if (recurring.length > 0) {
       console.log(`[Scheduler] Evaluating ${recurring.length} recurring job(s)`);
       const { run, hold } = await evaluateRecurringJobs(recurring, this.llmRouter);
@@ -63,7 +63,7 @@ export class Scheduler {
       for (const { id, until } of hold) {
         const holdUntil = new Date(until);
         if (!isNaN(holdUntil.getTime())) {
-          this.db.updateScheduledJobStatus(id, { holdUntil });
+          await this.db.updateScheduledJobStatus(id, { holdUntil });
           console.log(`[Scheduler] Job ${id} held until ${holdUntil.toISOString()}`);
         } else {
           console.warn(`[Scheduler] Job ${id} hold has invalid date: ${until}`);
@@ -80,11 +80,11 @@ export class Scheduler {
 
   private async runJob(job: ScheduledJob): Promise<void> {
     console.log(`[Scheduler] Running job ${job.id}: ${job.description.slice(0, 60)}`);
-    this.db.updateScheduledJobStatus(job.id, { status: 'running' });
+    await this.db.updateScheduledJobStatus(job.id, { status: 'running' });
     try {
       await this.jobRunner.run(job);
       const status = job.scheduleType === 'once' ? 'completed' : 'pending';
-      this.db.updateScheduledJobStatus(job.id, {
+      await this.db.updateScheduledJobStatus(job.id, {
         status,
         lastRunAt: new Date(),
         runCount: job.runCount + 1,
@@ -93,7 +93,7 @@ export class Scheduler {
       console.log(`[Scheduler] Job ${job.id} completed, status → ${status}`);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      this.db.updateScheduledJobStatus(job.id, {
+      await this.db.updateScheduledJobStatus(job.id, {
         status: 'failed',
         lastError: errorMsg,
         lastRunAt: new Date(),
@@ -106,7 +106,7 @@ export class Scheduler {
         ? job.description.slice(0, 60) + '…'
         : job.description;
       const now = new Date().toISOString();
-      this.db.saveMessage({
+      await this.db.saveMessage({
         id: uuidv4(),
         userId: job.userId,
         roleId: job.roleId,
@@ -115,7 +115,7 @@ export class Scheduler {
         content: `*Scheduled job failed: ${shortDesc}*`,
         createdAt: now,
       });
-      this.db.saveMessage({
+      await this.db.saveMessage({
         id: uuidv4(),
         userId: job.userId,
         roleId: job.roleId,

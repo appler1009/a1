@@ -5,7 +5,9 @@ import { S3StorageAdapter } from './s3-adapter.js';
 import type { IStorage, IMessageStorage, ChatMessageEntry } from './interface.js';
 
 // Export main storage
-export { MainDatabase, getMainDatabase, closeMainDatabase, type RoleDefinition, type OAuthTokenEntry, type SkillRecord } from './main-db.js';
+export { MainDatabase, getMainDatabase, getMainDatabaseSync, closeMainDatabase, type RoleDefinition, type OAuthTokenEntry, type SkillRecord, type IMainDatabase } from './main-db.js';
+export { DynamoDBMainDatabase, getDynamoDBMainDatabase } from './dynamodb-main-db.js';
+export type { ScheduledJob } from './main-db-interface.js';
 export { migrateToRoleBasedStorage, autoMigrate } from './migrate.js';
 
 export type { IStorage, IMessageStorage, ChatMessageEntry };

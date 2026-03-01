@@ -164,8 +164,8 @@ async function loadServerConfig(serverKey: string): Promise<MCPServerConfig> {
   if (managerConfig) return managerConfig;
 
   try {
-    const mainDb = getMainDatabase();
-    const config = mainDb.getMCPServerConfig(serverKey);
+    const mainDb = await getMainDatabase();
+    const config = await mainDb.getMCPServerConfig(serverKey);
     if (config) return config as unknown as MCPServerConfig;
   } catch (error) {
     console.error(`[MCPAdapterFactory] Error loading config for ${serverKey}:`, error);
@@ -236,8 +236,8 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
     if (predefinedServer?.auth?.provider === 'google') {
       tokenData = await getGoogleTokenData(userId);
     } else if (predefinedServer?.auth?.provider === 'alphavantage' || predefinedServer?.auth?.provider === 'twelvedata') {
-      const mainDb = getMainDatabase();
-      const storedConfig = mainDb.getMCPServerConfig(`${baseServerId}:${userId}`);
+      const mainDb = await getMainDatabase();
+      const storedConfig = await mainDb.getMCPServerConfig(`${baseServerId}:${userId}`);
       if (!storedConfig?.apiKey) {
         throw new Error(`API key not configured for ${baseServerId}. Please connect in Settings.`);
       }

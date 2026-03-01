@@ -3,6 +3,7 @@ import type { User, Session, Group, GroupMember, Invitation } from '@local-agent
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
+import type { IMainDatabase } from './main-db-interface.js';
 
 /**
  * Role definition stored in the main database
@@ -73,7 +74,7 @@ export interface ScheduledJob {
  * This is the central database that maps users to their roles
  * Each role has its own separate SQLite database for complete isolation
  */
-export class MainDatabase {
+export class MainDatabase implements IMainDatabase {
   private db: Database;
   private dbPath: string;
 
@@ -412,7 +413,7 @@ export class MainDatabase {
   // User Operations
   // ============================================
 
-  createUser(email: string, name?: string, accountType: 'individual' | 'group' = 'individual'): User {
+  async createUser(email: string, name?: string, accountType: 'individual' | 'group' = 'individual'): Promise<User> {
     const id = uuidv4();
     const now = new Date().toISOString();
     
@@ -431,7 +432,7 @@ export class MainDatabase {
     };
   }
 
-  getUser(id: string): User | null {
+  async getUser(id: string): Promise<User | null> {
     const row = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as {
       id: string;
       email: string;
@@ -459,7 +460,7 @@ export class MainDatabase {
     };
   }
 
-  getUserByEmail(email: string): User | null {
+  async getUserByEmail(email: string): Promise<User | null> {
     const row = this.db.prepare('SELECT * FROM users WHERE email = ?').get(email) as {
       id: string;
       email: string;
@@ -487,7 +488,7 @@ export class MainDatabase {
     };
   }
 
-  getUserByDiscordId(discordUserId: string): User | null {
+  async getUserByDiscordId(discordUserId: string): Promise<User | null> {
     const row = this.db.prepare('SELECT * FROM users WHERE discordUserId = ?').get(discordUserId) as {
       id: string;
       email: string;
@@ -515,8 +516,8 @@ export class MainDatabase {
     };
   }
 
-  updateUser(id: string, updates: Partial<User>): User | null {
-    const user = this.getUser(id);
+  async updateUser(id: string, updates: Partial<User>): Promise<User | null> {
+    const user = await this.getUser(id);
     if (!user) return null;
 
     const now = new Date().toISOString();
@@ -557,7 +558,7 @@ export class MainDatabase {
     return this.getUser(id);
   }
 
-  getAllUsers(): User[] {
+  async getAllUsers(): Promise<User[]> {
     const rows = this.db.prepare('SELECT * FROM users').all() as Array<{
       id: string;
       email: string;
@@ -587,7 +588,7 @@ export class MainDatabase {
   // Session Operations
   // ============================================
 
-  createSession(userId: string): Session {
+  async createSession(userId: string): Promise<Session> {
     const id = uuidv4();
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
     const now = new Date().toISOString();
@@ -605,7 +606,7 @@ export class MainDatabase {
     };
   }
 
-  getSession(id: string): Session | null {
+  async getSession(id: string): Promise<Session | null> {
     const row = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as {
       id: string;
       userId: string;
@@ -629,11 +630,11 @@ export class MainDatabase {
     };
   }
 
-  deleteSession(id: string): void {
+  async deleteSession(id: string): Promise<void> {
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
   }
 
-  deleteUser(id: string): boolean {
+  async deleteUser(id: string): Promise<boolean> {
     // Messages don't have ON DELETE CASCADE, so delete explicitly
     this.db.prepare('DELETE FROM messages WHERE userId = ?').run(id);
     // Remaining tables (sessions, roles, oauth_tokens, memberships) cascade automatically
@@ -645,7 +646,7 @@ export class MainDatabase {
   // Group Operations
   // ============================================
 
-  createGroup(name: string, url?: string): Group {
+  async createGroup(name: string, url?: string): Promise<Group> {
     const id = uuidv4();
     const now = new Date().toISOString();
 
@@ -662,7 +663,7 @@ export class MainDatabase {
     };
   }
 
-  getGroup(id: string): Group | null {
+  async getGroup(id: string): Promise<Group | null> {
     const row = this.db.prepare('SELECT * FROM groups WHERE id = ?').get(id) as {
       id: string;
       name: string;
@@ -680,7 +681,7 @@ export class MainDatabase {
     };
   }
 
-  getGroupByUrl(url: string): Group | null {
+  async getGroupByUrl(url: string): Promise<Group | null> {
     const row = this.db.prepare('SELECT * FROM groups WHERE url = ?').get(url) as {
       id: string;
       name: string;
@@ -698,7 +699,7 @@ export class MainDatabase {
     };
   }
 
-  getUserGroups(userId: string): Group[] {
+  async getUserGroups(userId: string): Promise<Group[]> {
     const rows = this.db.prepare(`
       SELECT g.* FROM groups g
       JOIN memberships m ON g.id = m.groupId
@@ -722,7 +723,7 @@ export class MainDatabase {
   // Membership Operations
   // ============================================
 
-  addMember(groupId: string, userId: string, role: 'owner' | 'admin' | 'member' = 'member'): GroupMember {
+  async addMember(groupId: string, userId: string, role: 'owner' | 'admin' | 'member' = 'member'): Promise<GroupMember> {
     const id = uuidv4();
     const now = new Date().toISOString();
 
@@ -740,7 +741,7 @@ export class MainDatabase {
     };
   }
 
-  getMembership(groupId: string, userId: string): GroupMember | null {
+  async getMembership(groupId: string, userId: string): Promise<GroupMember | null> {
     const row = this.db.prepare(`
       SELECT * FROM memberships WHERE groupId = ? AND userId = ?
     `).get(groupId, userId) as {
@@ -762,7 +763,7 @@ export class MainDatabase {
     };
   }
 
-  getGroupMembers(groupId: string): GroupMember[] {
+  async getGroupMembers(groupId: string): Promise<GroupMember[]> {
     const rows = this.db.prepare(`
       SELECT * FROM memberships WHERE groupId = ?
     `).all(groupId) as Array<{
@@ -782,9 +783,9 @@ export class MainDatabase {
     }));
   }
 
-  updateMemberRole(groupId: string, userId: string, role: 'owner' | 'admin' | 'member'): GroupMember | null {
+  async updateMemberRole(groupId: string, userId: string, role: 'owner' | 'admin' | 'member'): Promise<GroupMember | null> {
     const now = new Date().toISOString();
-    
+
     const result = this.db.prepare(`
       UPDATE memberships SET role = ? WHERE groupId = ? AND userId = ?
     `).run(role, groupId, userId);
@@ -794,7 +795,7 @@ export class MainDatabase {
     return this.getMembership(groupId, userId);
   }
 
-  removeMember(groupId: string, userId: string): boolean {
+  async removeMember(groupId: string, userId: string): Promise<boolean> {
     const result = this.db.prepare(`
       DELETE FROM memberships WHERE groupId = ? AND userId = ?
     `).run(groupId, userId);
@@ -806,13 +807,13 @@ export class MainDatabase {
   // Invitation Operations
   // ============================================
 
-  createInvitation(
+  async createInvitation(
     groupId: string,
     createdBy: string,
     email?: string,
     role: 'owner' | 'admin' | 'member' = 'member',
     expiresInSeconds: number = 7 * 24 * 60 * 60
-  ): Invitation {
+  ): Promise<Invitation> {
     const id = uuidv4();
     const code = this.generateInviteCode();
     const now = new Date().toISOString();
@@ -835,7 +836,7 @@ export class MainDatabase {
     };
   }
 
-  getInvitationByCode(code: string): Invitation | null {
+  async getInvitationByCode(code: string): Promise<Invitation | null> {
     const row = this.db.prepare('SELECT * FROM invitations WHERE code = ?').get(code) as {
       id: string;
       code: string;
@@ -865,7 +866,7 @@ export class MainDatabase {
     };
   }
 
-  getGroupInvitations(groupId: string): Invitation[] {
+  async getGroupInvitations(groupId: string): Promise<Invitation[]> {
     const rows = this.db.prepare(`
       SELECT * FROM invitations WHERE groupId = ? AND usedAt IS NULL
     `).all(groupId) as Array<{
@@ -895,8 +896,8 @@ export class MainDatabase {
     }));
   }
 
-  acceptInvitation(code: string, userId: string): GroupMember {
-    const invitation = this.getInvitationByCode(code);
+  async acceptInvitation(code: string, userId: string): Promise<GroupMember> {
+    const invitation = await this.getInvitationByCode(code);
     if (!invitation) {
       throw new Error('Invitation not found');
     }
@@ -915,13 +916,13 @@ export class MainDatabase {
       UPDATE invitations SET usedAt = ?, acceptedAt = ? WHERE id = ?
     `).run(now, now, invitation.id);
 
-    const membership = this.addMember(invitation.groupId, userId, invitation.role || 'member');
-    this.updateUser(userId, { accountType: 'group' });
+    const membership = await this.addMember(invitation.groupId, userId, invitation.role || 'member');
+    await this.updateUser(userId, { accountType: 'group' });
 
     return membership;
   }
 
-  revokeInvitation(invitationId: string): boolean {
+  async revokeInvitation(invitationId: string): Promise<boolean> {
     const result = this.db.prepare('DELETE FROM invitations WHERE id = ?').run(invitationId);
     return result.changes > 0;
   }
@@ -939,14 +940,14 @@ export class MainDatabase {
   // Role Operations
   // ============================================
 
-  createRole(
+  async createRole(
     userId: string,
     name: string,
     groupId?: string,
     jobDesc?: string,
     systemPrompt?: string,
     model?: string
-  ): RoleDefinition {
+  ): Promise<RoleDefinition> {
     const id = uuidv4();
     const now = new Date().toISOString();
 
@@ -968,7 +969,7 @@ export class MainDatabase {
     };
   }
 
-  getRole(id: string): RoleDefinition | null {
+  async getRole(id: string): Promise<RoleDefinition | null> {
     const row = this.db.prepare('SELECT * FROM roles WHERE id = ?').get(id) as {
       id: string;
       userId: string;
@@ -996,7 +997,7 @@ export class MainDatabase {
     };
   }
 
-  getUserRoles(userId: string): RoleDefinition[] {
+  async getUserRoles(userId: string): Promise<RoleDefinition[]> {
     const rows = this.db.prepare('SELECT * FROM roles WHERE userId = ?').all(userId) as Array<{
       id: string;
       userId: string;
@@ -1022,7 +1023,7 @@ export class MainDatabase {
     }));
   }
 
-  getGroupRoles(groupId: string): RoleDefinition[] {
+  async getGroupRoles(groupId: string): Promise<RoleDefinition[]> {
     const rows = this.db.prepare('SELECT * FROM roles WHERE groupId = ?').all(groupId) as Array<{
       id: string;
       userId: string;
@@ -1048,8 +1049,8 @@ export class MainDatabase {
     }));
   }
 
-  updateRole(id: string, updates: Partial<Omit<RoleDefinition, 'id' | 'userId' | 'createdAt'>>): RoleDefinition | null {
-    const role = this.getRole(id);
+  async updateRole(id: string, updates: Partial<Omit<RoleDefinition, 'id' | 'userId' | 'createdAt'>>): Promise<RoleDefinition | null> {
+    const role = await this.getRole(id);
     if (!role) return null;
 
     const now = new Date().toISOString();
@@ -1086,7 +1087,7 @@ export class MainDatabase {
     return this.getRole(id);
   }
 
-  deleteRole(id: string): boolean {
+  async deleteRole(id: string): Promise<boolean> {
     const result = this.db.prepare('DELETE FROM roles WHERE id = ?').run(id);
     return result.changes > 0;
   }
@@ -1095,14 +1096,14 @@ export class MainDatabase {
   // OAuth Token Operations
   // ============================================
 
-  storeOAuthToken(
+  async storeOAuthToken(
     userId: string,
     provider: string,
     accessToken: string,
     refreshToken?: string,
     expiryDate?: number,
     accountEmail: string = ''
-  ): OAuthTokenEntry {
+  ): Promise<OAuthTokenEntry> {
     const now = new Date().toISOString();
 
     // If email is empty and we're storing a new token, delete old empty-email tokens first
@@ -1130,7 +1131,7 @@ export class MainDatabase {
     };
   }
 
-  getOAuthToken(userId: string, provider: string, accountEmail?: string): OAuthTokenEntry | null {
+  async getOAuthToken(userId: string, provider: string, accountEmail?: string): Promise<OAuthTokenEntry | null> {
     let query = `SELECT * FROM oauth_tokens WHERE userId = ? AND provider = ?`;
     const params: (string | number)[] = [userId, provider];
 
@@ -1164,7 +1165,7 @@ export class MainDatabase {
     };
   }
 
-  getAllUserOAuthTokens(userId: string, provider: string): OAuthTokenEntry[] {
+  async getAllUserOAuthTokens(userId: string, provider: string): Promise<OAuthTokenEntry[]> {
     const rows = this.db.prepare(`
       SELECT * FROM oauth_tokens WHERE userId = ? AND provider = ? ORDER BY accountEmail
     `).all(userId, provider) as Array<{
@@ -1190,7 +1191,7 @@ export class MainDatabase {
     }));
   }
 
-  getOAuthTokenByAccountEmail(provider: string, accountEmail: string): OAuthTokenEntry | null {
+  async getOAuthTokenByAccountEmail(provider: string, accountEmail: string): Promise<OAuthTokenEntry | null> {
     const row = this.db.prepare(`
       SELECT * FROM oauth_tokens WHERE provider = ? AND accountEmail = ? LIMIT 1
     `).get(provider, accountEmail) as {
@@ -1218,7 +1219,7 @@ export class MainDatabase {
     };
   }
 
-  revokeOAuthToken(userId: string, provider: string, accountEmail?: string): boolean {
+  async revokeOAuthToken(userId: string, provider: string, accountEmail?: string): Promise<boolean> {
     let query = `DELETE FROM oauth_tokens WHERE userId = ? AND provider = ?`;
     const params: (string | number)[] = [userId, provider];
 
@@ -1238,7 +1239,7 @@ export class MainDatabase {
   /**
    * Save MCP server config
    */
-  saveMCPServerConfig(serverId: string, config: Record<string, unknown>): void {
+  async saveMCPServerConfig(serverId: string, config: Record<string, unknown>): Promise<void> {
     const now = new Date().toISOString();
     const configJson = JSON.stringify(config);
     
@@ -1252,7 +1253,7 @@ export class MainDatabase {
   /**
    * Get all MCP server configs
    */
-  getMCPServerConfigs(): Array<{ id: string; config: Record<string, unknown> }> {
+  async getMCPServerConfigs(): Promise<Array<{ id: string; config: Record<string, unknown> }>> {
     const rows = this.db.prepare('SELECT id, config FROM mcp_servers').all() as Array<{
       id: string;
       config: string;
@@ -1267,7 +1268,7 @@ export class MainDatabase {
   /**
    * Get a single MCP server config by ID
    */
-  getMCPServerConfig(serverId: string): Record<string, unknown> | null {
+  async getMCPServerConfig(serverId: string): Promise<Record<string, unknown> | null> {
     const row = this.db.prepare('SELECT config FROM mcp_servers WHERE id = ?').get(serverId) as {
       config: string;
     } | undefined;
@@ -1280,7 +1281,7 @@ export class MainDatabase {
   /**
    * Delete MCP server config
    */
-  deleteMCPServerConfig(serverId: string): boolean {
+  async deleteMCPServerConfig(serverId: string): Promise<boolean> {
     const result = this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(serverId);
     return result.changes > 0;
   }
@@ -1328,7 +1329,7 @@ export class MainDatabase {
   // Message Operations
   // ============================================
 
-  saveMessage(entry: {
+  async saveMessage(entry: {
     id: string;
     userId: string;
     roleId: string;
@@ -1336,7 +1337,7 @@ export class MainDatabase {
     role: string;
     content: string;
     createdAt: string | Date;
-  }): void {
+  }): Promise<void> {
     const createdAt = entry.createdAt instanceof Date
       ? entry.createdAt.toISOString()
       : entry.createdAt;
@@ -1347,11 +1348,11 @@ export class MainDatabase {
     `).run(entry.id, entry.userId, entry.roleId, entry.groupId ?? null, entry.role, entry.content, createdAt);
   }
 
-  listMessages(
+  async listMessages(
     userId: string,
     roleId: string,
     options: { limit?: number; before?: string } = {}
-  ): Array<{ id: string; userId: string; roleId: string; groupId: string | null; role: string; content: string; createdAt: string }> {
+  ): Promise<Array<{ id: string; userId: string; roleId: string; groupId: string | null; role: string; content: string; createdAt: string }>> {
     const limit = options.limit ?? 50;
 
     let query = `SELECT * FROM messages WHERE userId = ? AND roleId = ?`;
@@ -1379,12 +1380,12 @@ export class MainDatabase {
     return rows.reverse();
   }
 
-  searchMessages(
+  async searchMessages(
     userId: string,
     roleId: string,
     keyword: string,
     options: { limit?: number } = {}
-  ): Array<{ id: string; userId: string; roleId: string; groupId: string | null; role: string; content: string; createdAt: string }> {
+  ): Promise<Array<{ id: string; userId: string; roleId: string; groupId: string | null; role: string; content: string; createdAt: string }>> {
     const limit = options.limit ?? 100;
 
     const rows = this.db.prepare(`
@@ -1405,7 +1406,7 @@ export class MainDatabase {
     return rows;
   }
 
-  clearMessages(userId: string, roleId: string): void {
+  async clearMessages(userId: string, roleId: string): Promise<void> {
     this.db.prepare(`DELETE FROM messages WHERE userId = ? AND roleId = ?`).run(userId, roleId);
   }
 
@@ -1413,7 +1414,7 @@ export class MainDatabase {
   // Settings Operations
   // ============================================
 
-  getSetting<T = unknown>(key: string): T | null {
+  async getSetting<T = unknown>(key: string): Promise<T | null> {
     const row = this.db.prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as { value: string } | undefined;
     if (!row) return null;
     try {
@@ -1423,7 +1424,7 @@ export class MainDatabase {
     }
   }
 
-  setSetting(key: string, value: unknown): void {
+  async setSetting(key: string, value: unknown): Promise<void> {
     const now = new Date().toISOString();
     const serialized = JSON.stringify(value);
     this.db.prepare(`
@@ -1432,11 +1433,11 @@ export class MainDatabase {
     `).run(key, serialized, now, serialized, now);
   }
 
-  deleteSetting(key: string): void {
+  async deleteSetting(key: string): Promise<void> {
     this.db.prepare(`DELETE FROM settings WHERE key = ?`).run(key);
   }
 
-  getAllSettings(): Record<string, unknown> {
+  async getAllSettings(): Promise<Record<string, unknown>> {
     const rows = this.db.prepare(`SELECT key, value FROM settings`).all() as Array<{ key: string; value: string }>;
     const result: Record<string, unknown> = {};
     for (const row of rows) {
@@ -1453,7 +1454,7 @@ export class MainDatabase {
   // Skills Operations
   // ============================================
 
-  upsertSkill(skill: {
+  async upsertSkill(skill: {
     id: string;
     name: string;
     description?: string;
@@ -1461,7 +1462,7 @@ export class MainDatabase {
     type?: string;
     config?: Record<string, unknown>;
     enabled?: boolean;
-  }): void {
+  }): Promise<void> {
     const now = new Date().toISOString();
     const configJson = skill.config ? JSON.stringify(skill.config) : null;
     const enabled = skill.enabled !== false ? 1 : 0;
@@ -1491,7 +1492,7 @@ export class MainDatabase {
     );
   }
 
-  getSkill(id: string): SkillRecord | null {
+  async getSkill(id: string): Promise<SkillRecord | null> {
     const row = this.db.prepare('SELECT * FROM skills WHERE id = ?').get(id) as {
       id: string;
       name: string;
@@ -1519,7 +1520,7 @@ export class MainDatabase {
     };
   }
 
-  listSkills(enabledOnly = false): SkillRecord[] {
+  async listSkills(enabledOnly = false): Promise<SkillRecord[]> {
     const query = enabledOnly
       ? 'SELECT * FROM skills WHERE enabled = 1 ORDER BY name'
       : 'SELECT * FROM skills ORDER BY name';
@@ -1585,13 +1586,13 @@ export class MainDatabase {
     };
   }
 
-  createScheduledJob(params: {
+  async createScheduledJob(params: {
     userId: string;
     roleId: string;
     description: string;
     scheduleType: 'once' | 'recurring';
     runAt?: Date | null;
-  }): ScheduledJob {
+  }): Promise<ScheduledJob> {
     const id = uuidv4();
     const now = new Date().toISOString();
     const runAt = params.runAt ? params.runAt.toISOString() : null;
@@ -1601,16 +1602,16 @@ export class MainDatabase {
       VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
     `).run(id, params.userId, params.roleId, params.description, params.scheduleType, runAt, now, now);
 
-    return this.getScheduledJob(id)!;
+    return (await this.getScheduledJob(id))!;
   }
 
-  getScheduledJob(id: string): ScheduledJob | null {
+  async getScheduledJob(id: string): Promise<ScheduledJob | null> {
     const row = this.db.prepare('SELECT * FROM scheduled_jobs WHERE id = ?').get(id) as any;
     if (!row) return null;
     return this.rowToScheduledJob(row);
   }
 
-  listScheduledJobs(userId: string, opts?: { status?: string; roleId?: string }): ScheduledJob[] {
+  async listScheduledJobs(userId: string, opts?: { status?: string; roleId?: string }): Promise<ScheduledJob[]> {
     let query = 'SELECT * FROM scheduled_jobs WHERE userId = ?';
     const params: (string | number)[] = [userId];
 
@@ -1628,7 +1629,7 @@ export class MainDatabase {
     return rows.map(r => this.rowToScheduledJob(r));
   }
 
-  getDueOnceJobs(): ScheduledJob[] {
+  async getDueOnceJobs(): Promise<ScheduledJob[]> {
     const now = new Date().toISOString();
     const rows = this.db.prepare(`
       SELECT * FROM scheduled_jobs
@@ -1637,7 +1638,7 @@ export class MainDatabase {
     return rows.map(r => this.rowToScheduledJob(r));
   }
 
-  getPendingRecurringJobs(userId?: string): ScheduledJob[] {
+  async getPendingRecurringJobs(userId?: string): Promise<ScheduledJob[]> {
     const now = new Date().toISOString();
     let query = `SELECT * FROM scheduled_jobs WHERE scheduleType = 'recurring' AND status = 'pending'
       AND (holdUntil IS NULL OR holdUntil <= ?)`;
@@ -1650,13 +1651,13 @@ export class MainDatabase {
     return rows.map(r => this.rowToScheduledJob(r));
   }
 
-  updateScheduledJobStatus(id: string, update: {
+  async updateScheduledJobStatus(id: string, update: {
     status?: ScheduledJob['status'];
     lastRunAt?: Date;
     lastError?: string;
     holdUntil?: Date | null;
     runCount?: number;
-  }): void {
+  }): Promise<void> {
     const now = new Date().toISOString();
     const fields: string[] = ['updatedAt = ?'];
     const values: (string | number | null)[] = [now];
@@ -1686,7 +1687,7 @@ export class MainDatabase {
     this.db.prepare(`UPDATE scheduled_jobs SET ${fields.join(', ')} WHERE id = ?`).run(...values);
   }
 
-  cancelScheduledJob(id: string, userId: string): boolean {
+  async cancelScheduledJob(id: string, userId: string): Promise<boolean> {
     const result = this.db.prepare(`
       UPDATE scheduled_jobs SET status = 'cancelled', updatedAt = ?
       WHERE id = ? AND userId = ? AND status IN ('pending', 'failed')
@@ -1712,11 +1713,43 @@ export class MainDatabase {
 }
 
 // Singleton instance
-let mainDb: MainDatabase | null = null;
+let mainDb: IMainDatabase | null = null;
 
-export function getMainDatabase(dataDir: string = './data'): MainDatabase {
-  if (!mainDb) {
+/**
+ * Returns the main database instance.
+ * Chooses implementation based on MAIN_DB_TYPE env var:
+ *   - 'dynamodb' → DynamoDBMainDatabase (AWS)
+ *   - 'sqlite' or unset → SQLite MainDatabase (local/default)
+ */
+export async function getMainDatabase(dataDir: string = './data'): Promise<IMainDatabase> {
+  if (mainDb) return mainDb;
+
+  const dbType = process.env.MAIN_DB_TYPE;
+
+  if (dbType === 'dynamodb') {
+    const { getDynamoDBMainDatabase } = await import('./dynamodb-main-db.js');
+    mainDb = getDynamoDBMainDatabase();
+  } else {
     mainDb = new MainDatabase(dataDir);
+  }
+
+  return mainDb;
+}
+
+export type { IMainDatabase };
+
+/**
+ * Synchronous accessor for the already-initialized database singleton.
+ * Use this only inside factory callbacks or other synchronous contexts where
+ * the database is guaranteed to have been initialized at server startup.
+ * Throws if called before getMainDatabase() has resolved.
+ */
+export function getMainDatabaseSync(): IMainDatabase {
+  if (!mainDb) {
+    throw new Error(
+      '[getMainDatabaseSync] Database not yet initialized. ' +
+      'Ensure await getMainDatabase() is called during server startup before using sync accessor.'
+    );
   }
   return mainDb;
 }

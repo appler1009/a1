@@ -281,7 +281,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
 
     const body = request.body as { name?: string; discordUserId?: string; locale?: string; timezone?: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     const updates: Partial<{ name?: string; discordUserId?: string; locale?: string; timezone?: string }> = {};
     if (body.name !== undefined) updates.name = body.name;
@@ -289,7 +289,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     if (body.locale !== undefined) updates.locale = body.locale;
     if (body.timezone !== undefined) updates.timezone = body.timezone;
 
-    const updatedUser = mainDb.updateUser(request.user.id, updates);
+    const updatedUser = await mainDb.updateUser(request.user.id, updates);
 
     if (!updatedUser) {
       return reply.code(500).send({

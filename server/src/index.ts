@@ -17,7 +17,7 @@ import fastifyStatic from '@fastify/static';
 import { v4 as uuidv4 } from 'uuid';
 import type { User, Session } from '@local-agent/shared';
 import { createStorage, autoMigrate, getMainDatabase } from './storage/index.js';
-import type { RoleDefinition, MainDatabase } from './storage/index.js';
+import type { RoleDefinition, MainDatabase, IMainDatabase } from './storage/index.js';
 import { createLLMRouter } from './ai/router.js';
 import { mcpManager, getMcpAdapter, closeUserAdapters, listPredefinedServers, getPredefinedServer, requiresAuth, PREDEFINED_MCP_SERVERS } from './mcp/index.js';
 import { authRoutes } from './api/auth.js';
@@ -215,12 +215,12 @@ const DEFAULT_SETTINGS: Record<string, unknown> = {
  * Only sets values that don't already exist
  */
 async function initializeDefaultSettings(): Promise<void> {
-  const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+  const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
-    const existing = mainDb.getSetting(key);
+    const existing = await mainDb.getSetting(key);
     if (existing === null) {
       console.log(`[Settings] Initializing default setting: ${key} = ${value}`);
-      mainDb.setSetting(key, value);
+      await mainDb.setSetting(key, value);
     }
   }
 }
@@ -320,8 +320,8 @@ For higher limits, see https://www.alphavantage.co/premium/
 /**
  * Seed skills into the database on startup
  */
-function seedSkills(mainDb: MainDatabase): void {
-  mainDb.upsertSkill({
+async function seedSkills(mainDb: IMainDatabase): Promise<void> {
+  await mainDb.upsertSkill({
     id: 'alpha-vantage',
     name: 'Alpha Vantage',
     description: 'Financial data API: stocks, forex, crypto, commodities, economic indicators, technical indicators.',
@@ -333,9 +333,9 @@ function seedSkills(mainDb: MainDatabase): void {
 /**
  * Get a setting value with fallback to default
  */
-function getSettingWithDefault<T>(key: string, defaultValue: T): T {
-  const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-  const value = mainDb.getSetting<T>(key);
+async function getSettingWithDefault<T>(key: string, defaultValue: T): Promise<T> {
+  const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+  const value = await mainDb.getSetting<T>(key);
   return value !== null ? value : defaultValue;
 }
 
@@ -687,10 +687,10 @@ if (!config.env.isProduction) {
     if (!body.email) {
       return reply.code(400).send({ success: false, error: { message: 'email required' } });
     }
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-    const user = mainDb.getUserByEmail(body.email);
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const user = await mainDb.getUserByEmail(body.email);
     if (user) {
-      mainDb.deleteUser(user.id);
+      await mainDb.deleteUser(user.id);
     }
     return reply.send({ success: true, deleted: !!user });
   });
@@ -734,8 +734,8 @@ fastify.addHook('onRequest', async (request) => {
   const headerRoleId = request.headers['x-role-id'] as string | undefined;
   if (headerRoleId && request.user) {
     // Verify the user owns this role before setting it
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-    const role = mainDb.getRole(headerRoleId);
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const role = await mainDb.getRole(headerRoleId);
     if (role && role.userId === request.user.id) {
       // Set the current role for this request
       serverCurrentRoleId = headerRoleId;
@@ -1033,15 +1033,15 @@ fastify.register(async (instance) => {
     console.log(`[/api/roles] User email: ${request.user.email}`);
 
     const query = request.query as { groupId?: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     let roles: RoleDefinition[];
     if (query.groupId) {
       console.log(`[/api/roles] Query type: GROUP (${query.groupId})`);
-      roles = mainDb.getGroupRoles(query.groupId);
+      roles = await mainDb.getGroupRoles(query.groupId);
     } else {
       console.log(`[/api/roles] Query type: USER`);
-      roles = mainDb.getUserRoles(request.user.id);
+      roles = await mainDb.getUserRoles(request.user.id);
     }
 
     // Include the currently active role ID
@@ -1082,8 +1082,8 @@ fastify.register(async (instance) => {
       });
     }
 
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-    const role = mainDb.getRole(currentRoleId);
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const role = await mainDb.getRole(currentRoleId);
 
     // Verify ownership
     if (!role || role.userId !== request.user.id) {
@@ -1115,8 +1115,8 @@ fastify.register(async (instance) => {
     const body = request.body as { groupId?: string; name: string; jobDesc?: string; systemPrompt?: string; model?: string };
 
     try {
-      const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-      const role = mainDb.createRole(
+      const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+      const role = await mainDb.createRole(
         request.user.id,
         body.name,
         body.groupId,
@@ -1140,8 +1140,8 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-    const role = mainDb.getRole(params.id);
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const role = await mainDb.getRole(params.id);
 
     if (!role) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
@@ -1163,10 +1163,10 @@ fastify.register(async (instance) => {
 
     const params = request.params as { id: string };
     const body = request.body as { name?: string; jobDesc?: string; systemPrompt?: string; model?: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify ownership
-    const existingRole = mainDb.getRole(params.id);
+    const existingRole = await mainDb.getRole(params.id);
     if (!existingRole) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
     }
@@ -1175,7 +1175,7 @@ fastify.register(async (instance) => {
       return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
     }
 
-    const role = mainDb.updateRole(params.id, body);
+    const role = await mainDb.updateRole(params.id, body);
     return reply.send({ success: true, data: role });
   });
 
@@ -1186,10 +1186,10 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify ownership
-    const existingRole = mainDb.getRole(params.id);
+    const existingRole = await mainDb.getRole(params.id);
     if (!existingRole) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
     }
@@ -1205,13 +1205,13 @@ fastify.register(async (instance) => {
 
     // Delete memory DB file if it exists
     const dataDir = process.env.STORAGE_ROOT || './data';
-    mainDb.deleteMemoryDb(dataDir, params.id);
+    (mainDb as MainDatabase).deleteMemoryDb(dataDir, params.id);
 
     // Delete role messages from main.db
-    mainDb.clearMessages(existingRole.userId, params.id);
+    await mainDb.clearMessages(existingRole.userId, params.id);
 
     // Delete the role from main.db
-    mainDb.deleteRole(params.id);
+    await mainDb.deleteRole(params.id);
     console.log(`[Roles] Deleted role ${params.id}`);
 
     return reply.send({ success: true });
@@ -1224,10 +1224,10 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify ownership
-    const role = mainDb.getRole(params.id);
+    const role = await mainDb.getRole(params.id);
     if (!role) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
     }
@@ -1262,10 +1262,10 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify ownership
-    const role = mainDb.getRole(params.id);
+    const role = await mainDb.getRole(params.id);
     if (!role) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
     }
@@ -1328,9 +1328,9 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
-    const role = mainDb.getRole(params.id);
+    const role = await mainDb.getRole(params.id);
     if (!role) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
     }
@@ -1390,9 +1390,9 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
-    const role = mainDb.getRole(params.id);
+    const role = await mainDb.getRole(params.id);
     if (!role) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
     }
@@ -1454,9 +1454,9 @@ fastify.register(async (instance) => {
     }
 
     const params = request.params as { id: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
-    const role = mainDb.getRole(params.id);
+    const role = await mainDb.getRole(params.id);
     if (!role) {
       return reply.code(404).send({ success: false, error: { message: 'Role not found' } });
     }
@@ -1503,10 +1503,10 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify role ownership
-    const role = mainDb.getRole(roleId);
+    const role = await mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       console.log(`[/api/messages GET] ERROR: Access denied to role ${roleId} (role not found or wrong user)`);
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
@@ -1530,7 +1530,7 @@ fastify.register(async (instance) => {
     }
 
     console.log(`[/api/messages GET] Fetching messages from main.db (limit: ${limit}, before: ${query.before || 'none'})`);
-    const messages = mainDb.listMessages(request.user.id, roleId, { limit, before: query.before });
+    const messages = await mainDb.listMessages(request.user.id, roleId, { limit, before: query.before });
     console.log(`[/api/messages GET] Found ${messages.length} messages for role ${roleId}`);
 
     return reply.send({ success: true, data: messages });
@@ -1552,10 +1552,10 @@ fastify.register(async (instance) => {
 
     console.log(`[/api/messages POST] User: ${request.user.id}, RoleId: ${body.roleId}, Message role: ${body.role}`);
 
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify role ownership
-    const role = mainDb.getRole(body.roleId);
+    const role = await mainDb.getRole(body.roleId);
     if (!role || role.userId !== request.user.id) {
       console.log(`[/api/messages POST] ERROR: Access denied to role ${body.roleId}`);
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
@@ -1572,7 +1572,7 @@ fastify.register(async (instance) => {
     };
 
     serverCurrentRoleId = body.roleId;
-    mainDb.saveMessage(message);
+    await mainDb.saveMessage(message);
     const contentPreview = body.content.substring(0, 50) + (body.content.length > 50 ? '...' : '');
     console.log(`[/api/messages POST] Message saved for role ${body.roleId}: "${contentPreview}"`);
     return reply.send({ success: true, data: message });
@@ -1591,15 +1591,15 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify role ownership
-    const role = mainDb.getRole(roleId);
+    const role = await mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    mainDb.clearMessages(request.user.id, roleId);
+    await mainDb.clearMessages(request.user.id, roleId);
     return reply.send({ success: true });
   });
 
@@ -1616,10 +1616,10 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify role ownership
-    const role = mainDb.getRole(roleId);
+    const role = await mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
@@ -1631,7 +1631,7 @@ fastify.register(async (instance) => {
       return reply.send({ success: true, data: [] });
     }
 
-    const messages = mainDb.searchMessages(request.user.id, roleId, keyword, { limit });
+    const messages = await mainDb.searchMessages(request.user.id, roleId, keyword, { limit });
     return reply.send({ success: true, data: messages });
   });
 
@@ -1654,17 +1654,17 @@ fastify.register(async (instance) => {
       }>;
     };
 
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify role ownership
-    const role = mainDb.getRole(body.roleId);
+    const role = await mainDb.getRole(body.roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
     let migrated = 0;
     for (const msg of body.messages) {
-      mainDb.saveMessage({
+      await mainDb.saveMessage({
         ...msg,
         userId: msg.userId || request.user.id,
         groupId: msg.groupId || null,
@@ -1993,8 +1993,8 @@ If the user asks about "this document" or "the file" without specifying, they ar
       let accountsSection = '';
 
       if (body.roleId) {
-        const mainDb = getMainDatabase();
-        const role = mainDb.getRole(body.roleId);
+        const mainDb = await getMainDatabase();
+        const role = await mainDb.getRole(body.roleId);
         if (role) {
           // Build role context section
           roleSection = `## Current Role: ${role.name}`;
@@ -2009,8 +2009,8 @@ If the user asks about "this document" or "the file" without specifying, they ar
       }
 
       // Load user's Google accounts
-      const mainDb = getMainDatabase();
-      const googleAccounts = mainDb.getAllUserOAuthTokens(request.user.id, 'google');
+      const mainDb = await getMainDatabase();
+      const googleAccounts = await mainDb.getAllUserOAuthTokens(request.user.id, 'google');
       if (googleAccounts.length > 0) {
         const accountList = googleAccounts.map((acc: typeof googleAccounts[0]) => `- ${acc.accountEmail}`).join('\n');
         accountsSection = `## Available Google Accounts
@@ -2143,7 +2143,7 @@ When the user asks to schedule, automate, or run something in the future (e.g. "
       let conversationMessages = [systemMessage, ...body.messages];
       let assistantContent = '';
       let toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
-      const MAX_TOOL_ITERATIONS = getSettingWithDefault<number>('MAX_TOOL_ITERATIONS', 10);
+      const MAX_TOOL_ITERATIONS = await getSettingWithDefault<number>('MAX_TOOL_ITERATIONS', 10);
       let toolIteration = 0;
 
       // Track consecutive identical tool calls to prevent infinite loops
@@ -3205,8 +3205,8 @@ fastify.register(async (instance) => {
             });
           }
           // Store the API key in mcp_servers under serverId:userId
-          const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-          mainDb.saveMCPServerConfig(`${serverId}:${request.user.id}`, { apiKey });
+          const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+          await mainDb.saveMCPServerConfig(`${serverId}:${request.user.id}`, { apiKey });
           console.log(`[AddPredefinedServer:${requestId}] Stored API key for ${serverId}:${request.user.id}`);
         }
       }
@@ -3381,11 +3381,11 @@ fastify.register(async (instance) => {
     }
 
     try {
-      const mainDb = getMainDatabase();
+      const mainDb = await getMainDatabase();
 
       // Get all OAuth tokens for this user
-      const googleAccounts = mainDb.getAllUserOAuthTokens(request.user.id, 'google');
-      const githubTokens = mainDb.getAllUserOAuthTokens(request.user.id, 'github');
+      const googleAccounts = await mainDb.getAllUserOAuthTokens(request.user.id, 'google');
+      const githubTokens = await mainDb.getAllUserOAuthTokens(request.user.id, 'github');
 
       return reply.send({
         success: true,
@@ -3429,15 +3429,15 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify role ownership
-    const role = mainDb.getRole(roleId);
+    const role = await mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    const settings = mainDb.getAllSettings();
+    const settings = await mainDb.getAllSettings();
     return reply.send({ success: true, data: settings });
   });
 
@@ -3455,15 +3455,15 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify role ownership
-    const role = mainDb.getRole(roleId);
+    const role = await mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    const value = mainDb.getSetting(params.key);
+    const value = await mainDb.getSetting(params.key);
 
     if (value === null) {
       return reply.code(404).send({ success: false, error: { message: 'Setting not found' } });
@@ -3490,15 +3490,15 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'Value is required' } });
     }
 
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify role ownership
-    const role = mainDb.getRole(roleId);
+    const role = await mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    mainDb.setSetting(params.key, body.value);
+    await mainDb.setSetting(params.key, body.value);
     console.log(`[Settings] Updated setting: ${params.key} = ${JSON.stringify(body.value)}`);
 
     return reply.send({ success: true, data: { key: params.key, value: body.value } });
@@ -3518,15 +3518,15 @@ fastify.register(async (instance) => {
       return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
     }
 
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
 
     // Verify role ownership
-    const role = mainDb.getRole(roleId);
+    const role = await mainDb.getRole(roleId);
     if (!role || role.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    mainDb.deleteSetting(params.key);
+    await mainDb.deleteSetting(params.key);
     console.log(`[Settings] Deleted setting: ${params.key}`);
 
     return reply.send({ success: true });
@@ -3541,8 +3541,8 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-    const skills = mainDb.listSkills();
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const skills = await mainDb.listSkills();
     // Omit content from list for bandwidth reasons
     const summary = skills.map(({ content: _content, ...rest }) => rest);
     return reply.send({ success: true, data: summary });
@@ -3555,8 +3555,8 @@ fastify.register(async (instance) => {
     }
 
     const { id } = request.params as { id: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-    const skill = mainDb.getSkill(id);
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const skill = await mainDb.getSkill(id);
     if (!skill) {
       return reply.code(404).send({ success: false, error: { message: 'Skill not found' } });
     }
@@ -3590,8 +3590,8 @@ fastify.register(async (instance) => {
 
       // With multi-account support a user can have several Google tokens.
       // Try each one in turn — the right account will return 200; others 403.
-      const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-      const allTokens = mainDb.getAllUserOAuthTokens(request.user.id, 'google');
+      const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+      const allTokens = await mainDb.getAllUserOAuthTokens(request.user.id, 'google');
       if (allTokens.length === 0) {
         return reply.code(401).send({ success: false, error: { message: 'Google OAuth token not found. Please authenticate first.' } });
       }
@@ -3662,8 +3662,8 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
     const query = request.query as { status?: string; roleId?: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-    const jobs = mainDb.listScheduledJobs(request.user.id, {
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const jobs = await mainDb.listScheduledJobs(request.user.id, {
       status: query.status,
       roleId: query.roleId,
     });
@@ -3689,8 +3689,8 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
     const { id } = request.params as { id: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-    const job = mainDb.getScheduledJob(id);
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const job = await mainDb.getScheduledJob(id);
     if (!job || job.userId !== request.user.id) {
       return reply.code(404).send({ success: false, error: { message: 'Job not found' } });
     }
@@ -3716,8 +3716,8 @@ fastify.register(async (instance) => {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
     const { id } = request.params as { id: string };
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-    const cancelled = mainDb.cancelScheduledJob(id, request.user.id);
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const cancelled = await mainDb.cancelScheduledJob(id, request.user.id);
     if (!cancelled) {
       return reply.code(404).send({ success: false, error: { message: 'Job not found or cannot be cancelled' } });
     }
@@ -3729,8 +3729,10 @@ fastify.register(async (instance) => {
 // Start server
 const start = async () => {
   try {
-    // Run auto-migration if needed (converts old metadata.db to new schema)
-    const migrationResult = await autoMigrate(config.storage.root);
+    // Run auto-migration if needed (SQLite only — skip for DynamoDB which uses pre-provisioned tables)
+    const migrationResult = process.env.MAIN_DB_TYPE === 'dynamodb'
+      ? { migrated: false }
+      : await autoMigrate(config.storage.root);
     if (migrationResult.migrated) {
       console.log('══════════════════════════════════════════════════════════════');
       console.log('  DATABASE MIGRATION COMPLETED');
@@ -3739,9 +3741,9 @@ const start = async () => {
     }
 
     // Initialize main database
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
     await mainDb.initialize();
-    console.log(`[Storage] Using ${migrationResult.schema.toUpperCase()} schema`);
+    if ('schema' in migrationResult) console.log(`[Storage] Using ${migrationResult.schema.toUpperCase()} schema`);
     fastify.log.info('Main database initialized');
 
 
@@ -3758,7 +3760,7 @@ const start = async () => {
     fastify.log.info('Default settings initialized');
 
     // Seed skills
-    seedSkills(mainDb);
+    await seedSkills(mainDb);
     fastify.log.info('Skills seeded');
 
     // Initialize auth service

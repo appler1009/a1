@@ -37,8 +37,8 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
       return reply.status(401).send({ success: false, error: 'Not authenticated' });
     }
     try {
-      const mainDb = getMainDatabase();
-      const configs = mainDb.getMCPServerConfigs();
+      const mainDb = await getMainDatabase();
+      const configs = await mainDb.getMCPServerConfigs();
 
       return {
         success: true,

@@ -1,12 +1,12 @@
 import type { MCPToolInfo } from '@local-agent/shared';
 import type { InProcessMCPModule } from '../adapters/InProcessAdapter.js';
-import type { MainDatabase } from '../../storage/main-db.js';
+import type { IMainDatabase } from '../../storage/main-db.js';
 
 export class SchedulerInProcess implements InProcessMCPModule {
   [key: string]: unknown;
 
   constructor(
-    private readonly db: MainDatabase,
+    private readonly db: IMainDatabase,
     private readonly userId: string,
     private readonly roleId: string,
   ) {}
@@ -79,7 +79,7 @@ The description must be self-contained and detailed enough for autonomous execut
         return { error: `runAt must be in the future (got ${runAt})` };
       }
 
-      const job = this.db.createScheduledJob({
+      const job = await this.db.createScheduledJob({
         userId: this.userId,
         roleId: this.roleId,
         description,
@@ -94,12 +94,12 @@ The description must be self-contained and detailed enough for autonomous execut
         job: { id: job.id, description, scheduleType: 'once', runAt: runAtDate.toISOString() },
       };
     } else {
-      const job = this.db.createScheduledJob({
+      const job = await this.db.createScheduledJob({
         userId: this.userId,
         roleId: this.roleId,
         description,
         scheduleType: 'recurring',
-        runAt: null,
+        runAt: undefined,
       });
 
       return {
@@ -112,7 +112,7 @@ The description must be self-contained and detailed enough for autonomous execut
   }
 
   async list_scheduled_jobs(args: { status?: string }): Promise<unknown> {
-    const jobs = this.db.listScheduledJobs(this.userId, args?.status ? { status: args.status } : undefined);
+    const jobs = await this.db.listScheduledJobs(this.userId, args?.status ? { status: args.status } : undefined);
 
     if (jobs.length === 0) {
       return { jobs: [], message: 'No scheduled jobs found.' };

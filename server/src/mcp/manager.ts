@@ -1,6 +1,6 @@
 import type { MCPServerConfig, MCPToolInfo, MCPResource, MCPServerInfo, McpAdapter } from '@local-agent/shared';
 import { createMCPClient, MCPClientInterface } from './client.js';
-import { getMainDatabase, MainDatabase } from '../storage/main-db.js';
+import { getMainDatabase, MainDatabase, type IMainDatabase } from '../storage/main-db.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { PREDEFINED_MCP_SERVERS, PredefinedMCPServer } from './predefined-servers.js';
@@ -36,7 +36,7 @@ export class MCPManager {
   private clients: Map<string, MCPClientInterface> = new Map();
   private configs: Map<string, MCPServerConfig> = new Map();
   private inProcessAdapters: Map<string, McpAdapter> = new Map();
-  private db: MainDatabase | null = null;
+  private db: IMainDatabase | null = null;
   private currentRoleId: string | null = null;
   private dataDir: string = process.env.STORAGE_ROOT || './data';
 
@@ -44,7 +44,7 @@ export class MCPManager {
    * Initialize the MCP manager and load persisted configs
    */
   async initialize(): Promise<void> {
-    this.db = getMainDatabase();
+    this.db = await getMainDatabase();
 
     // Start global hidden servers first (markitdown, weather, etc.)
     await this.startGlobalServers();
@@ -424,7 +424,7 @@ export class MCPManager {
         return;
       }
 
-      const allConfigs = this.db.getMCPServerConfigs();
+      const allConfigs = await this.db.getMCPServerConfigs();
       console.log(`[MCPManager] [Role: ${roleId}] Found ${allConfigs.length} MCP server configs in main database`);
 
       // --- Helper: fetch Google OAuth token for a config ---
@@ -580,7 +580,7 @@ export class MCPManager {
     if (!this.db) return;
     
     try {
-      const configs = this.db.getMCPServerConfigs();
+      const configs = await this.db.getMCPServerConfigs();
       console.log(`[MCPManager] Loaded ${configs.length} persisted MCP server configs from main database`);
 
       for (const { id: serverId, config: serverConfig } of configs) {
@@ -638,7 +638,7 @@ export class MCPManager {
                 // API key servers: read the key from mcp_servers table
                 if (userId) {
                   const baseServerId = getBaseServerId(serverId);
-                  const storedConfig = this.db!.getMCPServerConfig(`${baseServerId}:${userId}`);
+                  const storedConfig = await this.db!.getMCPServerConfig(`${baseServerId}:${userId}`);
                   if (storedConfig?.apiKey) {
                     userToken = { apiKey: storedConfig.apiKey as string };
                     console.log(`[MCPManager] Retrieved API key for ${serverId} (userId=${userId})`);
@@ -662,7 +662,7 @@ export class MCPManager {
                   } else if (accountEmail) {
                     // Fallback: look up by accountEmail directly (no userId in legacy configs)
                     console.log(`[MCPManager] Retrieving ${provider} token by accountEmail ${accountEmail} for server ${serverId}`);
-                    oauthToken = this.db!.getOAuthTokenByAccountEmail(provider, accountEmail);
+                    oauthToken = await this.db!.getOAuthTokenByAccountEmail(provider, accountEmail);
                   }
 
                   if (oauthToken) {
@@ -718,7 +718,7 @@ export class MCPManager {
         accountEmail: (configToSave as any).accountEmail,
         configKeys: Object.keys(configToSave)
       });
-      this.db.saveMCPServerConfig(serverId, configToSave);
+      await this.db.saveMCPServerConfig(serverId, configToSave);
       console.log(`[MCPManager] ✓ Persisted user-level config for server: ${serverId}`);
     } catch (error) {
       console.error(`[MCPManager] Failed to persist config for ${serverId}:`, error);
@@ -736,7 +736,7 @@ export class MCPManager {
 
     // All servers are stored in main database (user-level, shared across roles)
     try {
-      this.db.deleteMCPServerConfig(serverId);
+      await this.db.deleteMCPServerConfig(serverId);
       console.log(`[MCPManager] Deleted persisted config for user-level server: ${serverId}`);
     } catch (error) {
       console.error(`[MCPManager] Failed to delete persisted config for ${serverId}:`, error);

@@ -147,8 +147,8 @@ async function handleMessage(message: any, config: DiscordBotConfig): Promise<vo
     console.log(`[Discord] Message from ${message.author.username}: ${message.content.substring(0, 50)}`);
 
     // Look up app user
-    const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
-    const appUser = mainDb.getUserByDiscordId(message.author.id);
+    const mainDb = await getMainDatabase(process.env.STORAGE_ROOT || './data');
+    const appUser = await mainDb.getUserByDiscordId(message.author.id);
 
     if (!appUser) {
       console.log(`[Discord] User ${message.author.id} not linked to app`);
@@ -173,11 +173,11 @@ async function handleMessage(message: any, config: DiscordBotConfig): Promise<vo
 
       // Ensure role-manager is in user's MCP servers
       const mcpServerKey = 'role-manager';
-      let mcpConfig = mainDb.getMCPServerConfig(mcpServerKey);
+      let mcpConfig = await mainDb.getMCPServerConfig(mcpServerKey);
 
       if (!mcpConfig) {
         console.log(`[Discord] Adding ${mcpServerKey} to user's MCP servers`);
-        mainDb.saveMCPServerConfig(mcpServerKey, {
+        await mainDb.saveMCPServerConfig(mcpServerKey, {
           name: 'Role Manager',
           transport: 'in-process',
           enabled: true,
@@ -186,7 +186,7 @@ async function handleMessage(message: any, config: DiscordBotConfig): Promise<vo
       }
 
       // Get first role as default
-      const roles = mainDb.getUserRoles(appUser.id);
+      const roles = await mainDb.getUserRoles(appUser.id);
       const defaultRoleId = roles.length > 0 ? roles[0].id : null;
 
       session = {

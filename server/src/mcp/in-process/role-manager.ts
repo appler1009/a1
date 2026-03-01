@@ -11,7 +11,7 @@
 
 import type { MCPToolInfo } from '@local-agent/shared';
 import type { InProcessMCPModule } from '../adapters/InProcessAdapter.js';
-import { MainDatabase } from '../../storage/main-db.js';
+import type { IMainDatabase } from '../../storage/main-db.js';
 import { pendingRoleChanges } from '../../discord/pending-role-changes.js';
 
 /**
@@ -21,7 +21,7 @@ export class RoleManagerInProcess implements InProcessMCPModule {
   // Index signature for dynamic tool access
   [key: string]: unknown;
 
-  constructor(private userId: string, private mainDb: MainDatabase) {
+  constructor(private userId: string, private mainDb: IMainDatabase) {
     console.log(`[RoleManagerInProcess] Initialized for user: ${userId}`);
   }
 
@@ -66,7 +66,7 @@ export class RoleManagerInProcess implements InProcessMCPModule {
   async list_roles(args: any): Promise<unknown> {
     try {
       console.log('[RoleManagerInProcess:list_roles] Listing roles for user:', this.userId);
-      const roles = this.mainDb.getUserRoles(this.userId);
+      const roles = await this.mainDb.getUserRoles(this.userId);
 
       if (roles.length === 0) {
         return {
@@ -115,10 +115,10 @@ export class RoleManagerInProcess implements InProcessMCPModule {
       let targetRole = null;
 
       if (roleId) {
-        targetRole = this.mainDb.getRole(roleId);
+        targetRole = await this.mainDb.getRole(roleId);
       } else if (roleName) {
         // Find role by name
-        const roles = this.mainDb.getUserRoles(this.userId);
+        const roles = await this.mainDb.getUserRoles(this.userId);
         targetRole = roles.find((r) => r.name.toLowerCase() === roleName.toLowerCase()) || null;
       }
 

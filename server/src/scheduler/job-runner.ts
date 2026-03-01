@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { LLMRouter } from '../ai/router.js';
-import type { MainDatabase, ScheduledJob } from '../storage/main-db.js';
+import type { IMainDatabase, ScheduledJob } from '../storage/main-db.js';
 import type { LLMMessage } from '@local-agent/shared';
 import { mcpManager, getMcpAdapter } from '../mcp/index.js';
 import { notifyScheduledJobCompletion } from '../discord/bot.js';
@@ -10,7 +10,7 @@ export class JobRunner {
 
   constructor(
     private readonly llmRouter: LLMRouter,
-    private readonly db: MainDatabase,
+    private readonly db: IMainDatabase,
     private readonly executeTool: (
       userId: string,
       toolName: string,
@@ -20,7 +20,7 @@ export class JobRunner {
   ) {}
 
   async run(job: ScheduledJob): Promise<void> {
-    const role = this.db.getRole(job.roleId);
+    const role = await this.db.getRole(job.roleId);
     const systemPrompt = [
       'You are an autonomous AI agent executing a scheduled background task.',
       `Current time: ${new Date().toISOString()}`,
@@ -99,7 +99,7 @@ export class JobRunner {
       ? job.description.slice(0, 60) + '…'
       : job.description;
 
-    this.db.saveMessage({
+    await this.db.saveMessage({
       id: uuidv4(),
       userId: job.userId,
       roleId: job.roleId,
@@ -111,7 +111,7 @@ export class JobRunner {
 
     const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
     if (lastAssistant?.content) {
-      this.db.saveMessage({
+      await this.db.saveMessage({
         id: uuidv4(),
         userId: job.userId,
         roleId: job.roleId,
@@ -123,7 +123,7 @@ export class JobRunner {
     }
 
     // Send Discord notification if bot is configured
-    const roleInfo = this.db.getRole(job.roleId);
+    const roleInfo = await this.db.getRole(job.roleId);
     if (roleInfo) {
       await notifyScheduledJobCompletion(job.userId, roleInfo.name, job.description).catch(err => {
         console.error('[JobRunner] Failed to send Discord notification:', err);

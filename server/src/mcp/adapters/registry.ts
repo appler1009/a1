@@ -12,7 +12,7 @@ import { RoleManagerInProcess } from '../in-process/role-manager.js';
 import { AlphaVantageInProcess } from '../in-process/alpha-vantage.js';
 import { TwelveDataInProcess } from '../in-process/twelve-data.js';
 import { SchedulerInProcess } from '../in-process/scheduler.js';
-import { getMainDatabase } from '../../storage/index.js';
+import { getMainDatabaseSync } from '../../storage/index.js';
 
 /**
  * Simple concrete implementation of BaseStdioAdapter for generic MCP servers
@@ -120,11 +120,11 @@ class AdapterRegistry {
     // Role Manager - allows LLM to switch between user's roles dynamically
     // Used by Discord bot and other clients to manage active role
     this.registerInProcess('role-manager', (userId: string) => {
-      const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+      const mainDb = getMainDatabaseSync();
       return new RoleManagerInProcess(userId, mainDb);
     });
     this.registerInProcess('Role Manager', (userId: string) => {
-      const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+      const mainDb = getMainDatabaseSync();
       return new RoleManagerInProcess(userId, mainDb);
     });
 
@@ -154,7 +154,7 @@ class AdapterRegistry {
 
     // Scheduler - role-scoped in-process task scheduler
     this.registerInProcess('scheduler', (userId: string, tokenData?: any) => {
-      const mainDb = getMainDatabase(process.env.STORAGE_ROOT || './data');
+      const mainDb = getMainDatabaseSync();
       return new SchedulerInProcess(mainDb, userId, tokenData?.roleId || '');
     });
 
