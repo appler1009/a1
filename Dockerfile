@@ -29,8 +29,6 @@ RUN mkdir -p /app/data
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
-ENV STORAGE_TYPE=fs
-ENV STORAGE_ROOT=/app/data
 
 # Expose port
 EXPOSE 3000
