@@ -1,15 +1,7 @@
-# Production stage — slim with onnxruntime dependencies
-FROM oven/bun:slim
+# Production stage
+FROM oven/bun:latest
 
 WORKDIR /app
-
-# Install system dependencies required by onnxruntime-node
-RUN apt-get update && apt-get install -y \
-  libc6 \
-  libgomp1 \
-  libstdc++6 \
-  curl \
-  && rm -rf /var/lib/apt/lists/*
 
 # Copy pre-built files (build locally first: bun run build)
 COPY shared/dist ./shared/dist
