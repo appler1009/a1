@@ -21,11 +21,17 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Build app (generates dist/ and node_modules/)
+        run: bun run build
+
       - name: Log in to ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push image
+      - name: Build and push Docker image
         env:
           REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
