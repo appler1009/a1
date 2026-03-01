@@ -3,6 +3,9 @@ FROM oven/bun:latest
 
 WORKDIR /app
 
+# Install uv (for MCP servers like markitdown-mcp)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Copy pre-built files (build locally first: bun run build)
 COPY shared/dist ./shared/dist
 COPY server/dist ./server/dist
