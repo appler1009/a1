@@ -3,8 +3,14 @@ FROM oven/bun:latest
 
 WORKDIR /app
 
-# Install uv (for MCP servers like markitdown-mcp)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+# Install Python and uv (for MCP servers like markitdown-mcp)
+RUN apt-get update && apt-get install -y curl python3 && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && apt-get update && apt-get remove -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
+# Add uv to PATH
+ENV PATH="/root/.local/bin:$PATH"
+RUN uv --version
 
 # Copy pre-built files (build locally first: bun run build)
 COPY shared/dist ./shared/dist
