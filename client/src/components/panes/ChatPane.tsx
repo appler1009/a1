@@ -362,6 +362,23 @@ export function ChatPane() {
     setStreaming(true);
     setCurrentContent('');
 
+    // Declared outside try so saveAssistantMessage() is accessible in the catch block
+    // when the connection drops mid-stream (e.g. server restart / 503).
+    let fullContent = '';
+    let assistantMessageSaved = false;
+    const saveAssistantMessage = () => {
+      if (fullContent.trim() && !assistantMessageSaved) {
+        assistantMessageSaved = true;
+        addMessage({
+          id: crypto.randomUUID(),
+          roleId: activeRoleId,
+          from: 'assistant' as const,
+          content: fullContent,
+          createdAt: new Date().toISOString(),
+        });
+      }
+    };
+
     try {
       const response = await apiFetch('/api/chat/stream', {
         method: 'POST',
@@ -393,25 +410,6 @@ export function ChatPane() {
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-
-      // Hoisted so saveAssistantMessage() is accessible in the catch block
-      // when the connection drops mid-stream (e.g. server restart / 503).
-      let fullContent = '';
-      let assistantMessageSaved = false;
-      const saveAssistantMessage = () => {
-        if (fullContent.trim() && !assistantMessageSaved) {
-          assistantMessageSaved = true;
-          addMessage({
-            id: crypto.randomUUID(),
-            roleId: activeRoleId,
-            groupId: currentGroup?.id || null,
-            userId: user.id,
-            from: 'assistant' as const,
-            content: fullContent,
-            createdAt: new Date().toISOString(),
-          });
-        }
-      };
 
       if (reader) {
         while (true) {
