@@ -25,6 +25,7 @@ export class JobRunner {
       'You are an autonomous AI agent executing a scheduled background task.',
       `Current time: ${new Date().toISOString()}`,
       'Execute the task completely using available tools. Do not ask for clarification.',
+      'IMPORTANT: Do not use schedule_task to re-schedule or duplicate this job. Recurring jobs are managed automatically by the scheduler — scheduling a similar job will create unwanted duplicates. Only use schedule_task if the task explicitly requires creating a genuinely new, distinct job.',
       role?.systemPrompt ? `\nRole context: ${role.systemPrompt}` : '',
     ].filter(Boolean).join('\n');
 

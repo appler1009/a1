@@ -1191,10 +1191,11 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     const now = new Date().toISOString();
     const sets: string[] = ['updatedAt = :updatedAt'];
     const removes: string[] = [];
-    const names: Record<string, string> = { '#status': 'status' };
+    const names: Record<string, string> = {};
     const values: Record<string, unknown> = { ':updatedAt': now };
 
     if (update.status !== undefined) {
+      names['#status'] = 'status';
       sets.push('#status = :status');
       values[':status'] = update.status;
       // Keep GSI composite key in sync
@@ -1227,7 +1228,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       TableName: this.tables.scheduledJobs,
       Key: { jobId: id },
       UpdateExpression: setPart + removePart,
-      ExpressionAttributeNames: names,
+      ...(Object.keys(names).length > 0 && { ExpressionAttributeNames: names }),
       ExpressionAttributeValues: values,
     }));
   }

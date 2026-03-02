@@ -63,8 +63,12 @@ export class Scheduler {
       for (const { id, until } of hold) {
         const holdUntil = new Date(until);
         if (!isNaN(holdUntil.getTime())) {
-          await this.db.updateScheduledJobStatus(id, { holdUntil });
-          console.log(`[Scheduler] Job ${id} held until ${holdUntil.toISOString()}`);
+          try {
+            await this.db.updateScheduledJobStatus(id, { holdUntil });
+            console.log(`[Scheduler] Job ${id} held until ${holdUntil.toISOString()}`);
+          } catch (err) {
+            console.error(`[Scheduler] Failed to hold job ${id}:`, err);
+          }
         } else {
           console.warn(`[Scheduler] Job ${id} hold has invalid date: ${until}`);
         }
