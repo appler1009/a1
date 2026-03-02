@@ -392,7 +392,8 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   const [authProvider, setAuthProvider] = React.useState<string | null>(null);
   const [connecting, setConnecting] = React.useState(false);
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [activeTab, setActiveTab] = React.useState<'features' | 'region' | 'discord' | 'account'>('features');
+  const [activeTab, setActiveTab] = React.useState<'features' | 'region' | 'discord' | 'account' | 'about'>('features');
+  const [showLicenses, setShowLicenses] = React.useState(false);
 
   // Prevent duplicate add calls during OAuth flow
   const pendingAddRef = React.useRef<string | null>(null);
@@ -918,7 +919,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
 
       {/* Tab bar */}
       <div className="flex gap-1 mb-5 border-b border-border">
-        {(['account', 'features', 'region', 'discord'] as const).map((tab) => (
+        {(['account', 'features', 'region', 'discord', 'about'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -1087,6 +1088,58 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
             <div className="mb-6">
               <h3 className="text-sm font-semibold mb-3">Discord Integration</h3>
               <DiscordSettings onUpdate={fetchServers} />
+            </div>
+          )}
+
+          {/* About tab */}
+          {activeTab === 'about' && (
+            <div className="mb-6 space-y-6">
+              <div>
+                <h3 className="text-sm font-semibold mb-3">Version</h3>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-sm bg-muted px-2 py-1 rounded select-all">{__COMMIT_HASH__}</span>
+                  <span className="text-xs text-muted-foreground">build commit</span>
+                </div>
+              </div>
+
+              <div>
+                <button
+                  onClick={() => setShowLicenses((v) => !v)}
+                  className="flex items-center gap-2 text-sm font-semibold hover:text-foreground text-muted-foreground transition-colors"
+                >
+                  <span>{showLicenses ? '▾' : '▸'}</span>
+                  Open-source licenses
+                </button>
+                {showLicenses && (
+                  <div className="mt-3 space-y-2 max-h-72 overflow-y-auto pr-1">
+                    {([
+                      { name: 'React', license: 'MIT', author: 'Meta Platforms, Inc.' },
+                      { name: 'react-router-dom', license: 'MIT', author: 'Remix Software' },
+                      { name: 'Zustand', license: 'MIT', author: 'Paul Henschel' },
+                      { name: 'Tailwind CSS', license: 'MIT', author: 'Tailwind Labs' },
+                      { name: 'Vite', license: 'MIT', author: 'Yuxi (Evan) You' },
+                      { name: '@radix-ui', license: 'MIT', author: 'WorkOS' },
+                      { name: 'lucide-react', license: 'ISC', author: 'Lucide Contributors' },
+                      { name: 'react-markdown', license: 'MIT', author: 'Titus Wormer' },
+                      { name: 'react-resizable-panels', license: 'MIT', author: 'Brian Vaughn' },
+                      { name: '@tanstack/react-query', license: 'MIT', author: 'TanStack' },
+                      { name: 'fuse.js', license: 'Apache 2.0', author: 'Kiro Risk' },
+                      { name: 'marked', license: 'MIT', author: 'Christopher Jeffrey' },
+                      { name: 'clsx', license: 'MIT', author: 'Luke Edwards' },
+                      { name: 'class-variance-authority', license: 'Apache 2.0', author: 'Joe Bell' },
+                      { name: 'Fastify', license: 'MIT', author: 'Fastify Contributors' },
+                      { name: 'better-sqlite3', license: 'MIT', author: 'Joshua Wise' },
+                      { name: '@aws-sdk', license: 'Apache 2.0', author: 'Amazon Web Services' },
+                      { name: 'Bun', license: 'MIT', author: 'Oven' },
+                    ] as const).map(({ name, license, author }) => (
+                      <div key={name} className="flex items-baseline justify-between text-sm py-1 border-b border-border/50 last:border-0">
+                        <span className="font-medium">{name}</span>
+                        <span className="text-muted-foreground text-xs ml-4 shrink-0">{license} · {author}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </>

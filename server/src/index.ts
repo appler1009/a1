@@ -174,6 +174,11 @@ const storage = createStorage({
 // Module-level current role tracking (replaces roleStorage.currentRoleId)
 let serverCurrentRoleId: string | null = null;
 
+// Track active SSE streams so SIGTERM can close them immediately,
+// unblocking ALB connection draining during deploys.
+import type { ServerResponse } from 'http';
+const activeStreams = new Set<ServerResponse>();
+
 // Default settings
 const DEFAULT_SETTINGS: Record<string, unknown> = {
   MAX_TOOL_ITERATIONS: 10,
@@ -1754,6 +1759,9 @@ fastify.register(async (instance) => {
     reply.raw.setHeader('Content-Type', 'text/event-stream');
     reply.raw.setHeader('Cache-Control', 'no-cache');
     reply.raw.setHeader('Connection', 'keep-alive');
+
+    activeStreams.add(reply.raw);
+    reply.raw.on('close', () => activeStreams.delete(reply.raw));
 
     try {
       // TWO-PHASE MCP TOOL LOADING
@@ -3785,8 +3793,19 @@ const start = async () => {
 };
 
 // Handle shutdown
+function closeActiveStreams() {
+  if (activeStreams.size > 0) {
+    console.log(`Closing ${activeStreams.size} active SSE stream(s)...`);
+    for (const stream of activeStreams) {
+      stream.end();
+    }
+    activeStreams.clear();
+  }
+}
+
 process.on('SIGTERM', async () => {
   console.log('Shutting down...');
+  closeActiveStreams();
   scheduler?.stop();
   await mcpManager.disconnectAll();
   // (no role storage to close - using main database)
@@ -3796,6 +3815,7 @@ process.on('SIGTERM', async () => {
 
 process.on('SIGINT', async () => {
   console.log('Shutting down...');
+  closeActiveStreams();
   scheduler?.stop();
   await mcpManager.disconnectAll();
   // (no role storage to close - using main database)
