@@ -1483,7 +1483,7 @@ fastify.register(async (instance) => {
       return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
     }
 
-    const limit = query.limit || 50;
+    const limit = Number(query.limit) || 50;
 
     // Check if role is changing
     const previousRoleId = serverCurrentRoleId;
@@ -1601,7 +1601,7 @@ fastify.register(async (instance) => {
     }
 
     const keyword = query.keyword || '';
-    const limit = query.limit || 100;
+    const limit = Number(query.limit) || 100;
 
     if (!keyword.trim()) {
       return reply.send({ success: true, data: [] });
