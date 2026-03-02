@@ -15,7 +15,7 @@ export class GrokProvider implements LLMProvider {
       apiKey: config.apiKey,
       baseURL: 'https://api.x.ai/v1',
     });
-    this.defaultModel = config.defaultModel || 'grok-4-1-fast-reasoning';
+    this.defaultModel = config.defaultModel || 'grok-4-1-fast-non-reasoning';
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {

@@ -478,7 +478,13 @@ async function downloadGoogleDriveFile(
 // If the URI is a Google Drive URL, download the file first and cache it
 async function resolveUriForMcp(uri: string, userId?: string): Promise<string> {
   if (!uri) return uri;
-  
+
+  // Fast bail-out: plain text / long prose is never a URI or cache ID.
+  // Cache IDs are short alphanumeric strings; URIs contain no whitespace.
+  // Skipping early avoids noisy SECURITY log spam when tool args contain
+  // free-text fields (e.g. scheduler prompt, email body, search queries).
+  if (uri.length > 500 || /[\s\n\r]/.test(uri)) return uri;
+
   // Check if this is a Google Drive URL that needs to be downloaded first
   if (uri.startsWith('https://drive.google.com/') || uri.startsWith('http://drive.google.com/')) {
     // Extract Google Drive file ID from various URL formats
@@ -599,21 +605,32 @@ async function resolveUriForMcp(uri: string, userId?: string): Promise<string> {
   return uri;
 }
 
+// Argument keys that are likely to hold file URIs or cache IDs.
+// Only these keys are passed through the URI resolver; all other string
+// fields (prompts, queries, email bodies, etc.) are left untouched.
+const URI_ARG_KEYS = new Set([
+  'uri', 'url', 'fileUri', 'file_uri', 'cacheId', 'cache_id',
+  'fileId', 'file_id', 'path', 'filePath', 'file_path', 'src', 'source',
+]);
+
 // Helper function to recursively resolve URIs in an arguments object
 async function resolveUrisInArgs(args: Record<string, unknown>, userId?: string): Promise<Record<string, unknown>> {
   const resolved: Record<string, unknown> = {};
-  
+
   for (const [key, value] of Object.entries(args)) {
     if (typeof value === 'string') {
-      // Resolve string values that might be URIs or cache IDs
-      resolved[key] = await resolveUriForMcp(value, userId);
+      // Only resolve strings in URI-like argument keys to avoid passing
+      // free-text fields (prompts, queries, etc.) through the resolver.
+      resolved[key] = URI_ARG_KEYS.has(key) ? await resolveUriForMcp(value, userId) : value;
     } else if (Array.isArray(value)) {
-      // Recursively resolve URIs in arrays
-      resolved[key] = await Promise.all(
-        value.map(item => 
-          typeof item === 'string' ? resolveUriForMcp(item, userId) : Promise.resolve(item)
-        )
-      );
+      // Recursively resolve URIs in arrays (only for URI keys)
+      resolved[key] = URI_ARG_KEYS.has(key)
+        ? await Promise.all(
+            value.map(item =>
+              typeof item === 'string' ? resolveUriForMcp(item, userId) : Promise.resolve(item)
+            )
+          )
+        : value;
     } else if (typeof value === 'object' && value !== null) {
       // Recursively resolve URIs in nested objects
       resolved[key] = await resolveUrisInArgs(value as Record<string, unknown>, userId);
@@ -621,7 +638,7 @@ async function resolveUrisInArgs(args: Record<string, unknown>, userId?: string)
       resolved[key] = value;
     }
   }
-  
+
   return resolved;
 }
 

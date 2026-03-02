@@ -37,9 +37,9 @@ export class LLMRouter {
       }
       this.provider = new GrokProvider({
         apiKey: config.grokKey,
-        defaultModel: config.defaultModel || 'grok-4-1-fast-reasoning',
+        defaultModel: config.defaultModel || 'grok-4-1-fast-non-reasoning',
       });
-      this.defaultModel = config.defaultModel || 'grok-4-1-fast-reasoning';
+      this.defaultModel = config.defaultModel || 'grok-4-1-fast-non-reasoning';
     } else if (providerType === 'openai') {
       if (!config.openaiKey) {
         throw new Error('OPENAI_API_KEY is required for OpenAI provider');

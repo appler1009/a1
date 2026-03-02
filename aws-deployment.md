@@ -50,11 +50,11 @@ STORAGE_REGION=us-east-1
 ### LLM provider (required — pick one)
 
 ```bash
-LLM_PROVIDER=anthropic          # or openai, grok
-DEFAULT_MODEL=claude-sonnet-4-6
-ANTHROPIC_API_KEY=<key>
-# OPENAI_API_KEY=<key>
-# GROK_API_KEY=<key>
+LLM_PROVIDER=grok               # or openai, anthropic
+DEFAULT_MODEL=grok-4-1-fast-non-reasoning  # grok-3, grok-4-1-fast-non-reasoning, grok-3-mini, etc.
+GROK_API_KEY=<key>
+# ANTHROPIC_API_KEY=<key>       # needed if LLM_PROVIDER=anthropic
+# OPENAI_API_KEY=<key>          # needed if LLM_PROVIDER=openai
 ```
 
 ### OAuth (optional — enable per provider)
@@ -151,8 +151,8 @@ Secrets are loaded by the app at startup (not via ECS `secrets` injection). Set 
     { "name": "STORAGE_TYPE",          "value": "s3" },
     { "name": "STORAGE_BUCKET",        "value": "<bucket>" },
     { "name": "STORAGE_REGION",        "value": "us-east-1" },
-    { "name": "LLM_PROVIDER",          "value": "anthropic" },
-    { "name": "DEFAULT_MODEL",         "value": "claude-sonnet-4-6" },
+    { "name": "LLM_PROVIDER",          "value": "grok" },
+    { "name": "DEFAULT_MODEL",         "value": "grok-4-1-fast-non-reasoning" },
     { "name": "GOOGLE_REDIRECT_URI",   "value": "https://<your-domain>/api/auth/google/callback" },
     { "name": "GMAIL_REDIRECT_URI",    "value": "https://<your-domain>/api/gmail/callback" },
     { "name": "GITHUB_REDIRECT_URI",   "value": "https://<your-domain>/api/auth/github/callback" }
@@ -397,6 +397,50 @@ The server logs each step of graceful shutdown to stdout (visible in CloudWatch)
 ```
 
 If a deploy stalls, search CloudWatch for `[shutdown]` at the time of the deploy to see exactly where the old container got stuck.
+
+### Updating task definition environment variables
+
+Use this when you need to change an env var (e.g. `LLM_PROVIDER`, `DEFAULT_MODEL`) without rebuilding the container image.
+
+```bash
+FAMILY=a1          # task definition family name
+CLUSTER=a1         # ECS cluster name
+SERVICE=a1         # ECS service name
+
+# 1. Export current task def (strip read-only fields ECS rejects on re-register)
+aws ecs describe-task-definition --task-definition $FAMILY \
+  --query 'taskDefinition' \
+  | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+  > task-def.json
+
+# 2. Patch the env vars you want to change (example: switch to grok)
+jq '(.containerDefinitions[0].environment[] | select(.name == "LLM_PROVIDER")).value = "grok"
+  | (.containerDefinitions[0].environment[] | select(.name == "DEFAULT_MODEL")).value = "grok-4-1-fast-non-reasoning"' \
+  task-def.json > task-def-updated.json
+
+# 3. Verify the change looks right before registering
+jq '.containerDefinitions[0].environment[] | select(.name == "LLM_PROVIDER" or .name == "DEFAULT_MODEL")' task-def-updated.json
+
+# 4. Register new revision
+aws ecs register-task-definition --cli-input-json file://task-def-updated.json
+
+# 5. Deploy — update the service to the new revision and force a rollout
+NEW_REVISION=$(aws ecs describe-task-definition --task-definition $FAMILY \
+  --query 'taskDefinition.revision' --output text)
+
+aws ecs update-service \
+  --cluster $CLUSTER \
+  --service $SERVICE \
+  --task-definition $FAMILY:$NEW_REVISION \
+  --force-new-deployment
+
+# 6. Wait for rollout to complete (~2-3 min)
+aws ecs wait services-stable --cluster $CLUSTER --services $SERVICE
+echo "Done"
+
+# 7. Clean up local files
+rm task-def.json task-def-updated.json
+```
 
 ### Clearing stuck draining targets
 

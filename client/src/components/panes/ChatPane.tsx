@@ -394,8 +394,26 @@ export function ChatPane() {
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
+      // Hoisted so saveAssistantMessage() is accessible in the catch block
+      // when the connection drops mid-stream (e.g. server restart / 503).
+      let fullContent = '';
+      let assistantMessageSaved = false;
+      const saveAssistantMessage = () => {
+        if (fullContent.trim() && !assistantMessageSaved) {
+          assistantMessageSaved = true;
+          addMessage({
+            id: crypto.randomUUID(),
+            roleId: activeRoleId,
+            groupId: currentGroup?.id || null,
+            userId: user.id,
+            from: 'assistant' as const,
+            content: fullContent,
+            createdAt: new Date().toISOString(),
+          });
+        }
+      };
+
       if (reader) {
-        let fullContent = '';
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -554,19 +572,7 @@ export function ChatPane() {
         }
 
         // Save final assistant message if there's content
-        if (fullContent.trim()) {
-          const assistantMessage = {
-            id: crypto.randomUUID(),
-            roleId: activeRoleId,
-            groupId: currentGroup?.id || null,
-            userId: user.id,
-            from: 'assistant' as const,
-            content: fullContent,
-            createdAt: new Date().toISOString(),
-          };
-
-          addMessage(assistantMessage);
-        }
+        saveAssistantMessage();
 
         // Check for preview file tags in the response and download them
         console.log('[PreviewFile] Checking response for preview file tags...');
@@ -591,6 +597,9 @@ export function ChatPane() {
       }
     } catch (error) {
       console.error('Chat error:', error);
+      // If the connection dropped mid-stream (e.g. server restart / 503),
+      // save whatever content was received so it isn't lost on refresh.
+      saveAssistantMessage();
     } finally {
       setStreaming(false);
       setCurrentContent('');
