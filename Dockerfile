@@ -3,14 +3,15 @@ FROM oven/bun:latest
 
 WORKDIR /app
 
-# Install Python and uv (for MCP servers like markitdown-mcp)
-RUN apt-get update && apt-get install -y curl python3 && rm -rf /var/lib/apt/lists/* \
+# Install Python, ffmpeg (for pydub/audio), and uv (for MCP servers like markitdown-mcp)
+RUN apt-get update && apt-get install -y curl python3 ffmpeg && rm -rf /var/lib/apt/lists/* \
     && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && apt-get update && apt-get remove -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # Add uv to PATH
 ENV PATH="/root/.local/bin:$PATH"
-RUN uv --version
+RUN uv --version && \
+    ln -s /root/.local/bin/uvx /usr/local/bin/uvx || true
 
 # Copy package files and install dependencies inside container
 # (Don't copy node_modules from host — native modules must be built for Linux)

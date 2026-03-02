@@ -612,6 +612,16 @@ export class MCPManager {
           console.log(`[MCPManager] Skipping server ${serverId} (handled by startPerRoleServers with role-specific path)`);
           continue;
         }
+
+        // Skip hidden predefined servers — startGlobalServers() always starts them fresh
+        // using the canonical command from predefined-servers.ts (e.g. 'uvx', not an
+        // absolute host path that may have been persisted from a previous run).
+        const baseServerId = getBaseServerId(serverId);
+        const predefined = PREDEFINED_MCP_SERVERS.find(s => s.id === baseServerId);
+        if (predefined?.hidden) {
+          console.log(`[MCPManager] Skipping hidden predefined server ${serverId} (handled by startGlobalServers)`);
+          continue;
+        }
         
         if (typedConfig.enabled) {
           // Check if already running (from startHiddenServers)

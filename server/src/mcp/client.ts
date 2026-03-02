@@ -42,6 +42,18 @@ export class MCPStdioClient implements MCPClientInterface {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
+    // Handle spawn errors (e.g. ENOENT when command not found).
+    // Without this handler, the 'error' event becomes an uncaught exception
+    // that crashes the entire process, bypassing any try/catch in callers.
+    this.process.on('error', (err: Error) => {
+      console.error(`[MCPClient] Spawn error for "${this.config.name}" (${this.config.command}):`, err.message);
+      for (const [, { reject }] of this.pendingRequests) {
+        reject(err);
+      }
+      this.pendingRequests.clear();
+      this.process = null;
+    });
+
     this.process.stdout?.on('data', (data: Buffer) => {
       this.handleData(data.toString());
     });
