@@ -12,15 +12,20 @@ RUN apt-get update && apt-get install -y curl python3 && rm -rf /var/lib/apt/lis
 ENV PATH="/root/.local/bin:$PATH"
 RUN uv --version
 
-# Copy pre-built files (build locally first: bun run build)
+# Copy package files and install dependencies inside container
+# (Don't copy node_modules from host — native modules must be built for Linux)
+COPY package.json bun.lock ./
+COPY shared/package.json ./shared/
+COPY server/package.json ./server/
+COPY client/package.json ./client/
+
+# Install dependencies for the Linux arm64 environment
+RUN bun install --frozen-lockfile
+
+# Copy pre-built TypeScript/source files (build locally first: bun run build)
 COPY shared/dist ./shared/dist
 COPY server/dist ./server/dist
 COPY client/dist ./client/dist
-COPY node_modules ./node_modules
-COPY shared/node_modules ./shared/node_modules
-COPY server/node_modules ./server/node_modules
-COPY package.json ./
-COPY server/package.json ./server/
 
 # Create data directory
 RUN mkdir -p /app/data
