@@ -6,7 +6,7 @@ WORKDIR /app
 # Install Python, ffmpeg (for pydub/audio), and uv (for MCP servers like markitdown-mcp)
 RUN apt-get update && apt-get install -y curl python3 ffmpeg && rm -rf /var/lib/apt/lists/* \
     && curl -LsSf https://astral.sh/uv/install.sh | sh \
-    && apt-get update && apt-get remove -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 # Add uv to PATH
 ENV PATH="/root/.local/bin:$PATH"
@@ -40,7 +40,7 @@ ENV HOST=0.0.0.0
 EXPOSE 3000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:3000/health || exit 1
 
 # Start server
