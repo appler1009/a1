@@ -3872,25 +3872,36 @@ function closeActiveStreams() {
   }
 }
 
-process.on('SIGTERM', async () => {
-  console.log('Shutting down...');
-  closeActiveStreams();
-  scheduler?.stop();
-  await mcpManager.disconnectAll();
-  // (no role storage to close - using main database)
-  await fastify.close();
-  process.exit(0);
-});
+async function gracefulShutdown(signal: string) {
+  console.log(`[shutdown] ${signal} received`);
 
-process.on('SIGINT', async () => {
-  console.log('Shutting down...');
+  // Close SSE connections first so ALB draining unblocks immediately
   closeActiveStreams();
+  console.log('[shutdown] SSE streams closed');
+
   scheduler?.stop();
-  await mcpManager.disconnectAll();
-  // (no role storage to close - using main database)
+  console.log('[shutdown] Scheduler stopped');
+
+  // Disconnect MCP clients with a hard timeout — a hung subprocess must not
+  // block the entire shutdown and keep the container alive indefinitely.
+  const MCP_DISCONNECT_TIMEOUT_MS = 5000;
+  await Promise.race([
+    mcpManager.disconnectAll().then(() => console.log('[shutdown] MCP clients disconnected')),
+    new Promise<void>((resolve) =>
+      setTimeout(() => {
+        console.log('[shutdown] MCP disconnect timed out, continuing');
+        resolve();
+      }, MCP_DISCONNECT_TIMEOUT_MS)
+    ),
+  ]);
+
   await fastify.close();
+  console.log('[shutdown] Fastify closed — exiting');
   process.exit(0);
-});
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 
 // Start the server
 start();
