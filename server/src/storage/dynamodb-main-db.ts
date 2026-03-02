@@ -1190,6 +1190,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
   }): Promise<void> {
     const now = new Date().toISOString();
     const sets: string[] = ['updatedAt = :updatedAt'];
+    const removes: string[] = [];
     const names: Record<string, string> = { '#status': 'status' };
     const values: Record<string, unknown> = { ':updatedAt': now };
 
@@ -1202,8 +1203,14 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     if (update.lastRunAt !== undefined) { sets.push('lastRunAt = :lastRunAt'); values[':lastRunAt'] = update.lastRunAt.toISOString(); }
     if (update.lastError !== undefined) { sets.push('lastError = :lastError'); values[':lastError'] = update.lastError; }
     if ('holdUntil' in update) {
-      if (update.holdUntil) { sets.push('holdUntil = :holdUntil'); values[':holdUntil'] = update.holdUntil.toISOString(); }
-      else { sets.push('holdUntil = :holdUntil'); values[':holdUntil'] = null; }
+      if (update.holdUntil) {
+        sets.push('holdUntil = :holdUntil');
+        values[':holdUntil'] = update.holdUntil.toISOString();
+      } else {
+        // REMOVE the attribute entirely — setting a GSI key to NULL is rejected by DynamoDB.
+        // Absent items are simply excluded from the GSI, which is the correct behaviour.
+        removes.push('holdUntil');
+      }
     }
     if (update.runCount !== undefined) { sets.push('runCount = :runCount'); values[':runCount'] = update.runCount; }
 
@@ -1213,10 +1220,13 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       values[':typeStatus'] = `${job?.scheduleType ?? 'once'}#${update.status}`;
     }
 
+    const setPart = `SET ${sets.join(', ')}`;
+    const removePart = removes.length > 0 ? ` REMOVE ${removes.join(', ')}` : '';
+
     await this.client.send(new UpdateCommand({
       TableName: this.tables.scheduledJobs,
       Key: { jobId: id },
-      UpdateExpression: `SET ${sets.join(', ')}`,
+      UpdateExpression: setPart + removePart,
       ExpressionAttributeNames: names,
       ExpressionAttributeValues: values,
     }));
