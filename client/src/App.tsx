@@ -11,10 +11,12 @@ import { Sidebar } from './components/Sidebar';
 import { ChatPane } from './components/panes/ChatPane';
 import { ViewerPane, MCPManagerDialog } from './components/panes/ViewerPane';
 import { OnboardingPane } from './components/panes/OnboardingPane';
+import { useIsMobile } from './hooks/useIsMobile';
 
 function MainApp() {
+  const isMobile = useIsMobile();
   const { user } = useAuthStore();
-  const { showMcpManager, setShowMcpManager } = useUIStore();
+  const { showMcpManager, setShowMcpManager, viewerFile, setViewerFile, mobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
   const { currentRole, rolesLoaded } = useRolesStore();
 
   // Handle keyboard shortcuts: CMD+SHIFT+, to open Settings, ESC to close
@@ -47,12 +49,22 @@ function MainApp() {
     <div className="flex h-screen bg-background text-foreground">
       <Sidebar />
 
-      <main className="flex-1 flex flex-col">
+      <main className="flex-1 flex flex-col min-w-0">
         {showOnboarding ? (
           /* Full-screen onboarding */
           <OnboardingPane />
+        ) : isMobile ? (
+          /* Mobile layout: single pane, viewer as overlay */
+          <div className="flex-1 h-full overflow-hidden">
+            <ChatPane />
+            {viewerFile && (
+              <div className="fixed inset-0 z-[30] bg-background flex flex-col">
+                <ViewerPane onClose={() => setViewerFile(null)} />
+              </div>
+            )}
+          </div>
         ) : (
-          /* Main content with resizable panels */
+          /* Desktop layout: resizable panels */
           <div className="flex-1 h-full overflow-hidden">
             <PanelGroup direction="horizontal" autoSaveId="main-panels">
               <Panel defaultSize={50} minSize={30} className="h-full overflow-hidden">
@@ -68,6 +80,14 @@ function MainApp() {
           </div>
         )}
       </main>
+
+      {/* Mobile sidebar backdrop */}
+      {isMobile && mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[50]"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
 
       {/* MCP Manager Modal */}
       {showMcpManager && (

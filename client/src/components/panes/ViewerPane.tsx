@@ -1,5 +1,6 @@
 import { useUIStore, useAuthStore } from '../../store';
 import React, { useRef, useEffect, useState } from 'react';
+import { X } from 'lucide-react';
 import { TopBanner } from '../TopBanner';
 import { apiFetch } from '../../lib/api';
 import { previewAdapterRegistry } from '../../lib/preview-adapters';
@@ -25,7 +26,7 @@ interface PredefinedMCPServer {
   hidden?: boolean; // If true, won't show in UI feature list but can still be used
 }
 
-export function ViewerPane() {
+export function ViewerPane({ onClose }: { onClose?: () => void }) {
   const { viewerFile } = useUIStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState<number>(600);
@@ -62,7 +63,17 @@ export function ViewerPane() {
         fileName={displayFileName}
         sourceUrl={viewerFile?.sourceUrl}
         openInNewWindowLabel="Open in New Window"
-      />
+      >
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
+            title="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </TopBanner>
 
       {/* Preview Content */}
       <div ref={containerRef} className="flex flex-col flex-1 overflow-hidden">

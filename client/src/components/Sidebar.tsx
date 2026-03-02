@@ -15,6 +15,7 @@ import { MemoryOverviewDialog } from './MemoryOverviewDialog';
 import { ScheduledJobsDialog } from './ScheduledJobsDialog';
 import { LoadingOverlay } from './LoadingOverlay';
 import { apiFetch } from '../lib/api';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 export function Sidebar() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -22,9 +23,10 @@ export function Sidebar() {
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
   const [memoryDialogRole, setMemoryDialogRole] = useState<{ id: string; name: string } | null>(null);
 
+  const isMobile = useIsMobile();
   const { user, currentGroup, groups, setCurrentGroup, logout } = useAuthStore();
   const { roles, currentRole, switchRole, addRole } = useRolesStore();
-  const { sidebarOpen, toggleSidebar, setShowMcpManager, showScheduledJobs, setShowScheduledJobs, roleSwitching, setRoleSwitching } = useUIStore();
+  const { sidebarOpen, toggleSidebar, mobileSidebarOpen, setMobileSidebarOpen, setShowMcpManager, showScheduledJobs, setShowScheduledJobs, roleSwitching, setRoleSwitching } = useUIStore();
   const environment = useEnvironmentStore((state) => state.environment);
 
   useEffect(() => {
@@ -83,27 +85,33 @@ export function Sidebar() {
       {/* Loading overlay for role switching */}
       {roleSwitching && <LoadingOverlay message="Switching role..." />}
       
-      <div className={`${sidebarOpen ? 'w-64' : 'w-16'} flex flex-col h-full bg-card border-r border-border transition-all duration-300`}>
+      <div className={
+        isMobile
+          ? `fixed inset-y-0 left-0 w-64 z-[60] flex flex-col h-full bg-card border-r border-border transition-transform duration-300 ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
+          : `${sidebarOpen ? 'w-64' : 'w-16'} flex flex-col h-full bg-card border-r border-border transition-all duration-300`
+      }>
       {/* Top Banner - Matching other panes */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border h-11 shrink-0">
-        {sidebarOpen && (
+        {(isMobile || sidebarOpen) && (
           <div className="flex items-center gap-2">
             <MessageSquare className="w-5 h-5 text-primary" />
             <span className="font-semibold text-sm">a1</span>
           </div>
         )}
         <div className="flex-1" />
-        <button
-          onClick={toggleSidebar}
-          className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
-          title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-        >
-          <ChevronDown className={`w-4 h-4 transition-transform ${sidebarOpen ? '' : '-rotate-90'}`} />
-        </button>
+        {!isMobile && (
+          <button
+            onClick={toggleSidebar}
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
+            title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+          >
+            <ChevronDown className={`w-4 h-4 transition-transform ${sidebarOpen ? '' : '-rotate-90'}`} />
+          </button>
+        )}
       </div>
 
       {/* Group Selector */}
-      {sidebarOpen && groups.length > 0 && (
+      {(isMobile || sidebarOpen) && groups.length > 0 && (
         <div className="p-4 border-b border-border">
           <label className="text-xs text-muted-foreground mb-1 block">Group</label>
           <select
@@ -125,7 +133,7 @@ export function Sidebar() {
 
       {/* Roles */}
       <div className="flex-1 overflow-y-auto p-4">
-        {sidebarOpen && (
+        {(isMobile || sidebarOpen) && (
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs text-muted-foreground">Roles</span>
             <button
@@ -150,7 +158,10 @@ export function Sidebar() {
 
                   {/* Role switch button */}
                   <button
-                    onClick={() => switchRole(role, setRoleSwitching)}
+                    onClick={() => {
+                      if (isMobile) setMobileSidebarOpen(false);
+                      switchRole(role, setRoleSwitching);
+                    }}
                     disabled={roleSwitching}
                     className="flex items-center gap-2 flex-1 px-3 py-2 text-left min-w-0"
                   >
@@ -159,11 +170,11 @@ export function Sidebar() {
                       <path d="M280.2,262.402c90.833-58.424,121.545-119.347,130.285-141.808l-5.43-7.641l-46.496-65.48C311.105,4.479,171.34,99.791,171.34,99.791C25.618,193.541,56.26,247.331,56.26,247.331l31.349,62.44l10.212,20.334C147.189,340.555,245.869,285.03,280.2,262.402zM127.447,225.327c-2.371-5.199-0.084-11.349,5.122-13.721c37.698-17.204,83.372-46.869,83.834-47.164c40.526-26.072,66.11-48.643,80.441-62.993c4.042-4.049,10.597-4.049,14.646-0.013c3.278,3.271,3.901,8.187,1.883,12.088c-0.476,0.919-1.105,1.787-1.877,2.558c-21.889,21.921-50.101,44.041-83.841,65.744c-1.87,1.215-47.357,30.764-86.488,48.623C135.969,232.827,129.825,230.532,127.447,225.327z"/>
                       <path d="M130.66,395.528l10.109,20.141c63.777,20.597,191.35-63.636,191.35-63.636c114.54-73.687,131.821-156.146,131.821-156.146l-12.538-17.667c-1.208,2.622-2.571,5.43-4.152,8.464c-16.388,31.676-53.353,84.997-131.879,135.517C310.437,325.459,201.564,396.582,130.66,395.528z"/>
                     </svg>
-                    {sidebarOpen && <span className="truncate">{role.name}</span>}
+                    {(isMobile || sidebarOpen) && <span className="truncate">{role.name}</span>}
                   </button>
 
-                  {/* Chevron toggle (only when sidebar expanded) */}
-                  {sidebarOpen && (
+                  {/* Chevron toggle (only when sidebar expanded or on mobile) */}
+                  {(isMobile || sidebarOpen) && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -181,7 +192,7 @@ export function Sidebar() {
                 </div>
 
                 {/* Sub-menu */}
-                {sidebarOpen && expandedRoleId === role.id && (
+                {(isMobile || sidebarOpen) && expandedRoleId === role.id && (
                   <div className="ml-3 mt-0.5 pl-2 border-l border-border">
                     <button
                       onClick={() => setMemoryDialogRole(role)}
@@ -199,7 +210,7 @@ export function Sidebar() {
 
       {/* User */}
       <div className="p-4 border-t border-border">
-        {sidebarOpen && (
+        {(isMobile || sidebarOpen) && (
           <>
             {environment && (
               <div className="mb-4">
@@ -235,7 +246,7 @@ export function Sidebar() {
             title="Scheduled Jobs"
           >
             <Clock className="w-4 h-4" />
-            {sidebarOpen && <span>Scheduled</span>}
+            {(isMobile || sidebarOpen) && <span>Scheduled</span>}
           </button>
           <button
             onClick={() => setShowMcpManager(true)}
@@ -243,7 +254,7 @@ export function Sidebar() {
             title="Settings"
           >
             <Settings className="w-4 h-4" />
-            {sidebarOpen && <span>Settings</span>}
+            {(isMobile || sidebarOpen) && <span>Settings</span>}
           </button>
           <button
             onClick={logout}
@@ -251,7 +262,7 @@ export function Sidebar() {
             title="Logout"
           >
             <LogOut className="w-4 h-4" />
-            {sidebarOpen && <span>Logout</span>}
+            {(isMobile || sidebarOpen) && <span>Logout</span>}
           </button>
         </div>
       </div>

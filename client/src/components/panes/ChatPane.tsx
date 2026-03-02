@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, BookmarkPlus, Check } from 'lucide-react';
+import { Send, Loader2, BookmarkPlus, Check, Menu } from 'lucide-react';
 import { useAuthStore, useRolesStore, useChatStore, useUIStore, type ViewerFile, type Message } from '../../store';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { MessageItem } from '../MessageItem';
 import { TopBanner } from '../TopBanner';
 import { apiFetch } from '../../lib/api';
@@ -142,6 +143,7 @@ export function ChatPane() {
   const fillViewportFetchRef = useRef(false); // Prevent repeated auto-fetches when content doesn't fill viewport
   const MESSAGE_LIMIT = 100; // Keep only this many messages when trimming
 
+  const isMobile = useIsMobile();
   const { user, currentGroup } = useAuthStore();
   const { currentRole, currentRoleId: storedRoleId, rolesLoaded } = useRolesStore();
   const {
@@ -159,7 +161,7 @@ export function ChatPane() {
     clearServerMessages,
     trimMessages,
   } = useChatStore();
-  const { setViewerFile, setViewerTab, viewerFile } = useUIStore();
+  const { setViewerFile, setViewerTab, viewerFile, setMobileSidebarOpen } = useUIStore();
 
   // Use currentRole.id if available, fallback to stored role ID, then 'default'
   const activeRoleId = currentRole?.id || storedRoleId || 'default';
@@ -677,6 +679,15 @@ export function ChatPane() {
         isSearchMode={isSearchMode}
         onClearHistory={handleClear}
         clearHistoryLabel="Clear History"
+        leftContent={isMobile ? (
+          <button
+            onClick={() => setMobileSidebarOpen(true)}
+            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors mr-1"
+            title="Open sidebar"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        ) : undefined}
       />
 
       {/* Pending Role Switch Indicator */}

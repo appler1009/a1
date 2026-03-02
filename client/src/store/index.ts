@@ -503,6 +503,7 @@ export interface ViewerFile {
 
 interface UIState {
   sidebarOpen: boolean;
+  mobileSidebarOpen: boolean;
   viewerTab: string;
   viewerFile: ViewerFile | null;
   showMcpManager: boolean;
@@ -510,6 +511,7 @@ interface UIState {
   roleSwitching: boolean;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
+  setMobileSidebarOpen: (open: boolean) => void;
   setViewerTab: (tab: string) => void;
   setViewerFile: (file: ViewerFile | null) => void;
   setShowMcpManager: (show: boolean) => void;
@@ -521,6 +523,7 @@ export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
       sidebarOpen: true,
+      mobileSidebarOpen: false,
       viewerTab: 'docs',
       viewerFile: null,
       showMcpManager: false,
@@ -528,6 +531,7 @@ export const useUIStore = create<UIState>()(
       roleSwitching: false,
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
+      setMobileSidebarOpen: (open) => set({ mobileSidebarOpen: open }),
       setViewerTab: (tab) => set({ viewerTab: tab }),
       setViewerFile: (file) => set({ viewerFile: file }),
       setShowMcpManager: (show) => set({ showMcpManager: show }),
@@ -536,7 +540,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: 'ui-storage',
-      // Don't persist roleSwitching state
+      // Don't persist roleSwitching or mobileSidebarOpen state
       partialize: (state) => ({
         sidebarOpen: state.sidebarOpen,
         viewerTab: state.viewerTab,

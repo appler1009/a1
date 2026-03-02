@@ -19,7 +19,10 @@ interface TopBannerProps {
   
   // File name to display on the left
   fileName?: string;
-  
+
+  // Content to render before fileName (e.g. hamburger button on mobile)
+  leftContent?: React.ReactNode;
+
   // Additional actions can be passed as children
   children?: React.ReactNode;
 }
@@ -34,6 +37,7 @@ export function TopBanner({
   sourceUrl,
   openInNewWindowLabel = 'Open in New Window',
   fileName,
+  leftContent,
   children,
 }: TopBannerProps) {
   const [keyword, setKeyword] = useState('');
@@ -115,6 +119,9 @@ export function TopBanner({
 
   return (
     <div className="flex items-center gap-2 px-3 py-2 bg-card border-b border-border h-11 shrink-0">
+      {/* Left content (e.g. hamburger button on mobile) */}
+      {leftContent}
+
       {/* File Name - Display on the left for viewer pane */}
       {fileName && (
         <div className="flex items-center gap-2">
