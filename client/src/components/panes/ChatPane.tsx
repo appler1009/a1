@@ -154,6 +154,7 @@ export function ChatPane() {
     loading,
     migrated,
     addMessage,
+    receiveMessage,
     setStreaming,
     setCurrentContent,
     fetchMessages,
@@ -203,6 +204,24 @@ export function ChatPane() {
       console.log('[ChatPane] No current role set, skipping message fetch');
     }
   }, [rolesLoaded, currentRole?.id, fetchMessages]);
+
+  // Subscribe to new messages pushed from the server (cross-device sync)
+  useEffect(() => {
+    if (!currentRole?.id) return;
+
+    const es = new EventSource(`/api/messages/stream?roleId=${encodeURIComponent(currentRole.id)}`);
+
+    es.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data) as Message;
+        receiveMessage(message);
+      } catch {
+        // ignore malformed events
+      }
+    };
+
+    return () => es.close();
+  }, [currentRole?.id, receiveMessage]);
 
   // Filter messages for current role
   const roleMessages = messages.filter(

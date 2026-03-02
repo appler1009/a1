@@ -275,6 +275,7 @@ interface ChatState {
   loading: boolean;
   migrated: boolean;
   addMessage: (message: Message) => Promise<void>;
+  receiveMessage: (message: Message) => void;
   prependMessages: (messages: Message[]) => void;
   setMessages: (messages: Message[]) => void;
   setStreaming: (streaming: boolean) => void;
@@ -321,6 +322,12 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     }
   },
   
+  receiveMessage: (message) => set((state) => {
+    // Deduplicate: ignore if this message ID is already in the store
+    if (state.messages.some((m) => m.id === message.id)) return {};
+    return { messages: [...state.messages, message] };
+  }),
+
   prependMessages: (olderMessages) => set((state) => ({ messages: [...olderMessages, ...state.messages] })),
   setMessages: (messages) => set({ messages }),
   setStreaming: (streaming) => set({ streaming }),

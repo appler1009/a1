@@ -179,6 +179,10 @@ let serverCurrentRoleId: string | null = null;
 import type { ServerResponse } from 'http';
 const activeStreams = new Set<ServerResponse>();
 
+// Per-role SSE subscribers for cross-device message sync.
+// Keyed by "userId#roleId" — same composite key used in DynamoDB.
+const messageSubscribers = new Map<string, Set<ServerResponse>>();
+
 // Default settings
 const DEFAULT_SETTINGS: Record<string, unknown> = {
   MAX_TOOL_ITERATIONS: 10,
@@ -1556,6 +1560,17 @@ fastify.register(async (instance) => {
     await mainDb.saveMessage(message);
     const contentPreview = body.content.substring(0, 50) + (body.content.length > 50 ? '...' : '');
     console.log(`[/api/messages POST] Message saved for role ${body.roleId}: "${contentPreview}"`);
+
+    // Push to any other devices subscribed to this role
+    const subscriberKey = `${request.user.id}#${body.roleId}`;
+    const subs = messageSubscribers.get(subscriberKey);
+    if (subs?.size) {
+      const event = `data: ${JSON.stringify(message)}\n\n`;
+      for (const sub of subs) {
+        if (!sub.writableEnded) sub.write(event);
+      }
+    }
+
     return reply.send({ success: true, data: message });
   });
 
@@ -1654,6 +1669,51 @@ fastify.register(async (instance) => {
     }
 
     return reply.send({ success: true, data: { migrated } });
+  });
+
+  // SSE endpoint — subscribe to new messages for a role (cross-device sync)
+  instance.get('/messages/stream', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const query = request.query as { roleId?: string };
+    const roleId = query.roleId;
+
+    if (!roleId) {
+      return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
+    }
+
+    const mainDb = await getMainDatabase(config.storage.root);
+    const role = await mainDb.getRole(roleId);
+    if (!role || role.userId !== request.user.id) {
+      return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
+    }
+
+    reply.raw.setHeader('Content-Type', 'text/event-stream');
+    reply.raw.setHeader('Cache-Control', 'no-cache');
+    reply.raw.setHeader('Connection', 'keep-alive');
+
+    const subscriberKey = `${request.user.id}#${roleId}`;
+    if (!messageSubscribers.has(subscriberKey)) {
+      messageSubscribers.set(subscriberKey, new Set());
+    }
+    messageSubscribers.get(subscriberKey)!.add(reply.raw);
+
+    const cleanup = () => {
+      const subs = messageSubscribers.get(subscriberKey);
+      if (subs) {
+        subs.delete(reply.raw);
+        if (subs.size === 0) messageSubscribers.delete(subscriberKey);
+      }
+      clearInterval(heartbeat);
+    };
+    reply.raw.on('close', cleanup);
+
+    // Keep the connection alive through proxies and load balancers
+    const heartbeat = setInterval(() => {
+      if (!reply.raw.writableEnded) reply.raw.write(': heartbeat\n\n');
+    }, 25000);
   });
 
   /**
@@ -3800,6 +3860,15 @@ function closeActiveStreams() {
       stream.end();
     }
     activeStreams.clear();
+  }
+  if (messageSubscribers.size > 0) {
+    console.log(`Closing ${messageSubscribers.size} message subscriber key(s)...`);
+    for (const subs of messageSubscribers.values()) {
+      for (const sub of subs) {
+        sub.end();
+      }
+    }
+    messageSubscribers.clear();
   }
 }
 
