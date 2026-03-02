@@ -361,6 +361,102 @@ Application-level encryption on message content would break keyword search. KMS 
 
 ---
 
+## Deployments & Troubleshooting
+
+### Rolling deploys
+
+The CI pipeline triggers a rolling update with `--force-new-deployment`. ECS starts a new task, waits for it to pass the ALB health check, then deregisters and stops the old one.
+
+Recommended service deployment configuration:
+
+| Setting | Value | Reason |
+|---|---|---|
+| `minimumHealthyPercent` | `100` | Never drop below full capacity |
+| `maximumPercent` | `200` | Allows the replacement task to start alongside the old one |
+| `stopTimeout` | `45` | Gives the graceful shutdown handler time to complete |
+| ALB deregistration delay | `30` | Prevents long drain waits; set on the target group |
+
+Set the deregistration delay:
+
+```bash
+aws elbv2 modify-target-group-attributes \
+  --target-group-arn <tg-arn> \
+  --attributes Key=deregistration_delay.timeout_seconds,Value=30
+```
+
+### Shutdown log sequence
+
+The server logs each step of graceful shutdown to stdout (visible in CloudWatch):
+
+```
+[shutdown] SIGTERM received
+[shutdown] SSE streams closed
+[shutdown] Scheduler stopped
+[shutdown] MCP clients disconnected    ← or "timed out" if a subprocess hung
+[shutdown] Fastify closed — exiting
+```
+
+If a deploy stalls, search CloudWatch for `[shutdown]` at the time of the deploy to see exactly where the old container got stuck.
+
+### Clearing stuck draining targets
+
+Targets get stuck in **Draining** when active connections (SSE streams, long-lived HTTP) prevent the ALB from finishing connection draining. The app closes SSE streams on SIGTERM, but if `mcpManager.disconnectAll()` hangs the process stays alive and connections remain open until ECS sends SIGKILL (after `stopTimeout`).
+
+**Option 1 — Stop the ECS tasks** (use when tasks still appear in the ECS console)
+
+```bash
+# List tasks in the service
+aws ecs list-tasks \
+  --cluster $ECS_CLUSTER \
+  --service-name $ECS_SERVICE \
+  --output text --query 'taskArns[]'
+
+# Stop a specific task
+aws ecs stop-task \
+  --cluster $ECS_CLUSTER \
+  --task <task-arn> \
+  --reason "Manual: stuck draining"
+```
+
+Stop all tasks at once:
+
+```bash
+aws ecs list-tasks \
+  --cluster $ECS_CLUSTER \
+  --service-name $ECS_SERVICE \
+  --output text --query 'taskArns[]' \
+| tr '\t' '\n' \
+| xargs -I{} aws ecs stop-task \
+    --cluster $ECS_CLUSTER \
+    --task {} \
+    --reason "Manual: stuck draining"
+```
+
+ECS reconciles the service back to its desired count automatically.
+
+**Option 2 — Deregister targets from the ALB directly** (use when tasks are already gone but the target group still shows them)
+
+```bash
+# Find your target group ARN
+aws elbv2 describe-target-groups \
+  --output table \
+  --query 'TargetGroups[*].{Name:TargetGroupName,ARN:TargetGroupArn}'
+
+# See registered targets and their state
+aws elbv2 describe-target-health \
+  --target-group-arn <tg-arn> \
+  --query 'TargetHealthDescriptions[*].{Id:Target.Id,Port:Target.Port,State:TargetHealth.State}'
+
+# Deregister a stuck target by IP
+aws elbv2 deregister-targets \
+  --target-group-arn <tg-arn> \
+  --targets Id=<ip-address>,Port=3000
+```
+
+When unsure, run Option 1 first then Option 2 to clear any stragglers.
+
+---
+
 ## Minimal AWS Stack Checklist
 
 - [ ] VPC with public + private subnets (at least 2 AZs)
