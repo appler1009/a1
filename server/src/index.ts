@@ -2443,6 +2443,9 @@ When the user asks to schedule, automate, or run something in the future (e.g. "
         t.serverId === 'memory' && memWriteToolNames.includes(t.name)
       );
 
+      console.log(`[ChatStream] Memory extraction check: roleId=${!!body.roleId}, lastUserMsg=${!!lastUserMsg}, assistantContent.length=${assistantContent.length}, memWriteTools.length=${memWriteTools.length}`);
+      console.log(`[ChatStream] Available memory tools:`, flattenedTools.filter(t => t.serverId === 'memory' || t.serverId === 'sqlite-memory').map(t => t.name));
+
       if (body.roleId && lastUserMsg && assistantContent.length > 100 && memWriteTools.length > 0) {
         reply.raw.write(`data: ${JSON.stringify({ type: 'memory_task', status: 'started' })}\n\n`);
 
@@ -2461,19 +2464,25 @@ When the user asks to schedule, automate, or run something in the future (e.g. "
         const extractionToolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
 
         const MEMORY_EXTRACTION_TIMEOUT_MS = 12000;
+        console.log(`[ChatStream] Starting memory extraction with ${memWriteTools.length} tools for role ${body.roleId}`);
         try {
           await Promise.race([
             (async () => {
+              console.log(`[ChatStream] Creating extraction stream...`);
               const extractionStream = llmRouter.stream({ messages: extractionMessages, tools: extractionProviderTools });
+              console.log(`[ChatStream] Streaming extraction response...`);
               for await (const chunk of extractionStream) {
                 if (chunk.type === 'tool_call' && chunk.toolCall) {
                   extractionToolCalls.push(chunk.toolCall);
                 }
               }
 
+              console.log(`[ChatStream] Extraction stream complete, got ${extractionToolCalls.length} tool calls`);
+
               let savedCount = 0;
               for (const toolCall of extractionToolCalls) {
                 if (memWriteToolNames.includes(toolCall.name)) {
+                  console.log(`[ChatStream] Executing memory tool: ${toolCall.name}`);
                   await executeToolWithAdapters(request.user!.id, toolCall.name, toolCall.arguments, body.roleId);
                   savedCount++;
                 }

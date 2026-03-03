@@ -209,6 +209,8 @@ export class S3StorageAdapter extends BaseStorage {
     const key = `${this.prefix}temp/${path}`;
     const contentType = getContentType(path);
     
+    console.log(`[S3Adapter] Writing binary to S3: ${key} (${data.length} bytes, content-type: ${contentType})`);
+    
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
@@ -217,6 +219,8 @@ export class S3StorageAdapter extends BaseStorage {
         ContentType: contentType,
       })
     );
+    
+    console.log(`[S3Adapter] Successfully wrote binary to S3: ${key}`);
   }
 
   /**
@@ -224,6 +228,8 @@ export class S3StorageAdapter extends BaseStorage {
    */
   async readBinary(path: string): Promise<Buffer | null> {
     const key = `${this.prefix}temp/${path}`;
+    
+    console.log(`[S3Adapter] Reading binary from S3: ${key}`);
     
     try {
       const response = await this.client.send(
@@ -235,10 +241,13 @@ export class S3StorageAdapter extends BaseStorage {
       
       if (response.Body) {
         const bytes = await response.Body.transformToByteArray();
+        console.log(`[S3Adapter] Successfully read binary from S3: ${key} (${bytes.length} bytes)`);
         return Buffer.from(bytes);
       }
+      console.log(`[S3Adapter] No content in S3 object: ${key}`);
       return null;
-    } catch {
+    } catch (err) {
+      console.log(`[S3Adapter] Failed to read binary from S3: ${key}`, err);
       return null;
     }
   }
@@ -249,6 +258,8 @@ export class S3StorageAdapter extends BaseStorage {
   async deleteBinary(path: string): Promise<void> {
     const key = `${this.prefix}temp/${path}`;
     
+    console.log(`[S3Adapter] Deleting binary from S3: ${key}`);
+    
     try {
       await this.client.send(
         new DeleteObjectCommand({
@@ -256,7 +267,9 @@ export class S3StorageAdapter extends BaseStorage {
           Key: key,
         })
       );
-    } catch {
+      console.log(`[S3Adapter] Successfully deleted binary from S3: ${key}`);
+    } catch (err) {
+      console.log(`[S3Adapter] Failed to delete binary from S3: ${key}`, err);
       // Ignore errors during deletion
     }
   }
@@ -270,6 +283,8 @@ export class S3StorageAdapter extends BaseStorage {
         ? `${this.prefix}temp/${dir}/` 
         : `${this.prefix}temp/`;
         
+      console.log(`[S3Adapter] Listing binary files in S3: prefix=${prefix}, bucket=${this.bucket}`);
+        
       const objects = await this.client.send(
         new ListObjectsV2Command({
           Bucket: this.bucket,
@@ -278,12 +293,16 @@ export class S3StorageAdapter extends BaseStorage {
       );
 
       if (objects.Contents) {
-        return objects.Contents
+        const keys = objects.Contents
           .map(obj => obj.Key?.replace(`${this.prefix}temp/`, '') || '')
           .filter(key => key.length > 0);
+        console.log(`[S3Adapter] Found ${keys.length} files in S3 temp:`, keys);
+        return keys;
       }
+      console.log(`[S3Adapter] No files found in S3 temp directory`);
       return [];
-    } catch {
+    } catch (err) {
+      console.log(`[S3Adapter] Failed to list binary files in S3:`, err);
       return [];
     }
   }
@@ -294,6 +313,8 @@ export class S3StorageAdapter extends BaseStorage {
   async existsBinary(path: string): Promise<boolean> {
     const key = `${this.prefix}temp/${path}`;
     
+    console.log(`[S3Adapter] Checking if binary exists in S3: ${key}`);
+    
     try {
       await this.client.send(
         new HeadObjectCommand({
@@ -301,8 +322,10 @@ export class S3StorageAdapter extends BaseStorage {
           Key: key,
         })
       );
+      console.log(`[S3Adapter] Binary exists in S3: ${key}`);
       return true;
     } catch {
+      console.log(`[S3Adapter] Binary does not exist in S3: ${key}`);
       return false;
     }
   }
