@@ -33,8 +33,8 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* Domine for Latin web text, Mulish for UI, Asta Sans for Korean */
-    font-family: 'Domine', 'Mulish', 'Asta Sans', sans-serif;
+    /* Arapey for Latin web text, Gowun Batang for Korean */
+    font-family: 'Arapey', 'Gowun Batang', serif;
   }
 }
 
