@@ -225,8 +225,14 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
     // Role-scoped (memory/scheduler) or no manager adapter yet — create a fresh in-process instance
     let tokenData: any;
     if (isRoleScoped && roleId) {
+      const useDynamoDBMemory = process.env.STORAGE_TYPE === 's3';
       if (baseServerId === 'memory' || baseServerId === 'Memory') {
-        tokenData = { roleId, dbPath: path.join(config.storage.root, `memory_${roleId}.db`) };
+        // DynamoDB needs only roleId; SQLite needs dbPath
+        if (useDynamoDBMemory) {
+          tokenData = { roleId };
+        } else {
+          tokenData = { roleId, dbPath: path.join(config.storage.root, `memory_${roleId}.db`) };
+        }
       } else {
         tokenData = { roleId };
       }

@@ -160,4 +160,7 @@ export interface IMainDatabase {
     runCount?: number;
   }): Promise<void>;
   cancelScheduledJob(id: string, userId: string): Promise<boolean>;
+
+  // ---- Memory ----
+  deleteMemoryDb(dataDir: string, roleId: string): boolean | Promise<boolean>;
 }

@@ -1201,7 +1201,7 @@ fastify.register(async (instance) => {
 
     // Delete memory DB file if it exists
     const dataDir = config.storage.root;
-    (mainDb as MainDatabase).deleteMemoryDb(dataDir, params.id);
+    await mainDb.deleteMemoryDb(dataDir, params.id);
 
     // Delete role messages from main.db
     await mainDb.clearMessages(existingRole.userId, params.id);

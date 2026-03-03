@@ -35,6 +35,8 @@ function tableNames(prefix: string) {
     skills: `${prefix}skills`,
     messages: `${prefix}messages`,
     scheduledJobs: `${prefix}scheduled_jobs`,
+    memoryEntities: `${prefix}memory_entities`,
+    memoryRelations: `${prefix}memory_relations`,
   };
 }
 
@@ -1254,6 +1256,64 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       throw err;
     });
     return !!Attributes;
+  }
+
+  async deleteMemoryDb(_dataDir: string, roleId: string): Promise<boolean> {
+    // Delete all entities for this role from memory_entities table
+    let lastKey: Record<string, unknown> | undefined;
+    do {
+      const entitiesResp = await this.client.send(new QueryCommand({
+        TableName: this.tables.memoryEntities,
+        IndexName: 'roleId-index',
+        KeyConditionExpression: 'roleId = :roleId',
+        ExpressionAttributeValues: { ':roleId': roleId },
+        ProjectionExpression: 'pk',
+        ExclusiveStartKey: lastKey,
+      }));
+
+      if (entitiesResp.Items && entitiesResp.Items.length > 0) {
+        const deletes = entitiesResp.Items.map(item => ({
+          DeleteRequest: { Key: { pk: item.pk } },
+        }));
+        for (let i = 0; i < deletes.length; i += 25) {
+          await this.client.send(new TransactWriteCommand({
+            TransactItems: deletes.slice(i, i + 25).map(d => ({
+              Delete: { TableName: this.tables.memoryEntities, Key: d.DeleteRequest.Key },
+            })),
+          }));
+        }
+      }
+      lastKey = entitiesResp.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (lastKey);
+
+    // Delete all relations for this role from memory_relations table
+    lastKey = undefined;
+    do {
+      const relationsResp = await this.client.send(new QueryCommand({
+        TableName: this.tables.memoryRelations,
+        IndexName: 'roleId-index',
+        KeyConditionExpression: 'roleId = :roleId',
+        ExpressionAttributeValues: { ':roleId': roleId },
+        ProjectionExpression: 'pk',
+        ExclusiveStartKey: lastKey,
+      }));
+
+      if (relationsResp.Items && relationsResp.Items.length > 0) {
+        const deletes = relationsResp.Items.map(item => ({
+          DeleteRequest: { Key: { pk: item.pk } },
+        }));
+        for (let i = 0; i < deletes.length; i += 25) {
+          await this.client.send(new TransactWriteCommand({
+            TransactItems: deletes.slice(i, i + 25).map(d => ({
+              Delete: { TableName: this.tables.memoryRelations, Key: d.DeleteRequest.Key },
+            })),
+          }));
+        }
+      }
+      lastKey = relationsResp.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (lastKey);
+
+    return true;
   }
 
   // ============================================================

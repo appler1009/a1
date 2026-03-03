@@ -300,6 +300,51 @@ const tables: Array<CreateTableCommandInput & { ttlAttribute?: string }> = [
       },
     ],
   },
+
+  // ── memory_entities ──────────────────────────────────────────────────────────
+  // Stores entities with embedded observations (StringSet)
+  // PK = "roleId#entityName", GSI = roleId-index for querying all entities for a role
+  {
+    TableName: t('memory_entities'),
+    BillingMode: 'PAY_PER_REQUEST',
+    AttributeDefinitions: [
+      { AttributeName: 'pk',    AttributeType: 'S' },
+      { AttributeName: 'roleId', AttributeType: 'S' },
+    ],
+    KeySchema: [
+      { AttributeName: 'pk', KeyType: 'HASH' },
+    ],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: 'roleId-index',
+        KeySchema: [{ AttributeName: 'roleId', KeyType: 'HASH' }],
+        Projection: { ProjectionType: 'ALL' },
+      },
+    ],
+  },
+
+  // ── memory_relations ─────────────────────────────────────────────────────────
+  // Stores relations between entities
+  // PK = "roleId#from#to#relationType" (uniqueness built into key)
+  // GSI = roleId-index for querying all relations for a role
+  {
+    TableName: t('memory_relations'),
+    BillingMode: 'PAY_PER_REQUEST',
+    AttributeDefinitions: [
+      { AttributeName: 'pk',    AttributeType: 'S' },
+      { AttributeName: 'roleId', AttributeType: 'S' },
+    ],
+    KeySchema: [
+      { AttributeName: 'pk', KeyType: 'HASH' },
+    ],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: 'roleId-index',
+        KeySchema: [{ AttributeName: 'roleId', KeyType: 'HASH' }],
+        Projection: { ProjectionType: 'ALL' },
+      },
+    ],
+  },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

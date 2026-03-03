@@ -2,6 +2,7 @@ import type { MCPServerConfig, McpAdapter } from '@local-agent/shared';
 import { BaseStdioAdapter } from './BaseStdioAdapter.js';
 import { InProcessAdapter, type InProcessMCPModule } from './InProcessAdapter.js';
 import { SQLiteMemoryInProcess } from '../in-process/sqlite-memory.js';
+import { DynamoDBMemoryInProcess } from '../in-process/dynamodb-memory.js';
 import { WeatherInProcess } from '../in-process/weather.js';
 import { MetaMcpSearchInProcess } from '../in-process/meta-mcp-search.js';
 import { GoogleDriveInProcess } from '../in-process/google-drive.js';
@@ -72,12 +73,23 @@ class AdapterRegistry {
     this.registerStdio('markitdown', StdioAdapter);
     this.registerStdio('MarkItDown', StdioAdapter); // Also register by display name
     
-    // Memory server uses in-process adapter for direct SQLite access
+    // Memory server uses in-process adapter
+    // Use DynamoDB when storage type is S3 (production AWS), SQLite otherwise (local)
+    const useDynamoDBMemory = process.env.STORAGE_TYPE === 's3';
+    
     this.registerInProcess('memory', (userId: string, tokenData?: any) => {
+      const roleId = tokenData?.roleId;
+      if (useDynamoDBMemory && roleId) {
+        return new DynamoDBMemoryInProcess(roleId);
+      }
       const dbPath = tokenData?.dbPath || `data/memory-${userId}.db`;
       return new SQLiteMemoryInProcess(dbPath);
     });
     this.registerInProcess('Memory', (userId: string, tokenData?: any) => {
+      const roleId = tokenData?.roleId;
+      if (useDynamoDBMemory && roleId) {
+        return new DynamoDBMemoryInProcess(roleId);
+      }
       const dbPath = tokenData?.dbPath || `data/memory-${userId}.db`;
       return new SQLiteMemoryInProcess(dbPath);
     });
