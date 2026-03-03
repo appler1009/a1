@@ -113,7 +113,13 @@ export const MessageItem = memo(function MessageItem({ message, highlightKeyword
                 // Format: [preview-file:filename.ext](url)
                 const linkText = children?.toString() || '';
                 if (linkText.startsWith('preview-file:')) {
-                  const filename = linkText.replace('preview-file:', '');
+                  let filename = linkText.replace('preview-file:', '');
+                  // Only remove .json extension for email cache files (not Google Drive .json files)
+                  // Email cache URLs contain "_email" in the cache ID pattern (e.g., gmail_email, outlook_email)
+                  const isEmailCache = href?.toLowerCase().includes('_email');
+                  if (isEmailCache && filename.toLowerCase().endsWith('.json') && filename.length > 5) {
+                    filename = filename.slice(0, -5);
+                  }
                   return (
                     <button
                       onClick={() => handlePreviewFileClick(filename, href || '')}
