@@ -76,11 +76,12 @@ class AdapterRegistry {
     // Memory server uses in-process adapter
     // Use DynamoDB when storage type is S3 (production AWS), SQLite otherwise (local)
     const useDynamoDBMemory = process.env.STORAGE_TYPE === 's3';
+    const tablePrefix = process.env.DYNAMODB_TABLE_PREFIX ?? '';
     
     this.registerInProcess('memory', (userId: string, tokenData?: any) => {
       const roleId = tokenData?.roleId;
       if (useDynamoDBMemory && roleId) {
-        return new DynamoDBMemoryInProcess(roleId);
+        return new DynamoDBMemoryInProcess(roleId, { tablePrefix });
       }
       const dbPath = tokenData?.dbPath || `data/memory-${userId}.db`;
       return new SQLiteMemoryInProcess(dbPath);
@@ -88,7 +89,7 @@ class AdapterRegistry {
     this.registerInProcess('Memory', (userId: string, tokenData?: any) => {
       const roleId = tokenData?.roleId;
       if (useDynamoDBMemory && roleId) {
-        return new DynamoDBMemoryInProcess(roleId);
+        return new DynamoDBMemoryInProcess(roleId, { tablePrefix });
       }
       const dbPath = tokenData?.dbPath || `data/memory-${userId}.db`;
       return new SQLiteMemoryInProcess(dbPath);

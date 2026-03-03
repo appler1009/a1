@@ -21,6 +21,10 @@ import {
   BatchWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
 
+interface DynamoDBMemoryConfig {
+  tablePrefix?: string;
+}
+
 interface Entity {
   name: string;
   entityType: string;
@@ -39,17 +43,20 @@ interface Relation {
   relationType: string;
 }
 
-const ENTITIES_TABLE = 'memory_entities';
-const RELATIONS_TABLE = 'memory_relations';
-
 export class DynamoDBMemoryInProcess implements InProcessMCPModule {
   private client: DynamoDBDocumentClient;
   private roleId: string;
+  private entitiesTable: string;
+  private relationsTable: string;
 
   [key: string]: unknown;
 
-  constructor(roleId: string) {
+  constructor(roleId: string, config?: DynamoDBMemoryConfig) {
     this.roleId = roleId;
+    
+    const tablePrefix = config?.tablePrefix ?? process.env.DYNAMODB_TABLE_PREFIX ?? '';
+    this.entitiesTable = `${tablePrefix}memory_entities`;
+    this.relationsTable = `${tablePrefix}memory_relations`;
     
     const dbClient = new DynamoDBClient({
       region: process.env.DYNAMODB_REGION || process.env.AWS_REGION || 'us-east-1',
@@ -62,7 +69,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
       },
     });
     
-    console.log(`[DynamoDBMemoryInProcess] Initialized with roleId: ${roleId}`);
+    console.log(`[DynamoDBMemoryInProcess] Initialized with roleId: ${roleId}, tables: ${this.entitiesTable}, ${this.relationsTable}`);
   }
 
   private entityPk(entityName: string): string {
@@ -260,7 +267,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
 
     for (const entity of args.entities) {
       await this.client.send(new PutCommand({
-        TableName: ENTITIES_TABLE,
+        TableName: this.entitiesTable,
         Item: {
           pk: this.entityPk(entity.name),
           roleId: this.roleId,
@@ -285,7 +292,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
 
     for (const rel of args.relations) {
       await this.client.send(new PutCommand({
-        TableName: RELATIONS_TABLE,
+        TableName: this.relationsTable,
         Item: {
           pk: this.relationPk(rel.from, rel.to, rel.relationType),
           roleId: this.roleId,
@@ -308,7 +315,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
       if (!obs.contents.length) continue;
 
       await this.client.send(new UpdateCommand({
-        TableName: ENTITIES_TABLE,
+        TableName: this.entitiesTable,
         Key: { pk: this.entityPk(obs.entityName) },
         UpdateExpression: 'ADD observations :obs',
         ExpressionAttributeValues: {
@@ -333,7 +340,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
       const batch = deletes.slice(i, i + 25);
       await this.client.send(new BatchWriteCommand({
         RequestItems: {
-          [ENTITIES_TABLE]: batch,
+          [this.entitiesTable]: batch,
         },
       }));
     }
@@ -348,7 +355,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
       if (!del.contents.length) continue;
 
       await this.client.send(new UpdateCommand({
-        TableName: ENTITIES_TABLE,
+        TableName: this.entitiesTable,
         Key: { pk: this.entityPk(del.entityName) },
         UpdateExpression: 'DELETE observations :obs',
         ExpressionAttributeValues: {
@@ -373,7 +380,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
       const batch = deletes.slice(i, i + 25);
       await this.client.send(new BatchWriteCommand({
         RequestItems: {
-          [RELATIONS_TABLE]: batch,
+          [this.relationsTable]: batch,
         },
       }));
     }
@@ -430,12 +437,12 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
       const batch = keys.slice(i, i + 100);
       const response = await this.client.send(new BatchGetCommand({
         RequestItems: {
-          [ENTITIES_TABLE]: {
+          [this.entitiesTable]: {
             Keys: batch,
           },
         },
       }));
-      items.push(...(response.Responses?.[ENTITIES_TABLE] || []));
+      items.push(...(response.Responses?.[this.entitiesTable] || []));
     }
 
     return {
@@ -453,7 +460,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
 
     do {
       const response = await this.client.send(new QueryCommand({
-        TableName: ENTITIES_TABLE,
+        TableName: this.entitiesTable,
         IndexName: 'roleId-index',
         KeyConditionExpression: 'roleId = :roleId',
         ExpressionAttributeValues: {
@@ -475,7 +482,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
 
     do {
       const response = await this.client.send(new QueryCommand({
-        TableName: RELATIONS_TABLE,
+        TableName: this.relationsTable,
         IndexName: 'roleId-index',
         KeyConditionExpression: 'roleId = :roleId',
         ExpressionAttributeValues: {
