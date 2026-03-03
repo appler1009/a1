@@ -84,7 +84,7 @@ export class Scheduler {
 
   private async runJob(job: ScheduledJob): Promise<void> {
     console.log(`[Scheduler] Running job ${job.id}: ${job.description.slice(0, 60)}`);
-    await this.db.updateScheduledJobStatus(job.id, { status: 'running' });
+    await this.db.updateScheduledJobStatus(job.id, { status: 'running', holdUntil: null });
     try {
       await this.jobRunner.run(job);
       const status = job.scheduleType === 'once' ? 'completed' : 'pending';
@@ -102,6 +102,7 @@ export class Scheduler {
         lastError: errorMsg,
         lastRunAt: new Date(),
         runCount: job.runCount + 1,
+        holdUntil: null,
       });
       console.error(`[Scheduler] Job ${job.id} failed:`, err);
 

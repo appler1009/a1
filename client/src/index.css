@@ -38,6 +38,18 @@
   }
 }
 
+/* Safe area inset for devices with notch / Dynamic Island */
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Slightly smaller base font on mobile so text isn't too large on small screens */
+@media (max-width: 767px) {
+  html {
+    font-size: 14px;
+  }
+}
+
 /* Role switch animations */
 @keyframes role-activate {
   0%   { transform: scale(1); }

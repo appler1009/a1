@@ -46,7 +46,7 @@ function MainApp() {
   const showOnboarding = rolesLoaded && !currentRole;
 
   return (
-    <div className="flex h-screen bg-background text-foreground">
+    <div className="flex h-screen bg-background text-foreground safe-top">
       <Sidebar />
 
       <main className="flex-1 flex flex-col min-w-0">
