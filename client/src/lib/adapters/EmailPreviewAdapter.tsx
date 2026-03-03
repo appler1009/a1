@@ -136,6 +136,7 @@ function EmailBody({ email }: { email: EmailMessage }) {
           }
           .email-html-body {
             color: inherit !important;
+            background-color: inherit !important;
             font-family: inherit !important;
           }
           .email-html-body * {
