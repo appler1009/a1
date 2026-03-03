@@ -40,6 +40,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.76.0",
+    "@fontsource/domine": "^5.2.8",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "gmail-mcp-lib": "^1.1.0"
   }

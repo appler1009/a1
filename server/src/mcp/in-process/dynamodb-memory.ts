@@ -10,8 +10,8 @@
 
 import type { MCPToolInfo } from '@local-agent/shared';
 import type { InProcessMCPModule } from '../adapters/InProcessAdapter.js';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
-  DynamoDBClient,
   DynamoDBDocumentClient,
   PutCommand,
   UpdateCommand,
@@ -422,7 +422,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
       entities: filtered.map(e => ({
         name: e.entityName,
         entityType: e.entityType,
-        observations: e.observations ? Array.from(e.observations) : [],
+        observations: e.observations ? Array.from(e.observations as Set<string>) : [],
       })),
       query: args.query,
     };
@@ -449,7 +449,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
       entities: items.map(e => ({
         name: e.entityName,
         entityType: e.entityType,
-        observations: e.observations ? Array.from(e.observations) : [],
+        observations: e.observations ? Array.from(e.observations as Set<string>) : [],
       })),
     };
   }
@@ -469,7 +469,12 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
         ExclusiveStartKey: lastKey,
       }));
 
-      items.push(...(response.Items || []));
+      const rawItems = response.Items || [];
+      items.push(...rawItems.map((item: Record<string, unknown>) => ({
+        entityName: item.entityName as string,
+        entityType: item.entityType as string,
+        observations: item.observations as Set<string> | undefined,
+      })));
       lastKey = response.LastEvaluatedKey as Record<string, unknown> | undefined;
     } while (lastKey);
 
@@ -491,7 +496,12 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
         ExclusiveStartKey: lastKey,
       }));
 
-      items.push(...(response.Items || []));
+      const rawItems = response.Items || [];
+      items.push(...rawItems.map((item: Record<string, unknown>) => ({
+        from: item.from as string,
+        to: item.to as string,
+        relationType: item.relationType as string,
+      })));
       lastKey = response.LastEvaluatedKey as Record<string, unknown> | undefined;
     } while (lastKey);
 

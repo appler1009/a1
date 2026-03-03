@@ -6,6 +6,7 @@
       "name": "local-agent-ui",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.76.0",
+        "@fontsource/domine": "^5.2.8",
         "@modelcontextprotocol/sdk": "^1.26.0",
         "gmail-mcp-lib": "^1.1.0",
       },
@@ -359,6 +360,8 @@
     "@floating-ui/utils": ["@floating-ui/utils@0.2.10", "", {}, "sha512-aGTxbpbg8/b5JfU1HXSrbH3wXZuLPJcNEcZQFMxLs3oSzgtVu6nFPkbbGGUvBcUjKV2YyB9Wxxabo+HEH9tcRQ=="],
 
     "@fontsource/asta-sans": ["@fontsource/asta-sans@5.2.3", "", {}, "sha512-C5322eAdY+fQYoPoVva3QZYNXAt3AmTdBsXk/rMEty75SKourq5lvqU1HqUiLkLhjvst5lzbxm0yLyxwmd2u8Q=="],
+
+    "@fontsource/domine": ["@fontsource/domine@5.2.8", "", {}, "sha512-sXSyFCJpQdEyanqBqGV6RnQSVneI5xXnXgSm54vSjTOSbaHpvU1Nv9iR7vWY/sESO3JPJJudMRUpJa8ZQOBuPA=="],
 
     "@fontsource/mulish": ["@fontsource/mulish@5.2.8", "", {}, "sha512-pAqO7fkpGHd0Zjr5ieiWrr9kJiZWbaADaZWOlMERTsSqNsRUsg5y0jv4n6/VjWhd4LUfkYpiQBhP0yLDpbPNiw=="],
 
