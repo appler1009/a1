@@ -16,6 +16,7 @@ data/
 
 # Local Dev Documentation
 docs/
+plans/
 
 # Environment files
 .env

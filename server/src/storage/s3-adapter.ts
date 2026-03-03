@@ -21,6 +21,30 @@ export interface S3StorageConfig {
 }
 
 /**
+ * Content type mapping for temp files
+ */
+const CONTENT_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+  html: 'text/html',
+  txt: 'text/plain',
+  json: 'application/json',
+  md: 'text/markdown',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
+function getContentType(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  return CONTENT_TYPES[ext] || 'application/octet-stream';
+}
+
+/**
  * S3/MinIO storage adapter
  * Stores files and memory entries in S3-compatible storage
  */
@@ -171,6 +195,138 @@ export class S3StorageAdapter extends BaseStorage {
       return [];
     } catch {
       return [];
+    }
+  }
+
+  // ============================================
+  // Binary File Operations (for temp files)
+  // ============================================
+
+  /**
+   * Write binary data to a file
+   */
+  async writeBinary(path: string, data: Buffer): Promise<void> {
+    const key = `${this.prefix}temp/${path}`;
+    const contentType = getContentType(path);
+    
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: data,
+        ContentType: contentType,
+      })
+    );
+  }
+
+  /**
+   * Read binary data from a file
+   */
+  async readBinary(path: string): Promise<Buffer | null> {
+    const key = `${this.prefix}temp/${path}`;
+    
+    try {
+      const response = await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+        })
+      );
+      
+      if (response.Body) {
+        const bytes = await response.Body.transformToByteArray();
+        return Buffer.from(bytes);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Delete a binary file
+   */
+  async deleteBinary(path: string): Promise<void> {
+    const key = `${this.prefix}temp/${path}`;
+    
+    try {
+      await this.client.send(
+        new DeleteObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+        })
+      );
+    } catch {
+      // Ignore errors during deletion
+    }
+  }
+
+  /**
+   * List all files in the temp directory
+   */
+  async listBinary(dir: string = ''): Promise<string[]> {
+    try {
+      const prefix = dir 
+        ? `${this.prefix}temp/${dir}/` 
+        : `${this.prefix}temp/`;
+        
+      const objects = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+        })
+      );
+
+      if (objects.Contents) {
+        return objects.Contents
+          .map(obj => obj.Key?.replace(`${this.prefix}temp/`, '') || '')
+          .filter(key => key.length > 0);
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Check if a binary file exists
+   */
+  async existsBinary(path: string): Promise<boolean> {
+    const key = `${this.prefix}temp/${path}`;
+    
+    try {
+      await this.client.send(
+        new HeadObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+        })
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get metadata for a binary file
+   */
+  async getBinaryMetadata(path: string): Promise<{ size: number; contentType: string } | null> {
+    const key = `${this.prefix}temp/${path}`;
+    
+    try {
+      const response = await this.client.send(
+        new HeadObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+        })
+      );
+      
+      return {
+        size: response.ContentLength || 0,
+        contentType: response.ContentType || 'application/octet-stream',
+      };
+    } catch {
+      return null;
     }
   }
 

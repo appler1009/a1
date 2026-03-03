@@ -15,6 +15,7 @@ export { BaseStorage } from './interface.js';
 export { FSStorageAdapter } from './fs-adapter.js';
 export { SQLiteStorageAdapter } from './sqlite-adapter.js';
 export { S3StorageAdapter } from './s3-adapter.js';
+export { TempStorage, createTempStorage, type TempFileInfo, type TempStorageConfig } from './temp-storage.js';
 
 /**
  * Storage service factory

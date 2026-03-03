@@ -24,8 +24,9 @@ import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import { v4 as uuidv4 } from 'uuid';
 import type { User, Session } from '@local-agent/shared';
-import { createStorage, autoMigrate, getMainDatabase } from './storage/index.js';
+import { createStorage, autoMigrate, getMainDatabase, createTempStorage } from './storage/index.js';
 import type { RoleDefinition, MainDatabase, IMainDatabase } from './storage/index.js';
+import type { TempStorage } from './storage/temp-storage.js';
 import { createLLMRouter } from './ai/router.js';
 import { mcpManager, getMcpAdapter, closeUserAdapters, listPredefinedServers, getPredefinedServer, requiresAuth, PREDEFINED_MCP_SERVERS } from './mcp/index.js';
 import { authRoutes } from './api/auth.js';
@@ -170,6 +171,14 @@ const storage = createStorage({
   endpoint: config.storage.endpoint,
   region: config.storage.region,
 });
+
+// Global temp storage instance - handles temp files for cache/downloads
+let tempStorage: TempStorage;
+
+function initializeTempStorage(): void {
+  tempStorage = createTempStorage({ storage: config.storage });
+  console.log(`[TempStorage] Initialized with storage type: ${tempStorage.getStorageType()}`);
+}
 
 // Module-level current role tracking (replaces roleStorage.currentRoleId)
 let serverCurrentRoleId: string | null = null;
@@ -450,21 +459,28 @@ async function downloadGoogleDriveFile(
     const buffer = Buffer.from(arrayBuffer);
     console.log(`[GDriveDownload] Downloaded ${buffer.length} bytes`);
     
-    // Save to temp directory
-    const fs = await import('fs/promises');
-    const tempDir = path.join(config.storage.root, 'temp');
-    await fs.mkdir(tempDir, { recursive: true });
-    
-    // Use Google Drive file ID as cache key
+    // Save to temp storage (S3 or local filesystem)
     const cacheId = fileId;
     const tempFilename = sanitizeFilename(`${cacheId}${extension}`);
-    const tempFilePath = path.join(tempDir, tempFilename);
     
-    await fs.writeFile(tempFilePath, buffer);
-    console.log(`[GDriveDownload] Saved to: ${tempFilePath}`);
+    // Write to temp storage using TempStorage abstraction
+    await tempStorage.writeTempFile(tempFilename, buffer);
     
-    const absolutePath = path.resolve(tempFilePath);
-    const fileUri = `file://${absolutePath}`;
+    // Get the file URI for MCP tools
+    const fileUri = await tempStorage.getFileUri(tempFilename);
+    console.log(`[GDriveDownload] Saved to temp storage: ${tempFilename}, URI: ${fileUri}`);
+    
+    // For backward compatibility, provide absolute path info
+    // Handle both file:// and s3:// URIs
+    let absolutePath: string;
+    if (fileUri.startsWith('file://')) {
+      absolutePath = fileUri.replace('file://', '');
+    } else if (fileUri.startsWith('s3://')) {
+      // For S3, store the S3 URI as absolutePath for later resolution
+      absolutePath = fileUri;
+    } else {
+      absolutePath = fileUri;
+    }
     
     return { fileUri, absolutePath, cacheId };
   } catch (error) {
@@ -495,19 +511,11 @@ async function resolveUriForMcp(uri: string, userId?: string): Promise<string> {
     if (gdriveFileId && userId) {
       console.log(`[UriResolver] Detected Google Drive URL, file ID: ${gdriveFileId}`);
       
-      // Check if file is already cached
-      const fs = await import('fs/promises');
-      const tempDir = path.join(config.storage.root, 'temp');
-      const tempFiles = await fs.readdir(tempDir).catch(() => []);
-      const cachedFile = tempFiles.find(f => {
-        const dotIndex = f.lastIndexOf('.');
-        const fileCacheId = dotIndex > 0 ? f.substring(0, dotIndex) : f;
-        return fileCacheId === gdriveFileId;
-      });
+      // Check if file is already cached using tempStorage
+      const cachedFile = await tempStorage.findTempFileByCacheId(gdriveFileId);
       
       if (cachedFile) {
-        const absolutePath = path.resolve(tempDir, cachedFile);
-        const fileUri = `file://${absolutePath}`;
+        const fileUri = await tempStorage.getFileUri(cachedFile);
         console.log(`[UriResolver] Using cached Google Drive file: ${fileUri}`);
         return fileUri;
       }
@@ -569,31 +577,14 @@ async function resolveUriForMcp(uri: string, userId?: string): Promise<string> {
     return uri;
   }
   
-  // Now we have a cache ID - look for the temp file in the temp directory
+  // Now we have a cache ID - look for the temp file using tempStorage
   try {
-    const fs = await import('fs/promises');
-    const tempDir = path.join(config.storage.root, 'temp');
-    const tempFiles = await fs.readdir(tempDir).catch(() => []);
-    
-    // Find a file that starts with the cache ID (regardless of extension)
-    // The format is {cacheId}.{ext}
-    const matchingFile = tempFiles.find(f => {
-      const dotIndex = f.lastIndexOf('.');
-      const fileCacheId = dotIndex > 0 ? f.substring(0, dotIndex) : f;
-      return fileCacheId === cacheId;
-    });
+    // Use tempStorage to find the file by cache ID
+    const matchingFile = await tempStorage.findTempFileByCacheId(cacheId);
     
     if (matchingFile) {
-      // Security: Verify the resolved path is within temp directory
-      const absolutePath = path.resolve(tempDir, matchingFile);
-      const resolvedTempDir = path.resolve(tempDir);
-      if (!absolutePath.startsWith(resolvedTempDir + path.sep) && absolutePath !== resolvedTempDir) {
-        console.log(`[UriResolver] SECURITY: Path escape attempt - resolved to: ${absolutePath}`);
-        return uri;
-      }
-      
-      const fileUri = `file://${absolutePath}`;
-      console.log(`[UriResolver] Resolved cache ID "${cacheId}" to local file: ${fileUri}`);
+      const fileUri = await tempStorage.getFileUri(matchingFile);
+      console.log(`[UriResolver] Resolved cache ID "${cacheId}" to temp file: ${fileUri}`);
       return fileUri;
     }
     
@@ -3003,46 +2994,60 @@ fastify.register(async (instance) => {
       console.log(`[ViewerTemp] SECURITY: Rejected absolute path: ${filename}`);
       return reply.code(400).send({ success: false, error: { message: 'Invalid filename' } });
     }
-    
-    const filePath = path.join(tempDir, filename);
-    
-    // Security: Verify the resolved path is still within temp directory
-    const resolvedPath = path.resolve(filePath);
-    const resolvedTempDir = path.resolve(tempDir);
-    if (!resolvedPath.startsWith(resolvedTempDir + path.sep) && resolvedPath !== resolvedTempDir) {
-      console.log(`[ViewerTemp] SECURITY: Path escape attempt - resolved to: ${resolvedPath}`);
-      return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
-    }
+
+    // Determine content type based on file extension
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    const contentTypes: Record<string, string> = {
+      pdf: 'application/pdf',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      gif: 'image/gif',
+      svg: 'image/svg+xml',
+      html: 'text/html',
+      txt: 'text/plain',
+      json: 'application/json',
+      md: 'text/markdown',
+    };
+    const contentType = contentTypes[ext] || 'application/octet-stream';
 
     try {
-      // Check if file exists
-      const fs = await import('fs/promises');
-      await fs.access(filePath);
+      let fileBuffer: Buffer | null;
+      
+      // Check storage type and read from appropriate location
+      if (tempStorage.getStorageType() === 's3') {
+        // Read from S3
+        fileBuffer = await tempStorage.readTempFile(filename);
+        if (!fileBuffer) {
+          return reply.code(404).send({ success: false, error: { message: 'File not found in S3' } });
+        }
+      } else {
+        // Read from local filesystem
+        const filePath = path.join(tempDir, filename);
+        
+        // Security: Verify the resolved path is still within temp directory
+        const resolvedPath = path.resolve(filePath);
+        const resolvedTempDir = path.resolve(tempDir);
+        if (!resolvedPath.startsWith(resolvedTempDir + path.sep) && resolvedPath !== resolvedTempDir) {
+          console.log(`[ViewerTemp] SECURITY: Path escape attempt - resolved to: ${resolvedPath}`);
+          return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
+        }
 
-      // Determine content type based on file extension
-      const ext = filename.split('.').pop()?.toLowerCase() || '';
-      const contentTypes: Record<string, string> = {
-        pdf: 'application/pdf',
-        png: 'image/png',
-        jpg: 'image/jpeg',
-        jpeg: 'image/jpeg',
-        gif: 'image/gif',
-        svg: 'image/svg+xml',
-        html: 'text/html',
-        txt: 'text/plain',
-        json: 'application/json',
-        md: 'text/markdown',
-      };
-      const contentType = contentTypes[ext] || 'application/octet-stream';
+        const fs = await import('fs/promises');
+        try {
+          fileBuffer = await fs.readFile(filePath);
+        } catch {
+          return reply.code(404).send({ success: false, error: { message: 'File not found' } });
+        }
+      }
 
-      // Read and send file
-      const fileBuffer = await fs.readFile(filePath);
       reply.header('Content-Type', contentType);
       reply.header('Content-Length', fileBuffer.length);
       reply.header('Content-Disposition', `inline; filename="${filename}"`);
       return reply.send(fileBuffer);
-    } catch {
-      return reply.code(404).send({ success: false, error: { message: 'File not found' } });
+    } catch (error) {
+      console.error('[ViewerTemp] Error serving file:', error);
+      return reply.code(500).send({ success: false, error: { message: 'Internal server error' } });
     }
   });
 }, { prefix: '/api' });
@@ -3806,6 +3811,10 @@ const start = async () => {
     await mainDb.initialize();
     if ('schema' in migrationResult) console.log(`[Storage] Using ${migrationResult.schema.toUpperCase()} schema`);
     fastify.log.info('Main database initialized');
+
+    // Initialize temp storage for cache files (S3 or local filesystem)
+    initializeTempStorage();
+    fastify.log.info('Temp storage initialized');
 
 
     // Initialize legacy storage (for backward compatibility) - only if metadata.db exists
