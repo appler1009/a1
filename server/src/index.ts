@@ -35,6 +35,8 @@ import { GoogleOAuthHandler } from './auth/google-oauth.js';
 import { startDiscordBot } from './discord/bot.js';
 import { JobRunner } from './scheduler/job-runner.js';
 import { Scheduler } from './scheduler/scheduler.js';
+import { initializeGmailInProcess } from './mcp/in-process/gmail.js';
+import { initializeDisplayEmail } from './mcp/in-process/display-email.js';
 import fs from 'fs';
 
 
@@ -92,14 +94,8 @@ function stripEmojis(text: string): string {
 // Returns { processedText, extractedFiles }
 async function extractLongCodeBlocks(
   text: string,
-  tempDir: string,
   baseName: string = 'code'
 ): Promise<{ processedText: string; extractedFiles: Array<{ filename: string; previewUrl: string; language: string }> }> {
-  const fs = await import('fs/promises');
-  
-  // Ensure temp directory exists
-  await fs.mkdir(tempDir, { recursive: true });
-  
   const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g;
   let processedText = text;
   const extractedFiles: Array<{ filename: string; previewUrl: string; language: string }> = [];
@@ -125,9 +121,9 @@ async function extractLongCodeBlocks(
       blockIndex++;
       const ext = getExtensionForLanguage(language);
       const codeFilename = sanitizeFilename(`${baseName}-${blockIndex}.${ext}`);
-      const codeFilePath = path.join(tempDir, codeFilename);
       
-      await fs.writeFile(codeFilePath, code);
+      // Write to temp storage using TempStorage abstraction (supports S3)
+      await tempStorage.writeTempFile(codeFilename, Buffer.from(code, 'utf-8'));
       
       const codePreviewUrl = `/api/viewer/temp/${codeFilename}`;
       extractedFiles.push({ filename: codeFilename, previewUrl: codePreviewUrl, language });
@@ -175,9 +171,18 @@ const storage = createStorage({
 // Global temp storage instance - handles temp files for cache/downloads
 let tempStorage: TempStorage;
 
+// Export tempStorage for use in in-process adapters like Gmail
+export { tempStorage };
+
 function initializeTempStorage(): void {
   tempStorage = createTempStorage({ storage: config.storage });
   console.log(`[TempStorage] Initialized with storage type: ${tempStorage.getStorageType()}`);
+  
+  // Initialize GmailInProcess with tempStorage for email caching
+  initializeGmailInProcess(tempStorage);
+  
+  // Initialize DisplayEmail with tempStorage for email reading
+  initializeDisplayEmail(tempStorage);
 }
 
 // Module-level current role tracking (replaces roleStorage.currentRoleId)
@@ -489,10 +494,16 @@ async function downloadGoogleDriveFile(
   }
 }
 
+// Tools that require local filesystem access (external STDIO processes)
+// These tools cannot read S3 URIs directly
+const TOOLS_REQUIRING_LOCAL_FILES = new Set([
+  'convert_to_markdown', // markitdown MCP tool
+]);
+
 // Helper function to resolve URIs/cache IDs for MCP tools
 // If the URI is a cache ID (or file://cacheId), find the temp file and return the full file:// URI
 // If the URI is a Google Drive URL, download the file first and cache it
-async function resolveUriForMcp(uri: string, userId?: string): Promise<string> {
+async function resolveUriForMcp(uri: string, userId?: string, toolName?: string): Promise<string> {
   if (!uri) return uri;
 
   // Fast bail-out: plain text / long prose is never a URI or cache ID.
@@ -583,8 +594,30 @@ async function resolveUriForMcp(uri: string, userId?: string): Promise<string> {
     const matchingFile = await tempStorage.findTempFileByCacheId(cacheId);
     
     if (matchingFile) {
-      const fileUri = await tempStorage.getFileUri(matchingFile);
+      let fileUri = await tempStorage.getFileUri(matchingFile);
       console.log(`[UriResolver] Resolved cache ID "${cacheId}" to temp file: ${fileUri}`);
+      
+      // For tools that require local filesystem (like markitdown),
+      // download S3 files to local temp directory
+      if (toolName && TOOLS_REQUIRING_LOCAL_FILES.has(toolName) && fileUri.startsWith('s3://')) {
+        // Ensure local temp directory exists before writing
+        const localTempDir = path.join(tempStorage.getAbsolutePath('..'), 'temp');
+        const fsPromises = await import('fs/promises');
+        await fsPromises.mkdir(localTempDir, { recursive: true });
+        
+        console.log(`[UriResolver] Tool "${toolName}" requires local file, downloading from S3...`);
+        const filename = fileUri.replace('s3://temp/', '');
+        const localData = await tempStorage.readTempFile(filename);
+        if (localData) {
+          // Write to a local temp file that external tools can access
+          const localFilename = `markitdown-${Date.now()}-${filename}`;
+          const localPath = path.join(localTempDir, localFilename);
+          await fsPromises.writeFile(localPath, localData);
+          fileUri = `file://${localPath}`;
+          console.log(`[UriResolver] Downloaded S3 file to local: ${fileUri}`);
+        }
+      }
+      
       return fileUri;
     }
     
@@ -605,26 +638,26 @@ const URI_ARG_KEYS = new Set([
 ]);
 
 // Helper function to recursively resolve URIs in an arguments object
-async function resolveUrisInArgs(args: Record<string, unknown>, userId?: string): Promise<Record<string, unknown>> {
+async function resolveUrisInArgs(args: Record<string, unknown>, userId?: string, toolName?: string): Promise<Record<string, unknown>> {
   const resolved: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(args)) {
     if (typeof value === 'string') {
       // Only resolve strings in URI-like argument keys to avoid passing
       // free-text fields (prompts, queries, etc.) through the resolver.
-      resolved[key] = URI_ARG_KEYS.has(key) ? await resolveUriForMcp(value, userId) : value;
+      resolved[key] = URI_ARG_KEYS.has(key) ? await resolveUriForMcp(value, userId, toolName) : value;
     } else if (Array.isArray(value)) {
       // Recursively resolve URIs in arrays (only for URI keys)
       resolved[key] = URI_ARG_KEYS.has(key)
         ? await Promise.all(
             value.map(item =>
-              typeof item === 'string' ? resolveUriForMcp(item, userId) : Promise.resolve(item)
+              typeof item === 'string' ? resolveUriForMcp(item, userId, toolName) : Promise.resolve(item)
             )
           )
         : value;
     } else if (typeof value === 'object' && value !== null) {
       // Recursively resolve URIs in nested objects
-      resolved[key] = await resolveUrisInArgs(value as Record<string, unknown>, userId);
+      resolved[key] = await resolveUrisInArgs(value as Record<string, unknown>, userId, toolName);
     } else {
       resolved[key] = value;
     }
@@ -763,7 +796,7 @@ async function executeToolWithAdapters(
     if (cachedTool) {
       try {
         const adapter = await getMcpAdapter(userId, cachedTool.serverId, roleId);
-        const resolvedArgs = await resolveUrisInArgs(args, userId);
+        const resolvedArgs = await resolveUrisInArgs(args, userId, toolName);
         const result = await adapter.callTool(toolName, resolvedArgs);
 
         if (result.type === 'error') return { text: `Error: ${result.error || 'Unknown error'}` };
@@ -788,7 +821,7 @@ async function executeToolWithAdapters(
 
         const tool = tools.find(t => t.name === toolName);
         if (tool) {
-          const resolvedArgs = await resolveUrisInArgs(args, userId);
+          const resolvedArgs = await resolveUrisInArgs(args, userId, toolName);
           const result = await adapter.callTool(toolName, resolvedArgs);
 
           if (result.type === 'error') return { text: `Error: ${result.error || 'Unknown error'}` };
@@ -829,10 +862,6 @@ async function handleToolResult(
   const resultLines = resultText.split('\n').length;
   if (toolName === 'convert_to_markdown' && resultLines > 10) {
             try {
-              const fs = await import('fs/promises');
-              const tempDir = path.join(config.storage.root, 'temp');
-              await fs.mkdir(tempDir, { recursive: true });
-              
               // Generate filename from the source URI or timestamp
               const sourceUri = args.uri as string || '';
               let baseName = 'converted';
@@ -846,9 +875,9 @@ async function handleToolResult(
                   // Check if the original file exists in temp (it should if downloaded)
                   const originalExt = originalFilename.split('.').pop() || '';
                   if (['pdf', 'docx', 'xlsx', 'pptx'].includes(originalExt.toLowerCase())) {
-                    // Find the temp file by matching the filename pattern
-                    const tempFiles = await fs.readdir(tempDir);
-                    const matchingFile = tempFiles.find(f => f.includes(originalFilename.replace(/\.[^.]+$/, '')));
+                    // Find the temp file by matching the filename pattern using tempStorage
+                    const cacheId = originalFilename.replace(/\.[^.]+$/, '');
+                    const matchingFile = await tempStorage.findTempFileByCacheId(cacheId);
                     if (matchingFile) {
                       originalPreviewTag = `[preview-file:${originalFilename}](/api/viewer/temp/${matchingFile})`;
                     }
@@ -890,9 +919,9 @@ async function handleToolResult(
                   blockIndex++;
                   const ext = getExtensionForLanguage(language);
                   const codeFilename = sanitizeFilename(`${baseName}-code-${blockIndex}.${ext}`);
-                  const codeFilePath = path.join(tempDir, codeFilename);
                   
-                  await fs.writeFile(codeFilePath, codeContent);
+                  // Write to temp storage using TempStorage abstraction (supports S3)
+                  await tempStorage.writeTempFile(codeFilename, Buffer.from(codeContent, 'utf-8'));
                   
                   const codePreviewUrl = `/api/viewer/temp/${codeFilename}`;
                   codeBlockFiles.push({ filename: codeFilename, previewUrl: codePreviewUrl, language });
@@ -904,13 +933,12 @@ async function handleToolResult(
                 }
               }
               
-              // Save the processed markdown file
+              // Save the processed markdown file using TempStorage
               const mdFilename = sanitizeFilename(`${baseName}-markdown-${Date.now()}.md`);
-              const mdFilePath = path.join(tempDir, mdFilename);
-              await fs.writeFile(mdFilePath, processedContent);
+              await tempStorage.writeTempFile(mdFilename, Buffer.from(processedContent, 'utf-8'));
               
               const mdPreviewUrl = `/api/viewer/temp/${mdFilename}`;
-              console.log(`[ToolExecution] Saved markdown to: ${mdFilePath}`);
+              console.log(`[ToolExecution] Saved markdown to temp storage: ${mdFilename}`);
               console.log(`[ToolExecution] Preview URL: ${mdPreviewUrl}`);
               if (codeBlockFiles.length > 0) {
                 console.log(`[ToolExecution] Extracted ${codeBlockFiles.length} code blocks to separate files`);
@@ -2100,6 +2128,7 @@ ${accountList}
 
 - No emojis. Use markdown.
 - Use human-readable filenames and email subjects, never mention cache IDs or internal identifiers.
+- NEVER mention any internal IDs in your responses to users - these IDs (cache IDs, email IDs, message IDs, file IDs, document IDs, attachment IDs, drive IDs, thread IDs) are internal only and useless to users. Always use the human-readable content instead.
 - For all cached files (PDFs, Google Drive files, emails): Use [preview-file:Filename](cache-id) format for preview pane display. Never mention cache IDs in plain text.
 - For Google Drive files: Format as [preview-file:Filename](cache-id) where cache-id is from the downloaded/cached file, not the Google Drive ID.
 - When retrieving emails with gmailGetMessage or gmailGetThread: NEVER include email bodies in your response text. The email will be displayed in the preview pane automatically. Format cached emails as: [preview-file:Email Subject.json](cache-id-from-response). Include .json extension so preview pane correctly detects it as email. Just acknowledge that you retrieved it and provide a brief summary (subject, sender, key details).
@@ -2122,6 +2151,7 @@ When showing email search results from gmailSearchMessages:
   - Date (human-readable format)
   - Brief preview/snippet if available
 - **IMPORTANT**: Any emails shown as links in your response MUST be downloaded using gmailGetMessage - never show raw email data or message IDs as links. Always use the cache-id from gmailGetMessage responses.
+- **NEVER** mention message IDs, thread IDs, or any internal Gmail IDs in your responses - useless to users
 
 ## GMAIL EMAIL DRAFT CREATION
 **CRITICAL RULES for gmailCreateDraft:**
@@ -2598,20 +2628,32 @@ fastify.register(async (instance) => {
         cacheKey = gdriveFileId || urlHash;
       }
 
-      // Look for existing cached file with this cache key
-      const tempFiles = await fs.readdir(tempDir).catch(() => []);
-      // Find a file that matches the cache ID (format: {cacheId}.{ext})
-      const cachedFile = tempFiles.find(f => {
-        const dotIndex = f.lastIndexOf('.');
-        const fileCacheId = dotIndex > 0 ? f.substring(0, dotIndex) : f;
-        return fileCacheId === cacheKey;
-      });
+      // Look for existing cached file with this cache key using tempStorage
+      const cachedFile = await tempStorage.findTempFileByCacheId(cacheKey);
       
       if (cachedFile) {
-        const cachedFilePath = path.join(tempDir, cachedFile);
-        const stats = await fs.stat(cachedFilePath);
+        // Get file stats based on storage type
+        let fileSize: number;
+        let cachedFilePath: string;
+        
+        if (tempStorage.getStorageType() === 's3') {
+          // For S3, read the file to get size
+          const fileBuffer = await tempStorage.readTempFile(cachedFile);
+          if (!fileBuffer) {
+            console.log(`[ViewerDownload] ERROR: File not found in S3: ${cachedFile}`);
+            return reply.code(404).send({ success: false, error: { message: 'File not found in cache' } });
+          }
+          fileSize = fileBuffer.length;
+          // For S3, we don't have a local path, we'll handle this below
+          cachedFilePath = '';
+        } else {
+          // For local filesystem
+          cachedFilePath = path.join(tempDir, cachedFile);
+          const stats = await fs.stat(cachedFilePath);
+          fileSize = stats.size;
+        }
         console.log(`[ViewerDownload] Found cached file: ${cachedFile}`);
-        console.log(`[ViewerDownload] Cache hit! Using local file (${stats.size} bytes)`);
+        console.log(`[ViewerDownload] Cache hit! Using cached file (${fileSize} bytes)`);
         
         // Determine content type from extension
         const ext = cachedFile.split('.').pop()?.toLowerCase() || '';
@@ -2630,8 +2672,20 @@ fastify.register(async (instance) => {
         const contentType = contentTypes[ext] || body.mimeType || 'application/octet-stream';
         
         const previewUrl = `/api/viewer/temp/${cachedFile}`;
-        const absoluteFilePath = path.resolve(cachedFilePath);
-        const fileUri = `file://${absoluteFilePath}`;
+        
+        // For local filesystem, provide the file path; for S3, we provide the preview URL
+        let absoluteFilePath: string;
+        let fileUri: string;
+        
+        if (tempStorage.getStorageType() === 's3') {
+          // For S3, we don't have a local path - use the preview URL as the URI
+          absoluteFilePath = previewUrl;
+          fileUri = previewUrl;
+        } else {
+          // For local filesystem
+          absoluteFilePath = path.resolve(cachedFilePath);
+          fileUri = `file://${absoluteFilePath}`;
+        }
 
         // Get the original filename from the request or cached file
         let originalFilename = body.filename || cachedFile;
@@ -2653,22 +2707,39 @@ fastify.register(async (instance) => {
             previewUrl,
             fileUri,
             absolutePath: absoluteFilePath,
-            size: stats.size,
+            size: fileSize,
             cached: true,
           },
         });
       }
 
       // If this was a cache ID but we couldn't find the file, try with common extensions
+      // Use tempStorage abstraction to handle both S3 and local filesystem
       if (isCacheId) {
         console.log(`[ViewerDownload] Cache miss for cache ID. Trying with common extensions...`);
         const commonExtensions = ['json', 'pdf', 'txt', 'html', 'md'];
 
         for (const ext of commonExtensions) {
           const filename = `${cacheKey}.${ext}`;
-          const filepath = path.join(tempDir, filename);
+          
           try {
-            const stats = await fs.stat(filepath);
+            // Read file using tempStorage abstraction (handles both S3 and local FS)
+            let fileBuffer: Buffer | null;
+            let fileSize: number;
+            
+            if (tempStorage.getStorageType() === 's3') {
+              fileBuffer = await tempStorage.readTempFile(filename);
+              if (!fileBuffer) {
+                continue; // File doesn't exist with this extension
+              }
+              fileSize = fileBuffer.length;
+            } else {
+              // For local filesystem, verify file exists using fs.stat
+              const filepath = path.join(tempDir, filename);
+              const stats = await fs.stat(filepath);
+              fileSize = stats.size;
+            }
+            
             console.log(`[ViewerDownload] Found file with extension .${ext}: ${filename}`);
 
             const contentTypes: Record<string, string> = {
@@ -2681,8 +2752,19 @@ fastify.register(async (instance) => {
 
             const contentType = contentTypes[ext] || 'application/octet-stream';
             const previewUrl = `/api/viewer/temp/${filename}`;
-            const absoluteFilePath = path.resolve(filepath);
-            const fileUri = `file://${absoluteFilePath}`;
+            
+            // Determine fileUri and absolutePath based on storage type
+            let absoluteFilePath: string;
+            let fileUri: string;
+            
+            if (tempStorage.getStorageType() === 's3') {
+              absoluteFilePath = previewUrl;
+              fileUri = previewUrl;
+            } else {
+              const filepath = path.join(tempDir, filename);
+              absoluteFilePath = path.resolve(filepath);
+              fileUri = `file://${absoluteFilePath}`;
+            }
 
             let originalFilename = body.filename || filename;
             if (ext === 'json' && originalFilename.includes('email')) {
@@ -2701,7 +2783,7 @@ fastify.register(async (instance) => {
                 previewUrl,
                 fileUri,
                 absolutePath: absoluteFilePath,
-                size: stats.size,
+                size: fileSize,
                 cached: true,
               },
             });
@@ -2711,7 +2793,7 @@ fastify.register(async (instance) => {
         }
 
         // Cache ID not found with any extension
-        console.error(`[ViewerDownload] ERROR: Cache ID not found in temp directory: ${cacheKey}`);
+        console.error(`[ViewerDownload] ERROR: Cache ID not found in temp storage: ${cacheKey}`);
         return reply.code(404).send({
           success: false,
           error: {
@@ -2947,17 +3029,28 @@ fastify.register(async (instance) => {
       const tempFilePath = path.join(tempDir, tempFilename);
       console.log(`[ViewerDownload] Temp file path: ${tempFilePath}`);
 
-      // Write file to temp directory
+      // Write file to temp storage using TempStorage abstraction (supports S3)
       console.log(`[ViewerDownload] File size: ${buffer.length} bytes`);
-      await fs.writeFile(tempFilePath, buffer);
-      console.log(`[ViewerDownload] File written successfully`);
+      await tempStorage.writeTempFile(tempFilename, buffer);
+      console.log(`[ViewerDownload] File written successfully to temp storage`);
 
       // Return the local URL for preview
       const previewUrl = `/api/viewer/temp/${tempFilename}`;
       
       // Get absolute path for markitdown file:// URI
-      const absoluteFilePath = path.resolve(tempFilePath);
-      const fileUri = `file://${absoluteFilePath}`;
+      // Handle both S3 and local filesystem storage types
+      let absoluteFilePath: string;
+      let fileUri: string;
+      
+      if (tempStorage.getStorageType() === 's3') {
+        // For S3, we can't return a local file:// URI
+        // Use the preview URL as the URI instead
+        absoluteFilePath = previewUrl;
+        fileUri = previewUrl;
+      } else {
+        absoluteFilePath = path.resolve(tempFilePath);
+        fileUri = `file://${absoluteFilePath}`;
+      }
       
       console.log(`[ViewerDownload] Preview URL: ${previewUrl}`);
       console.log(`[ViewerDownload] File URI for markitdown: ${fileUri}`);

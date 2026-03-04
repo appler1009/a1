@@ -7,6 +7,18 @@
 
 import type { InProcessMCPModule } from '../adapters/InProcessAdapter.js';
 import type { MCPToolInfo } from '@local-agent/shared';
+import type { TempStorage } from '../../storage/temp-storage.js';
+
+// TempStorage instance for reading cached emails
+let tempStorage: TempStorage | null = null;
+
+/**
+ * Initialize TempStorage - called once from adapter factory
+ */
+export function initializeDisplayEmail(tempStorageInstance: TempStorage): void {
+  tempStorage = tempStorageInstance;
+  console.log('[DisplayEmail] TempStorage initialized for email reading');
+}
 
 /**
  * Email message structure matching EmailMessage from client
@@ -102,29 +114,30 @@ export function getDisplayEmailToolDefinition(): MCPToolInfo {
 
 /**
  * Resolve email data from cache ID if provided
- * Reads from temp directory and returns the email data
+ * Reads from temp storage (S3 or local FS based on config) and returns the email data
  */
 async function resolveEmailFromCache(cacheId: string): Promise<Record<string, unknown> | null> {
   try {
-    const fs = await import('fs/promises');
-    const path = await import('path');
-
-    const storageRoot = process.env.STORAGE_ROOT || './data';
-    const tempDir = path.join(storageRoot, 'temp');
-
     // Sanitize cache ID to prevent path traversal
-    if (!cacheId || cacheId.includes('..') || cacheId.includes('/')) {
+    if (!cacheId || cacheId.includes('..') || cacheId.includes('/') || cacheId.includes('\\')) {
       console.error('[DisplayEmail] Invalid cache ID:', cacheId);
       return null;
     }
 
-    // Try to find the cache file
     const cacheFileName = `${cacheId}.json`;
-    const cachePath = path.join(tempDir, cacheFileName);
-
-    console.log('[DisplayEmail] Reading email from cache:', cachePath);
-    const data = await fs.readFile(cachePath, 'utf-8');
-    return JSON.parse(data);
+    
+    // Use TempStorage abstraction for S3/FS flexibility
+    if (!tempStorage) {
+      throw new Error('TempStorage not initialized - cannot read email from cache. Please ensure TempStorage is configured.');
+    }
+    
+    const data = await tempStorage.readTempFileAsString(cacheFileName);
+    if (data) {
+      console.log('[DisplayEmail] Read email from temp storage:', cacheFileName);
+      return JSON.parse(data);
+    }
+    console.log('[DisplayEmail] Email not found in temp storage:', cacheFileName);
+    return null;
   } catch (error) {
     console.error('[DisplayEmail] Failed to read email from cache:', error);
     return null;

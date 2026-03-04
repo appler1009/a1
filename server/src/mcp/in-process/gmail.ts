@@ -22,6 +22,7 @@
 
 import type { MCPToolInfo } from '@local-agent/shared';
 import type { InProcessMCPModule } from '../adapters/InProcessAdapter.js';
+import type { TempStorage } from '../../storage/temp-storage.js';
 import {
   listMessages,
   getMessage,
@@ -38,6 +39,29 @@ import {
   getThread,
   type Tokens,
 } from 'gmail-mcp-lib';
+
+// TempStorage for caching emails - uses S3 or local FS based on config
+let tempStorage: TempStorage | null = null;
+
+/**
+ * Validate that an ID contains only safe characters to prevent path traversal
+ */
+function isValidCacheId(id: string): boolean {
+  // IDs should only contain alphanumeric characters, underscores, and hyphens
+  // This prevents path traversal attacks if IDs are ever used in file paths
+  if (!id || id.length === 0) return false;
+  if (id.includes('/') || id.includes('\\')) return false;
+  if (id.includes('..')) return false;
+  return /^[a-zA-Z0-9_-]+$/.test(id);
+}
+
+/**
+ * Initialize TempStorage - called once from adapter factory
+ */
+export function initializeGmailInProcess(tempStorageInstance: TempStorage): void {
+  tempStorage = tempStorageInstance;
+  console.log('[GmailInProcess] TempStorage initialized for email caching');
+}
 
 /**
  * Token data passed from the adapter factory
@@ -570,30 +594,33 @@ export class GmailInProcess implements InProcessMCPModule {
     try {
       // Accept both 'messageId' and 'id' (AI sometimes reuses the id field from search results)
       const messageId = args.messageId ?? args.id;
+      
+      // Validate messageId for safety before using in cache ID
+      if (!isValidCacheId(messageId)) {
+        console.error('[GmailInProcess:gmailGetMessage] Invalid messageId format:', messageId);
+        throw new Error('Invalid message ID format');
+      }
+      
       console.log('[GmailInProcess:gmailGetMessage] Getting message', { ...args, messageId });
       // Always request full format for complete email data
       const result = await getMessage(messageId, this.tokens, 'full');
 
-      // Cache the message to temp directory
+      // Cache the message using TempStorage (handles S3 or local FS based on config)
       try {
-        const fs = await import('fs/promises');
-        const path = await import('path');
-
-        const tempDir = path.join(this.storageRoot, 'temp');
-        await fs.mkdir(tempDir, { recursive: true });
-
         // Use message ID as cache key directly
         // Include "email" in name so EmailPreviewAdapter recognizes it
         const cacheId = `gmail_email_${messageId}`;
         const cacheFileName = `${cacheId}.json`;
-        const cachePath = path.join(tempDir, cacheFileName);
 
         // Convert to EmailPreviewAdapter format for nice rendering
         const emailData = this.parseGmailMessage(result);
 
-        // Store the formatted email data
-        await fs.writeFile(cachePath, JSON.stringify(emailData, null, 2));
-        console.log(`[GmailInProcess:gmailGetMessage] Cached message to: ${cachePath}`);
+        // Store the formatted email data using TempStorage abstraction
+        if (!tempStorage) {
+          throw new Error('TempStorage not initialized - cannot cache email. Please ensure TempStorage is configured.');
+        }
+        await tempStorage.writeTempFile(cacheFileName, Buffer.from(JSON.stringify(emailData, null, 2)));
+        console.log(`[GmailInProcess:gmailGetMessage] Cached message to temp storage: ${cacheFileName}`);
 
         // Return with cache ID and a hint for preview pane
         return {
@@ -809,23 +836,23 @@ export class GmailInProcess implements InProcessMCPModule {
     try {
       // Accept both 'threadId' and 'id' (AI sometimes reuses the id field from search results)
       const threadId = args.threadId ?? args.id;
+      
+      // Validate threadId for safety before using in cache ID
+      if (!isValidCacheId(threadId)) {
+        console.error('[GmailInProcess:gmailGetThread] Invalid threadId format:', threadId);
+        throw new Error('Invalid thread ID format');
+      }
+      
       console.log('[GmailInProcess:gmailGetThread] Getting thread', { ...args, threadId });
       // Always request full format for complete email data
       const result = await getThread(threadId, this.tokens, 'full');
 
-      // Cache the thread to temp directory
+      // Cache the thread using TempStorage (handles S3 or local FS based on config)
       try {
-        const fs = await import('fs/promises');
-        const path = await import('path');
-
-        const tempDir = path.join(this.storageRoot, 'temp');
-        await fs.mkdir(tempDir, { recursive: true });
-
         // Use thread ID as cache key directly
         // Include "email" in name so EmailPreviewAdapter recognizes it
         const cacheId = `gmail_email_thread_${threadId}`;
         const cacheFileName = `${cacheId}.json`;
-        const cachePath = path.join(tempDir, cacheFileName);
 
         // Convert messages to EmailPreviewAdapter format
         const messages = result.messages?.map((msg: any) => this.parseGmailMessage(msg)) || [];
@@ -842,9 +869,12 @@ export class GmailInProcess implements InProcessMCPModule {
           lastDate: messages[0]?.date || new Date().toISOString(),
         };
 
-        // Store the formatted thread data
-        await fs.writeFile(cachePath, JSON.stringify(threadData, null, 2));
-        console.log(`[GmailInProcess:gmailGetThread] Cached thread to: ${cachePath}`);
+        // Store the formatted thread data using TempStorage abstraction
+        if (!tempStorage) {
+          throw new Error('TempStorage not initialized - cannot cache thread. Please ensure TempStorage is configured.');
+        }
+        await tempStorage.writeTempFile(cacheFileName, Buffer.from(JSON.stringify(threadData, null, 2)));
+        console.log(`[GmailInProcess:gmailGetThread] Cached thread to temp storage: ${cacheFileName}`);
 
         // Return with cache ID and a hint for preview pane
         return {
