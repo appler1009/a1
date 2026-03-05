@@ -206,21 +206,102 @@ export function ChatPane() {
   }, [rolesLoaded, currentRole?.id, fetchMessages]);
 
   // Subscribe to new messages pushed from the server (cross-device sync)
+  // Uses EventSource with automatic reconnection on connection loss
   useEffect(() => {
     if (!currentRole?.id) return;
 
-    const es = new EventSource(`/api/messages/stream?roleId=${encodeURIComponent(currentRole.id)}`);
+    // Use a plain JS object as a ref to track the current role ID
+    // This avoids React error #321 from nested useEffect hooks
+    const roleIdRef = { current: currentRole?.id as string | undefined };
 
-    es.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data) as Message;
-        receiveMessage(message);
-      } catch {
-        // ignore malformed events
+    let es: EventSource | null = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 5;
+    const BASE_RECONNECT_DELAY = 5000; // 5 seconds - give server time to send heartbeat before reconnecting
+    const MAX_RECONNECT_DELAY = 60000; // Max 60 seconds between attempts
+
+    const connect = () => {
+      if (es) {
+        es.close();
       }
+
+      // Use ref to get the current role ID (avoids stale closure)
+      const roleId = roleIdRef.current;
+      if (!roleId) {
+        console.log('[ChatPane] No role ID available, skipping connection');
+        return;
+      }
+
+      console.log(`[ChatPane] Connecting to message stream for role: ${roleId} (attempt ${reconnectAttempts + 1})`);
+      es = new EventSource(`/api/messages/stream?roleId=${encodeURIComponent(roleId)}`);
+
+      es.onopen = () => {
+        console.log('[ChatPane] Message stream connected');
+        reconnectAttempts = 0; // Reset on successful connection
+      };
+
+      es.onmessage = (event) => {
+        // Skip heartbeat messages (they start with ':')
+        if (event.data.startsWith(':')) {
+          console.log('[ChatPane] Message stream heartbeat received');
+          return;
+        }
+        try {
+          const message = JSON.parse(event.data) as Message;
+          console.log('[ChatPane] Received message from stream:', message.id, message.from);
+          receiveMessage(message);
+        } catch {
+          // ignore malformed events
+        }
+      };
+
+      es.onerror = (error) => {
+        // EventSource's onerror can fire even when the connection is actually working
+        // (especially with proxies/load balancers like AWS ALB). The readyState check
+        // must be deferred because the event fires synchronously but state changes
+        // may happen after. Use setTimeout to let the event loop process first.
+        setTimeout(() => {
+          // If the connection is still open or connecting, don't reconnect
+          if (es && (es.readyState === EventSource.OPEN || es.readyState === EventSource.CONNECTING)) {
+            console.log('[ChatPane] Message stream error but connection still active (state:', es.readyState === EventSource.OPEN ? 'OPEN' : 'CONNECTING', '), not reconnecting');
+            return;
+          }
+
+          console.error('[ChatPane] Message stream error:', error);
+          if (es) {
+            es.close();
+            es = null;
+          }
+
+          // Exponential backoff reconnection with jitter
+          // Only reconnect if we still have a valid role ID
+          const currentRoleId = roleIdRef.current;
+          if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS && currentRoleId) {
+            // Calculate delay with exponential backoff and jitter
+            const baseDelay = BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts);
+            // Add random jitter (0-50% of base delay) to prevent thundering herd
+            const jitter = Math.random() * baseDelay * 0.5;
+            const delay = Math.min(baseDelay + jitter, MAX_RECONNECT_DELAY);
+            console.log(`[ChatPane] Reconnecting in ${Math.round(delay)}ms...`);
+            reconnectAttempts++;
+            setTimeout(connect, delay);
+          } else {
+            console.error('[ChatPane] Max reconnection attempts reached or no role ID, giving up');
+          }
+        }, 100); // Small delay to let readyState update
+      };
     };
 
-    return () => es.close();
+    connect();
+
+    return () => {
+      // Clear the role ID ref so any pending reconnections won't proceed
+      roleIdRef.current = undefined;
+      if (es) {
+        console.log('[ChatPane] Closing message stream');
+        es.close();
+      }
+    };
   }, [currentRole?.id, receiveMessage]);
 
   // Filter messages for current role

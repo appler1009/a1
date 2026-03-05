@@ -274,6 +274,7 @@ interface ChatState {
   hasMore: boolean;
   loading: boolean;
   migrated: boolean;
+  lastFetchTime: Record<string, number>; // Track last fetch time per role for caching
   addMessage: (message: Message) => Promise<void>;
   receiveMessage: (message: Message) => void;
   prependMessages: (messages: Message[]) => void;
@@ -297,6 +298,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   hasMore: true,
   loading: false,
   migrated: false,
+  lastFetchTime: {},
   
   addMessage: async (message) => {
     // Add to local state immediately for UI responsiveness
@@ -351,7 +353,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
   
   fetchMessages: async (roleId, options = {}) => {
-    const { loading } = get();
+    const { loading, lastFetchTime, messages } = get();
 
     // For pagination (loading older messages), skip if a fetch is already in progress
     if (loading && options.before) return;
@@ -359,7 +361,26 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     // For initial loads (role switch), clear messages immediately so stale messages
     // from the previous role never appear, then always proceed with the fetch.
     if (!options.before) {
-      set({ messages: [], hasMore: true, loading: true });
+      // Check if we've recently fetched messages for this role (within last 30 seconds)
+      // This prevents redundant fetches when switching between roles quickly
+      const lastFetch = lastFetchTime?.[roleId];
+      const now = Date.now();
+      if (lastFetch && (now - lastFetch) < 30000) {
+        // Already have recent messages, just ensure they're for this role
+        const existingMessages = messages.filter(m => m.roleId === roleId);
+        if (existingMessages.length > 0) {
+          console.log('[ChatStore] Using cached messages for role:', roleId);
+          set({ messages: existingMessages, hasMore: true, loading: false });
+          return;
+        }
+      }
+      
+      set((state) => ({
+        messages: state.messages.filter(m => m.roleId !== roleId),
+        hasMore: true,
+        loading: true,
+        lastFetchTime: { ...state.lastFetchTime, [roleId]: now }
+      }));
     } else {
       set({ loading: true });
     }
@@ -379,9 +400,14 @@ export const useChatStore = create<ChatState>()((set, get) => ({
             const current = get().messages;
             set({ messages: [...fetchedMessages, ...current], hasMore: fetchedMessages.length === (options.limit || 50) });
           } else {
-            // Initial load — replace all messages
-            set({ messages: fetchedMessages, hasMore: fetchedMessages.length === (options.limit || 50) });
+            // Initial load — replace all messages for this role
+            const otherMessages = get().messages.filter(m => m.roleId !== roleId);
+            set({ messages: [...otherMessages, ...fetchedMessages], hasMore: fetchedMessages.length === (options.limit || 50) });
           }
+          // Update fetch timestamp
+          set((state) => ({
+            lastFetchTime: { ...state.lastFetchTime, [roleId]: Date.now() }
+          }));
         }
       }
     } catch (error) {

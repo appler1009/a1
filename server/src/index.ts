@@ -1598,10 +1598,14 @@ fastify.register(async (instance) => {
     // Push to any other devices subscribed to this role
     const subscriberKey = `${request.user.id}#${body.roleId}`;
     const subs = messageSubscribers.get(subscriberKey);
+    console.log(`[MessagePush] Checking subscribers for key: ${subscriberKey}, count: ${subs?.size || 0}`);
     if (subs?.size) {
       const event = `data: ${JSON.stringify(message)}\n\n`;
       for (const sub of subs) {
-        if (!sub.writableEnded) sub.write(event);
+        if (!sub.writableEnded) {
+          console.log(`[MessagePush] Writing to subscriber`);
+          sub.write(event);
+        }
       }
     }
 
@@ -1733,11 +1737,13 @@ fastify.register(async (instance) => {
       messageSubscribers.set(subscriberKey, new Set());
     }
     messageSubscribers.get(subscriberKey)!.add(reply.raw);
+    console.log(`[MessageStream] Client subscribed to ${subscriberKey}, total subscribers: ${messageSubscribers.get(subscriberKey)?.size}`);
 
     const cleanup = () => {
       const subs = messageSubscribers.get(subscriberKey);
       if (subs) {
         subs.delete(reply.raw);
+        console.log(`[MessageStream] Client unsubscribed from ${subscriberKey}, remaining: ${subs.size}`);
         if (subs.size === 0) messageSubscribers.delete(subscriberKey);
       }
       clearInterval(heartbeat);
