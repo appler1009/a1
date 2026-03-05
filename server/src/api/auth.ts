@@ -37,10 +37,13 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     const session = await authService.createSession(user.id);
 
+    // Use secure cookies in production unless explicitly disabled
+    const useSecureCookies = config.env.isProduction && process.env.COOKIE_SECURE !== 'false';
+    
     reply.setCookie('session_id', session.id, {
       path: '/',
       httpOnly: true,
-      secure: config.env.isProduction,
+      secure: useSecureCookies,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
@@ -69,10 +72,13 @@ export async function authRoutes(fastify: FastifyInstance) {
     const user = await authService.createUser(body.email, body.name, 'individual');
     const session = await authService.createSession(user.id);
 
+    // Use secure cookies in production unless explicitly disabled
+    const useSecureCookies = config.env.isProduction && process.env.COOKIE_SECURE !== 'false';
+
     reply.setCookie('session_id', session.id, {
       path: '/',
       httpOnly: true,
-      secure: config.env.isProduction,
+      secure: useSecureCookies,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
@@ -118,10 +124,13 @@ export async function authRoutes(fastify: FastifyInstance) {
     
     const session = await authService.createSession(result.user.id);
 
+    // Use secure cookies in production unless explicitly disabled
+    const useSecureCookies = config.env.isProduction && process.env.COOKIE_SECURE !== 'false';
+
     reply.setCookie('session_id', session.id, {
       path: '/',
       httpOnly: true,
-      secure: config.env.isProduction,
+      secure: useSecureCookies,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
@@ -195,10 +204,13 @@ export async function authRoutes(fastify: FastifyInstance) {
     const group = await authService.getGroup(invitation.groupId);
     const session = await authService.createSession(user.id);
 
+    // Use secure cookies in production unless explicitly disabled
+    const useSecureCookies = config.env.isProduction && process.env.COOKIE_SECURE !== 'false';
+
     reply.setCookie('session_id', session.id, {
       path: '/',
       httpOnly: true,
-      secure: config.env.isProduction,
+      secure: useSecureCookies,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
