@@ -224,6 +224,28 @@ export class S3StorageAdapter extends BaseStorage {
   }
 
   /**
+   * Get error message from S3 error for graceful logging
+   */
+  private getErrorMessage(err: unknown): string {
+    if (err && typeof err === 'object') {
+      const s3Err = err as { name?: string; message?: string; Code?: string };
+      // Handle common S3 errors gracefully
+      if (s3Err.name === 'NoSuchKey' || s3Err.Code === 'NoSuchKey') {
+        return `Object not found (NoSuchKey)`;
+      }
+      if (s3Err.name === 'NoSuchBucket' || s3Err.Code === 'NoSuchBucket') {
+        return `Bucket not found (NoSuchBucket)`;
+      }
+      if (s3Err.name === 'AccessDenied' || s3Err.Code === 'AccessDenied') {
+        return `Access denied`;
+      }
+      // Return just the message for other errors
+      return s3Err.message || String(err);
+    }
+    return String(err);
+  }
+
+  /**
    * Read binary data from a file
    */
   async readBinary(path: string): Promise<Buffer | null> {
@@ -247,7 +269,8 @@ export class S3StorageAdapter extends BaseStorage {
       console.log(`[S3Adapter] No content in S3 object: ${key}`);
       return null;
     } catch (err) {
-      console.log(`[S3Adapter] Failed to read binary from S3: ${key}`, err);
+      const errorMsg = this.getErrorMessage(err);
+      console.log(`[S3Adapter] Could not read binary from S3: ${key} - ${errorMsg}`);
       return null;
     }
   }
@@ -269,7 +292,8 @@ export class S3StorageAdapter extends BaseStorage {
       );
       console.log(`[S3Adapter] Successfully deleted binary from S3: ${key}`);
     } catch (err) {
-      console.log(`[S3Adapter] Failed to delete binary from S3: ${key}`, err);
+      const errorMsg = this.getErrorMessage(err);
+      console.log(`[S3Adapter] Failed to delete binary from S3: ${key} - ${errorMsg}`);
       // Ignore errors during deletion
     }
   }
@@ -302,7 +326,8 @@ export class S3StorageAdapter extends BaseStorage {
       console.log(`[S3Adapter] No files found in S3 temp directory`);
       return [];
     } catch (err) {
-      console.log(`[S3Adapter] Failed to list binary files in S3:`, err);
+      const errorMsg = this.getErrorMessage(err);
+      console.log(`[S3Adapter] Failed to list binary files in S3: ${errorMsg}`);
       return [];
     }
   }
@@ -324,8 +349,9 @@ export class S3StorageAdapter extends BaseStorage {
       );
       console.log(`[S3Adapter] Binary exists in S3: ${key}`);
       return true;
-    } catch {
-      console.log(`[S3Adapter] Binary does not exist in S3: ${key}`);
+    } catch (err) {
+      const errorMsg = this.getErrorMessage(err);
+      console.log(`[S3Adapter] Binary does not exist in S3: ${key} - ${errorMsg}`);
       return false;
     }
   }
