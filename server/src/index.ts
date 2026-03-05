@@ -2797,11 +2797,13 @@ fastify.register(async (instance) => {
             console.log(`[ViewerDownload] Gmail cache miss, attempting to fetch from Gmail API: ${messageId}`);
             
             try {
-              // Get user's Google OAuth token
-              const oauthToken = await authService.getOAuthToken(request.user!.id, 'google');
+              // Get all Google OAuth tokens for this user (multi-account support)
+              // Try each account until one successfully fetches the email
+              const mainDb = await getMainDatabase(config.storage.root);
+              const allTokens = await mainDb.getAllUserOAuthTokens(request.user.id, 'google');
               
-              if (!oauthToken) {
-                console.log('[ViewerDownload] No Google OAuth token found for Gmail recovery');
+              if (allTokens.length === 0) {
+                console.log('[ViewerDownload] No Google OAuth tokens found for Gmail recovery');
                 return reply.code(403).send({ 
                   success: false, 
                   error: { 
@@ -2812,16 +2814,57 @@ fastify.register(async (instance) => {
                 });
               }
               
-              // Prepare tokens for the Gmail API
-              const tokens = {
-                access_token: oauthToken.accessToken,
-                refresh_token: oauthToken.refreshToken,
-                expiry_date: oauthToken.expiryDate,
-                token_type: 'Bearer',
-              };
+              console.log(`[ViewerDownload] Trying ${allTokens.length} Google account(s) for Gmail recovery`);
               
-              // Fetch and cache the Gmail message
-              const { filename, data } = await fetchAndCacheGmailMessage(messageId, tokens);
+              let lastError: Error | null = null;
+              let success = false;
+              let filename: string = '';
+              let data: Buffer = Buffer.alloc(0);
+              
+              for (const oauthToken of allTokens) {
+                console.log(`[ViewerDownload] Trying Google account: ${oauthToken.accountEmail}`);
+                
+                // Prepare tokens for the Gmail API (convert null to undefined for type compatibility)
+                const tokens = {
+                  access_token: oauthToken.accessToken,
+                  refresh_token: oauthToken.refreshToken || undefined,
+                  expiry_date: oauthToken.expiryDate || undefined,
+                  token_type: 'Bearer',
+                };
+                
+                try {
+                  // Fetch and cache the Gmail message
+                  const result = await fetchAndCacheGmailMessage(messageId, tokens);
+                  filename = result.filename;
+                  data = result.data;
+                  success = true;
+                  console.log(`[ViewerDownload] Successfully fetched email using account: ${oauthToken.accountEmail}`);
+                  break;
+                } catch (accountError: any) {
+                  // If we get 404, this account doesn't have access - try the next one
+                  // For other errors (network, rate limit, etc.), propagate immediately
+                  const errorStatus = accountError?.response?.status || accountError?.status;
+                  if (errorStatus === 404) {
+                    console.log(`[ViewerDownload] Account ${oauthToken.accountEmail} returned 404, trying next account`);
+                    lastError = accountError;
+                    continue;
+                  }
+                  // Non-404 error - don't bother trying other accounts
+                  throw accountError;
+                }
+              }
+              
+              if (!success) {
+                // All accounts returned 404 - the message doesn't exist or user lost access
+                console.log('[ViewerDownload] All Google accounts returned 404 for this message');
+                return reply.code(404).send({
+                  success: false,
+                  error: {
+                    message: 'Email not found. It may have been deleted or you may have lost access to it.',
+                    cacheId: cacheKey
+                  }
+                });
+              }
               
               // Write the re-cached email to temp storage
               await tempStorage.writeTempFile(filename, data);
