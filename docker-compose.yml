@@ -5,11 +5,15 @@ services:
       - "3000:3000"
     volumes:
       - ./data:/app/data
+    env_file:
+      - ./server/.env.production
     environment:
       - NODE_ENV=production
       - PORT=3000
       - HOST=0.0.0.0
-      - STORAGE_TYPE=fs
+      - STORAGE_TYPE=s3
+      - STORAGE_BUCKET=${STORAGE_BUCKET:-appler-a1}
+      - STORAGE_REGION=${STORAGE_REGION:-us-west-2}
       - STORAGE_ROOT=/app/data
       - AUTH_SECRET=${AUTH_SECRET:-change-me-in-production}
       # LLM provider: grok | openai | anthropic (defaults to grok)
@@ -41,6 +45,15 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       # Feature flags
       - ENABLE_META_MCP_SEARCH=${ENABLE_META_MCP_SEARCH:-true}
+      # AWS credentials for production infrastructure
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-west-2}
+      # DynamoDB configuration (set MAIN_DB_TYPE=dynamodb to use)
+      - MAIN_DB_TYPE=${MAIN_DB_TYPE:-dynamodb}
+      - DYNAMODB_REGION=${DYNAMODB_REGION:-us-west-2}
+      - DYNAMODB_TABLE_PREFIX=${DYNAMODB_TABLE_PREFIX:-a1_prod_}
+      # S3 storage configuration (set STORAGE_TYPE=s3 to use)
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
@@ -49,20 +62,5 @@ services:
       retries: 3
       start_period: 10s
 
-  # Optional: MinIO for S3-compatible storage
-  minio:
-    image: minio/minio:latest
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
-    environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
-    command: server /data --console-address ":9001"
-    profiles:
-      - s3
-
 volumes:
-  minio-data:
+  data:
