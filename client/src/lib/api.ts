@@ -6,7 +6,7 @@
  * the server can always operate with the correct role context.
  */
 
-import { useRolesStore } from '../store';
+import { useAuthStore, useRolesStore } from '../store';
 
 // Endpoints that should NOT include role ID (auth/onboarding flows)
 const EXCLUDED_PATHS = [
@@ -107,8 +107,26 @@ export async function apiFetch(
     headers,
     credentials: 'include',
   };
+
+  const response = await fetch(input, finalOptions);
   
-  return fetch(input, finalOptions);
+  // Handle 401 responses - redirect to login
+  if (response.status === 401) {
+    console.warn('[apiFetch] Received 401 Unauthorized, redirecting to login...');
+    
+    // Clear auth state
+    useAuthStore.getState().logout();
+    
+    // Redirect to login page
+    // We need to do this without useNavigate hook since we're in a utility function
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+    
+    return response;
+  }
+  
+  return response;
 }
 
 /**
