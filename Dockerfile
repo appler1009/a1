@@ -4,7 +4,7 @@ FROM oven/bun:latest
 WORKDIR /app
 
 # Install Python, ffmpeg (for pydub/audio), and uv (for MCP servers like markitdown-mcp)
-RUN apt-get update && apt-get install -y curl python3 ffmpeg && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y curl python3 python3-pip ffmpeg && rm -rf /var/lib/apt/lists/* \
     && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
 
@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y curl python3 ffmpeg && rm -rf /var/lib/
 ENV PATH="/root/.local/bin:$PATH"
 RUN uv --version && \
     ln -s /root/.local/bin/uvx /usr/local/bin/uvx || true
+
+# Pre-install markitdown-mcp as a cached tool to avoid downloading deps every run
+RUN uv tool install markitdown-mcp
 
 # Copy package files and install dependencies inside container
 # (Don't copy node_modules from host — native modules must be built for Linux)

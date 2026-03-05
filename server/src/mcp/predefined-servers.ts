@@ -71,8 +71,8 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     id: 'markitdown',
     name: 'MarkItDown',
     description: 'Convert PDF files and other documents to markdown format for AI processing. Supports PDF, DOCX, XLSX, PPTX, images, and more.',
-    command: 'uvx',
-    args: ['markitdown-mcp'],
+    command: 'markitdown-mcp',
+    args: [],
     auth: {
       provider: 'none',
     },
