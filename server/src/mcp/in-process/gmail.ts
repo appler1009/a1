@@ -56,6 +56,183 @@ function isValidCacheId(id: string): boolean {
 }
 
 /**
+ * Convert Gmail API message format to EmailPreviewAdapter format
+ * Exported for use by viewer download endpoint
+ */
+export function parseGmailMessage(gmailMessage: any): Record<string, any> {
+  const messageId = gmailMessage.id;
+
+  const headers = gmailMessage.payload?.headers || [];
+  const getHeader = (name: string) => headers.find((h: any) => h.name === name)?.value || '';
+
+  const subject = getHeader('Subject') || '(no subject)';
+  const from = getHeader('From') || '(no from)';
+  const mimeType = gmailMessage.payload?.mimeType || 'unknown';
+
+  // Extract body content with proper MIME type detection
+  let bodyContent = '';
+  let isHtml = false;
+
+  const getBodyFromPart = (part: any, depth: number = 0): { content: string; isHtml: boolean } | null => {
+    const mimeType = part.mimeType || 'unknown';
+
+    // If this part has body data, return it with MIME type
+    if (part.body?.data) {
+      try {
+        const content = Buffer.from(part.body.data, 'base64').toString('utf-8');
+        const partIsHtml = part.mimeType?.includes('text/html') || false;
+
+        return { content, isHtml: partIsHtml };
+      } catch (err) {
+        return null;
+      }
+    }
+
+    // For multipart/alternative, prefer HTML over plain text
+    if (part.mimeType === 'multipart/alternative' && part.parts && part.parts.length > 0) {
+      // First pass: try to find HTML part
+      for (let i = 0; i < part.parts.length; i++) {
+        const subpart = part.parts[i];
+        if (subpart.mimeType?.includes('text/html')) {
+          const result = getBodyFromPart(subpart, depth + 1);
+          if (result) {
+            return result;
+          }
+        }
+      }
+
+      // Second pass: fall back to plain text
+      for (let i = 0; i < part.parts.length; i++) {
+        const subpart = part.parts[i];
+        if (subpart.mimeType?.includes('text/plain')) {
+          const result = getBodyFromPart(subpart, depth + 1);
+          if (result) {
+            return result;
+          }
+        }
+      }
+    }
+
+    // Otherwise, recurse into subparts
+    if (part.parts && part.parts.length > 0) {
+      for (let i = 0; i < part.parts.length; i++) {
+        const subpart = part.parts[i];
+        const result = getBodyFromPart(subpart, depth + 1);
+        if (result) {
+          return result;
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const bodyResult = getBodyFromPart(gmailMessage.payload);
+  if (bodyResult) {
+    bodyContent = bodyResult.content;
+    isHtml = bodyResult.isHtml;
+  } else {
+    // Fallback to snippet
+    bodyContent = gmailMessage.snippet || 'No content';
+  }
+
+  // Extract attachments from MIME tree
+  const attachments: Array<{
+    filename: string;
+    mimeType: string;
+    size: number;
+    url?: string;
+  }> = [];
+
+  const extractAttachments = (part: any) => {
+    const partMimeType = part.mimeType || '';
+    const isMultipart = partMimeType.startsWith('multipart/');
+
+    // Filename can be set directly on the part or in Content-Disposition header
+    const cdHeader = part.headers?.find((h: any) => h.name?.toLowerCase() === 'content-disposition')?.value || '';
+    const cdFilename = cdHeader.match(/filename\*?=(?:UTF-8'')?(?:"([^"]+)"|([^\s;]+))/i);
+    const filename = part.filename || cdFilename?.[1] || cdFilename?.[2];
+
+    if (filename && !isMultipart) {
+      const attachMimeType = partMimeType || 'application/octet-stream';
+      const size = part.body?.size || 0;
+
+      if (part.body?.data) {
+        // Small inline attachment — serve as data URL directly
+        attachments.push({
+          filename,
+          mimeType: attachMimeType,
+          size,
+          url: `data:${attachMimeType};base64,${part.body.data}`,
+        });
+      } else if (part.body?.attachmentId) {
+        // Large attachment — download via server proxy endpoint.
+        // All IDs go in query params to avoid Fastify's maxParamLength limit
+        // (Gmail attachment IDs can be 400+ chars).
+        const qs = new URLSearchParams({
+          messageId,
+          attachmentId: part.body.attachmentId,
+          filename,
+          mimeType: attachMimeType,
+        }).toString();
+        attachments.push({
+          filename,
+          mimeType: attachMimeType,
+          size,
+          url: `/api/gmail/attachment?${qs}`,
+        });
+      }
+    }
+
+    // Recurse into sub-parts
+    if (part.parts) {
+      part.parts.forEach((sub: any) => extractAttachments(sub));
+    }
+  };
+
+  extractAttachments(gmailMessage.payload);
+
+  // Parse From header: extract display name and email address
+  // Format: "Display Name <email@example.com>" splits into name and email
+  // Format: "email@example.com" or anything else is used as-is
+  const fromHeader = getHeader('From');
+  let fromName = '';
+  let fromEmail = '';
+
+  // Only try to split if it has angle brackets format: "Name <email>"
+  const angleMatch = fromHeader.match(/^(.+?)\s*<(.+?)>\s*$/);
+  if (angleMatch && angleMatch[1] && angleMatch[2]) {
+    fromName = angleMatch[1].trim().replace(/^"|"$/g, ''); // Remove quotes if present
+    fromEmail = angleMatch[2].trim();
+  } else {
+    // Use as-is for any other format (plain email or other)
+    fromEmail = fromHeader.trim();
+  }
+
+  // Parse recipients
+  const toHeader = getHeader('To');
+  const toEmails = toHeader.split(',').map((e: string) => e.trim()).filter((e: string) => e);
+  const ccHeader = getHeader('Cc');
+  const ccEmails = ccHeader.split(',').map((e: string) => e.trim()).filter((e: string) => e);
+
+  const result = {
+    id: gmailMessage.id,
+    subject: getHeader('Subject') || 'No subject',
+    from: fromEmail,
+    fromName: fromName,
+    to: toEmails,
+    cc: ccEmails.length > 0 ? ccEmails : undefined,
+    date: new Date(parseInt(gmailMessage.internalDate || 0)).toISOString(),
+    body: bodyContent || gmailMessage.snippet || 'No content',
+    isHtml,
+    snippet: gmailMessage.snippet,
+    attachments: attachments.length > 0 ? attachments : undefined,
+  };
+
+  return result;
+}
+
+/**
  * Initialize TempStorage - called once from adapter factory
  */
 export function initializeGmailInProcess(tempStorageInstance: TempStorage): void {
@@ -612,8 +789,8 @@ export class GmailInProcess implements InProcessMCPModule {
         const cacheId = `gmail_email_${messageId}`;
         const cacheFileName = `${cacheId}.json`;
 
-        // Convert to EmailPreviewAdapter format for nice rendering
-        const emailData = this.parseGmailMessage(result);
+        // Convert to EmailPreviewAdapter format for nice rendering (use exported function)
+        const emailData = parseGmailMessage(result);
 
         // Store the formatted email data using TempStorage abstraction
         if (!tempStorage) {
@@ -854,8 +1031,8 @@ export class GmailInProcess implements InProcessMCPModule {
         const cacheId = `gmail_email_thread_${threadId}`;
         const cacheFileName = `${cacheId}.json`;
 
-        // Convert messages to EmailPreviewAdapter format
-        const messages = result.messages?.map((msg: any) => this.parseGmailMessage(msg)) || [];
+        // Convert messages to EmailPreviewAdapter format (use exported function)
+        const messages = result.messages?.map((msg: any) => parseGmailMessage(msg)) || [];
 
         const threadData = {
           id: result.id,
@@ -895,4 +1072,62 @@ export class GmailInProcess implements InProcessMCPModule {
       throw error;
     }
   }
+}
+
+/**
+ * Check if a cache ID is a Gmail email ID (not thread)
+ */
+export function isGmailCacheId(cacheId: string): boolean {
+  return cacheId.startsWith('gmail_email_') && !cacheId.startsWith('gmail_email_thread_');
+}
+
+/**
+ * Check if a cache ID is a Gmail thread ID
+ */
+export function isGmailThreadCacheId(cacheId: string): boolean {
+  return cacheId.startsWith('gmail_email_thread_');
+}
+
+/**
+ * Extract Gmail message ID from cache ID
+ * Returns null if not a valid Gmail email cache ID
+ */
+export function getGmailMessageIdFromCacheId(cacheId: string): string | null {
+  if (!isGmailCacheId(cacheId)) return null;
+  return cacheId.replace('gmail_email_', '');
+}
+
+/**
+ * Extract Gmail thread ID from cache ID
+ * Returns null if not a valid Gmail thread cache ID
+ */
+export function getGmailThreadIdFromCacheId(cacheId: string): string | null {
+  if (!isGmailThreadCacheId(cacheId)) return null;
+  return cacheId.replace('gmail_email_thread_', '');
+}
+
+/**
+ * Fetch a Gmail message and format it for caching
+ * This is used by the viewer download endpoint when cache misses occur
+ */
+export async function fetchAndCacheGmailMessage(
+  messageId: string,
+  tokens: Tokens
+): Promise<{ cacheId: string; filename: string; data: Buffer }> {
+  // Validate that we have an access token
+  if (!tokens.access_token) {
+    throw new Error('Gmail access token is required to fetch messages');
+  }
+
+  // Fetch the message from Gmail
+  const result = await getMessage(messageId, tokens, 'full');
+  
+  // Parse into EmailPreviewAdapter format using the exported function
+  const emailData = parseGmailMessage(result);
+  
+  const cacheId = `gmail_email_${messageId}`;
+  const filename = `${cacheId}.json`;
+  const data = Buffer.from(JSON.stringify(emailData, null, 2), 'utf-8');
+  
+  return { cacheId, filename, data };
 }

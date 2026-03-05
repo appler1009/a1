@@ -35,7 +35,7 @@ import { GoogleOAuthHandler } from './auth/google-oauth.js';
 import { startDiscordBot } from './discord/bot.js';
 import { JobRunner } from './scheduler/job-runner.js';
 import { Scheduler } from './scheduler/scheduler.js';
-import { initializeGmailInProcess } from './mcp/in-process/gmail.js';
+import { initializeGmailInProcess, isGmailCacheId, getGmailMessageIdFromCacheId, fetchAndCacheGmailMessage } from './mcp/in-process/gmail.js';
 import { initializeDisplayEmail } from './mcp/in-process/display-email.js';
 import fs from 'fs';
 
@@ -2790,7 +2790,73 @@ fastify.register(async (instance) => {
           }
         }
 
-        // Cache ID not found with any extension
+        // If this is a Gmail cache ID, try to fetch from Gmail API and re-cache
+        if (isGmailCacheId(cacheKey)) {
+          const messageId = getGmailMessageIdFromCacheId(cacheKey);
+          if (messageId) {
+            console.log(`[ViewerDownload] Gmail cache miss, attempting to fetch from Gmail API: ${messageId}`);
+            
+            try {
+              // Get user's Google OAuth token
+              const oauthToken = await authService.getOAuthToken(request.user!.id, 'google');
+              
+              if (!oauthToken) {
+                console.log('[ViewerDownload] No Google OAuth token found for Gmail recovery');
+                return reply.code(403).send({ 
+                  success: false, 
+                  error: { 
+                    message: 'Google authentication required to fetch this email.',
+                    authRequired: true,
+                    authProvider: 'google'
+                  } 
+                });
+              }
+              
+              // Prepare tokens for the Gmail API
+              const tokens = {
+                access_token: oauthToken.accessToken,
+                refresh_token: oauthToken.refreshToken,
+                expiry_date: oauthToken.expiryDate,
+                token_type: 'Bearer',
+              };
+              
+              // Fetch and cache the Gmail message
+              const { filename, data } = await fetchAndCacheGmailMessage(messageId, tokens);
+              
+              // Write the re-cached email to temp storage
+              await tempStorage.writeTempFile(filename, data);
+              console.log(`[ViewerDownload] Successfully re-cached Gmail email: ${filename}`);
+              
+              // Return the cached file
+              const contentType = 'application/json';
+              const previewUrl = `/api/viewer/temp/${filename}`;
+              
+              return reply.send({
+                success: true,
+                data: {
+                  id: cacheKey,
+                  name: filename,
+                  mimeType: contentType,
+                  previewUrl,
+                  fileUri: previewUrl,
+                  absolutePath: previewUrl,
+                  size: data.length,
+                  cached: true,
+                },
+              });
+            } catch (gmailError) {
+              console.error('[ViewerDownload] Gmail recovery failed:', gmailError);
+              return reply.code(500).send({
+                success: false,
+                error: {
+                  message: `Failed to fetch email from Gmail: ${gmailError instanceof Error ? gmailError.message : String(gmailError)}`,
+                  cacheId: cacheKey
+                }
+              });
+            }
+          }
+        }
+
         console.error(`[ViewerDownload] ERROR: Cache ID not found in temp storage: ${cacheKey}`);
         return reply.code(404).send({
           success: false,
