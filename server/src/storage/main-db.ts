@@ -1691,10 +1691,19 @@ export class MainDatabase implements IMainDatabase {
   }
 
   async cancelScheduledJob(id: string, userId: string): Promise<boolean> {
-    const result = this.db.prepare(`
-      UPDATE scheduled_jobs SET status = 'cancelled', updatedAt = ?
-      WHERE id = ? AND userId = ? AND status IN ('pending', 'failed')
-    `).run(new Date().toISOString(), id, userId);
+    // First verify the job exists and belongs to the user
+    const job = await this.getScheduledJob(id);
+    if (!job || job.userId !== userId) {
+      return false;
+    }
+
+    // Only allow cancellation of pending or failed jobs
+    if (job.status !== 'pending' && job.status !== 'failed') {
+      return false;
+    }
+
+    // Actually delete the job from the database
+    const result = this.db.prepare(`DELETE FROM scheduled_jobs WHERE id = ?`).run(id);
     return result.changes > 0;
   }
 

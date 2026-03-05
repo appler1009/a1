@@ -1236,26 +1236,23 @@ export class DynamoDBMainDatabase implements IMainDatabase {
   }
 
   async cancelScheduledJob(id: string, userId: string): Promise<boolean> {
-    const { Attributes } = await this.client.send(new UpdateCommand({
+    // First, get the job to verify it exists and belongs to the user
+    const job = await this.getScheduledJob(id);
+    if (!job || job.userId !== userId) {
+      return false;
+    }
+
+    // Only allow cancellation of pending or failed jobs
+    if (job.status !== 'pending' && job.status !== 'failed') {
+      return false;
+    }
+
+    // Actually delete the job from DynamoDB
+    await this.client.send(new DeleteCommand({
       TableName: this.tables.scheduledJobs,
       Key: { jobId: id },
-      UpdateExpression: 'SET #status = :cancelled, typeStatus = :ts, updatedAt = :now',
-      ConditionExpression: 'userId = :userId AND #status IN (:pending, :failed)',
-      ExpressionAttributeNames: { '#status': 'status' },
-      ExpressionAttributeValues: {
-        ':cancelled': 'cancelled',
-        ':ts': 'once#cancelled', // will be overwritten for recurring by next status update
-        ':now': new Date().toISOString(),
-        ':userId': userId,
-        ':pending': 'pending',
-        ':failed': 'failed',
-      },
-      ReturnValues: 'ALL_NEW',
-    })).catch(err => {
-      if (err.name === 'ConditionalCheckFailedException') return { Attributes: undefined };
-      throw err;
-    });
-    return !!Attributes;
+    }));
+    return true;
   }
 
   async deleteMemoryDb(_dataDir: string, roleId: string): Promise<boolean> {
