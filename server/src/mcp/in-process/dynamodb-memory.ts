@@ -59,7 +59,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
     this.relationsTable = `${tablePrefix}memory_relations`;
     
     const dbClient = new DynamoDBClient({
-      region: process.env.DYNAMODB_REGION || process.env.AWS_REGION || 'us-east-1',
+      region: process.env.DYNAMODB_REGION || process.env.AWS_REGION || 'us-west-2',
       ...(process.env.DYNAMODB_ENDPOINT ? { endpoint: process.env.DYNAMODB_ENDPOINT } : {}),
     });
     

@@ -14,8 +14,6 @@ export interface TempStorageConfig {
   type: 'fs' | 's3';
   root: string;
   bucket?: string;
-  endpoint?: string;
-  region?: string;
 }
 
 export interface TempFileInfo {
@@ -47,8 +45,6 @@ export class TempStorage {
       this.s3Adapter = new S3StorageAdapter({
         type: 's3',
         bucket: config.bucket,
-        endpoint: config.endpoint,
-        region: config.region,
       });
     }
   }
@@ -275,7 +271,5 @@ export function createTempStorage(config: {
     type: storageType,
     root: config.storage.root,
     bucket: config.storage.bucket,
-    endpoint: config.storage.endpoint,
-    region: config.storage.region,
   });
 }

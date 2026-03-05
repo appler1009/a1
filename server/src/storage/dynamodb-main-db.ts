@@ -188,7 +188,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     tablePrefix?: string;
   } = {}) {
     const dynamo = new DynamoDBClient({
-      region: config.region || process.env.DYNAMODB_REGION || process.env.AWS_REGION || 'us-east-1',
+      region: config.region || process.env.DYNAMODB_REGION || process.env.AWS_REGION || 'us-west-2',
       ...(config.endpoint ? { endpoint: config.endpoint } : {}),
     });
     this.client = DynamoDBDocumentClient.from(dynamo, {

@@ -164,8 +164,6 @@ const storage = createStorage({
   type: config.storage.type,
   root: config.storage.root,
   bucket: config.storage.bucket || '',
-  endpoint: config.storage.endpoint,
-  region: config.storage.region,
 });
 
 // Global temp storage instance - handles temp files for cache/downloads

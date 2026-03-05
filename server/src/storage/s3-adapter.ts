@@ -61,7 +61,7 @@ export class S3StorageAdapter extends BaseStorage {
     
     this.client = new S3Client({
       endpoint: config.endpoint,
-      region: config.region || 'us-east-1',
+      region: config.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-west-2',
       forcePathStyle: config.forcePathStyle ?? !!config.endpoint,
       credentials: config.accessKeyId && config.secretAccessKey ? {
         accessKeyId: config.accessKeyId,

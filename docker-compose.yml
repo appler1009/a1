@@ -5,6 +5,7 @@ services:
       - "3000:3000"
     volumes:
       - ./data:/app/data
+      - ~/.aws:/root/.aws:ro
     env_file:
       - ./server/.env.production
     environment:
@@ -13,7 +14,6 @@ services:
       - HOST=0.0.0.0
       - STORAGE_TYPE=s3
       - STORAGE_BUCKET=${STORAGE_BUCKET:-appler-a1}
-      - STORAGE_REGION=${STORAGE_REGION:-us-west-2}
       - STORAGE_ROOT=/app/data
       - AUTH_SECRET=${AUTH_SECRET:-change-me-in-production}
       # LLM provider: grok | openai | anthropic (defaults to grok)

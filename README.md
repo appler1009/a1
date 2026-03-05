@@ -100,10 +100,6 @@ DATABASE_PATH=/app/data/metadata.db
 ```env
 STORAGE_TYPE=s3
 STORAGE_BUCKET=agent
-STORAGE_ENDPOINT=http://minio:9000
-STORAGE_REGION=us-east-1
-STORAGE_ACCESS_KEY=minioadmin
-STORAGE_SECRET_KEY=minioadmin
 ```
 
 ## API Endpoints

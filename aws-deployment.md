@@ -43,7 +43,6 @@ DYNAMODB_REGION=us-east-1
 ```bash
 STORAGE_TYPE=s3
 STORAGE_BUCKET=<your-bucket-name>
-STORAGE_REGION=us-east-1
 # Credentials come from the ECS task IAM role — no keys needed
 ```
 
@@ -150,7 +149,6 @@ Secrets are loaded by the app at startup (not via ECS `secrets` injection). Set 
     { "name": "DYNAMODB_REGION",       "value": "us-east-1" },
     { "name": "STORAGE_TYPE",          "value": "s3" },
     { "name": "STORAGE_BUCKET",        "value": "<bucket>" },
-    { "name": "STORAGE_REGION",        "value": "us-east-1" },
     { "name": "LLM_PROVIDER",          "value": "grok" },
     { "name": "DEFAULT_MODEL",         "value": "grok-4-1-fast-non-reasoning" },
     { "name": "GOOGLE_REDIRECT_URI",   "value": "https://<your-domain>/api/auth/google/callback" },
@@ -234,7 +232,6 @@ Already implemented in `server/src/storage/s3-adapter.ts`. Set:
 ```bash
 STORAGE_TYPE=s3
 STORAGE_BUCKET=<bucket-name>
-STORAGE_REGION=<region>
 ```
 
 Enable **SSE-KMS** on the bucket and block all public access.

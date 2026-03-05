@@ -7,7 +7,7 @@ export interface AppConfig {
   logLevel: string;
   frontendUrl: string;
   database: { type: 'sqlite'; path: string };
-  storage: { type: 'fs' | 'sqlite' | 's3'; root: string; bucket?: string; endpoint?: string; region?: string };
+  storage: { type: 'fs' | 'sqlite' | 's3'; root: string; bucket?: string; };
   auth: { secret: string; sessionTTL: number };
   llm: {
     provider: 'grok' | 'openai' | 'anthropic';
@@ -44,8 +44,6 @@ export function initConfig(): void {
       type: (process.env.STORAGE_TYPE as 'fs' | 'sqlite' | 's3') || 'fs',
       root: process.env.STORAGE_ROOT || './data',
       bucket: process.env.STORAGE_BUCKET || undefined,
-      endpoint: process.env.STORAGE_ENDPOINT || undefined,
-      region: process.env.STORAGE_REGION || undefined,
     },
     auth: { secret: process.env.AUTH_SECRET || uuidv4(), sessionTTL: 30 * 24 * 60 * 60 * 1000 },
     llm: {

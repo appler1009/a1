@@ -140,7 +140,7 @@ export async function loadSecrets(): Promise<void> {
   const region =
     process.env.AWS_REGION ??
     process.env.DYNAMODB_REGION ??
-    'us-east-1';
+    'us-west-2';
 
   const clientConfig: SecretsManagerClientConfig = { region };
 
