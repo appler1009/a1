@@ -19,7 +19,7 @@ export class JobRunner {
     ) => Promise<{ text: string }>,
   ) {}
 
-  async run(job: ScheduledJob): Promise<void> {
+  async run(job: ScheduledJob, saveToChat: boolean = false): Promise<void> {
     const role = await this.db.getRole(job.roleId);
     const systemPrompt = [
       'You are an autonomous AI agent executing a scheduled background task.',
@@ -95,32 +95,36 @@ export class JobRunner {
     }
 
     // Save job output to role's chat history so user sees it when they open chat
-    const now = new Date().toISOString();
-    const shortDesc = job.description.length > 60
-      ? job.description.slice(0, 60) + '…'
-      : job.description;
+    // Only save if saveToChat is true (job was actually triggered to run by evaluator)
+    // or if it's a one-time job
+    if (saveToChat || job.scheduleType === 'once') {
+      const now = new Date().toISOString();
+      const shortDesc = job.description.length > 60
+        ? job.description.slice(0, 60) + '…'
+        : job.description;
 
-    await this.db.saveMessage({
-      id: uuidv4(),
-      userId: job.userId,
-      roleId: job.roleId,
-      groupId: null,
-      from: 'system' as const,
-      content: `*Scheduled job: ${shortDesc}*`,
-      createdAt: now,
-    });
-
-    const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
-    if (lastAssistant?.content) {
       await this.db.saveMessage({
         id: uuidv4(),
         userId: job.userId,
         roleId: job.roleId,
         groupId: null,
         from: 'system' as const,
-        content: lastAssistant.content,
-        createdAt: new Date().toISOString(),
+        content: `*Scheduled job: ${shortDesc}*`,
+        createdAt: now,
       });
+
+      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+      if (lastAssistant?.content) {
+        await this.db.saveMessage({
+          id: uuidv4(),
+          userId: job.userId,
+          roleId: job.roleId,
+          groupId: null,
+          from: 'system' as const,
+          content: lastAssistant.content,
+          createdAt: new Date().toISOString(),
+        });
+      }
     }
 
     // Send Discord notification if bot is configured

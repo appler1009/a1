@@ -50,7 +50,8 @@ export class Scheduler {
       console.log(`[Scheduler] Found ${dueOnce.length} due once-job(s)`);
     }
     for (const job of dueOnce) {
-      await this.runJob(job);
+      // One-time jobs always save to chat since they were explicitly scheduled to run
+      await this.runJob(job, true);
     }
 
     // Step 2: Recurring jobs — AI evaluates which to run
@@ -74,19 +75,22 @@ export class Scheduler {
         }
       }
 
-      // Run triggered jobs
+      // Run triggered jobs — only jobs in 'run' list should execute and save messages
       for (const id of run) {
         const job = recurring.find(j => j.id === id);
-        if (job) await this.runJob(job);
+        if (job) {
+          // Only run job and save messages to chat if it's in the 'run' list
+          await this.runJob(job, true);
+        }
       }
     }
   }
 
-  private async runJob(job: ScheduledJob): Promise<void> {
+  private async runJob(job: ScheduledJob, saveToChat: boolean = false): Promise<void> {
     console.log(`[Scheduler] Running job ${job.id}: ${job.description.slice(0, 60)}`);
     await this.db.updateScheduledJobStatus(job.id, { status: 'running', holdUntil: null });
     try {
-      await this.jobRunner.run(job);
+      await this.jobRunner.run(job, saveToChat);
       const status = job.scheduleType === 'once' ? 'completed' : 'pending';
       await this.db.updateScheduledJobStatus(job.id, {
         status,
