@@ -3,6 +3,20 @@ import type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob, MagicL
 
 export type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob, MagicLinkToken };
 
+export interface TokenUsageRecord {
+  id: string;
+  userId: string;
+  model: string;
+  provider: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number;
+  source: string;
+  createdAt: Date;
+}
+
 export type MessageFrom = 'user' | 'assistant' | 'tool' | 'system';
 
 export type MessageRow = {
@@ -169,4 +183,18 @@ export interface IMainDatabase {
 
   // ---- Memory ----
   deleteMemoryDb(dataDir: string, roleId: string): boolean | Promise<boolean>;
+
+  // ---- Token Usage ----
+  recordTokenUsage(record: {
+    userId: string;
+    model: string;
+    provider: string;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedInputTokens?: number;
+    cacheCreationTokens?: number;
+    source?: string;
+  }): Promise<void>;
+  getTokenUsageByUser(userId: string, options?: { from?: Date; to?: Date; limit?: number }): Promise<TokenUsageRecord[]>;
 }

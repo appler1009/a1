@@ -1322,7 +1322,7 @@ fastify.register(async (instance) => {
       ];
 
       let overview = '';
-      const stream = llmRouter.stream({ messages });
+      const stream = llmRouter.stream({ messages, userId: request.user.id, source: 'memory_overview' });
       for await (const chunk of stream) {
         if (chunk.type === 'text') {
           overview += chunk.content;
@@ -1368,7 +1368,7 @@ fastify.register(async (instance) => {
       ];
 
       let responseText = '';
-      const stream = llmRouter.stream({ messages });
+      const stream = llmRouter.stream({ messages, userId: request.user.id, source: 'memory_removal' });
       for await (const chunk of stream) {
         if (chunk.type === 'text') {
           responseText += chunk.content;
@@ -1430,7 +1430,7 @@ fastify.register(async (instance) => {
       ];
 
       let responseText = '';
-      const stream = llmRouter.stream({ messages });
+      const stream = llmRouter.stream({ messages, userId: request.user.id, source: 'memory_update' });
       for await (const chunk of stream) {
         if (chunk.type === 'text') {
           responseText += chunk.content;
@@ -2249,6 +2249,8 @@ When the user asks to schedule, automate, or run something in the future (e.g. "
           messages,
           model: body.roleId ? undefined : config.llm.defaultModel,
           tools: allowTools && providerTools.length > 0 ? providerTools : undefined,
+          userId: request.user?.id,
+          source: 'chat',
         });
 
         assistantContent = '';
@@ -2503,7 +2505,7 @@ When the user asks to schedule, automate, or run something in the future (e.g. "
           await Promise.race([
             (async () => {
               console.log(`[ChatStream] Creating extraction stream...`);
-              const extractionStream = llmRouter.stream({ messages: extractionMessages, tools: extractionProviderTools });
+              const extractionStream = llmRouter.stream({ messages: extractionMessages, tools: extractionProviderTools, userId: request.user?.id, source: 'memory_extraction' });
               console.log(`[ChatStream] Streaming extraction response...`);
               for await (const chunk of extractionStream) {
                 if (chunk.type === 'tool_call' && chunk.toolCall) {
@@ -4068,6 +4070,22 @@ const start = async () => {
       anthropicKey: config.llm.anthropicApiKey,
       defaultModel: config.llm.defaultModel,
       routerEnabled: config.llm.routerEnabled,
+      onTokensUsed: (event) => {
+        if (!event.userId) return;
+        mainDb.recordTokenUsage({
+          userId: event.userId,
+          model: event.model,
+          provider: event.provider,
+          promptTokens: event.promptTokens,
+          completionTokens: event.completionTokens,
+          totalTokens: event.totalTokens,
+          cachedInputTokens: event.cachedInputTokens,
+          cacheCreationTokens: event.cacheCreationTokens,
+          source: event.source,
+        }).catch(err => {
+          console.error('[TokenUsage] Failed to record token usage:', err);
+        });
+      },
     });
     fastify.log.info({ provider: config.llm.provider, hasGrokKey: !!config.llm.grokApiKey }, 'LLM router initialized');
 

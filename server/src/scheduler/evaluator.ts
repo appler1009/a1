@@ -47,6 +47,8 @@ Both arrays may be empty. Do not include any other text.`;
 
     const response = await llmRouter.complete({
       messages: [{ role: 'user', content: prompt }],
+      userId: jobs[0]?.userId,
+      source: 'evaluator',
     });
 
     console.log(`[Evaluator] AI response (${response.model}):`, response.content);

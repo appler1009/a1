@@ -714,4 +714,48 @@ export async function authRoutes(fastify: FastifyInstance) {
       return reply.redirect(errorUrl.toString());
     }
   });
+
+  // Get token usage for the current calendar month
+  fastify.get('/me/token-usage', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const mainDb = await getMainDatabase(config.storage.root);
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth(), 1);
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const records = await mainDb.getTokenUsageByUser(request.user.id, { from, to });
+
+    const zero = () => ({ promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedInputTokens: 0, cacheCreationTokens: 0 });
+
+    const totals = records.reduce((acc, r) => ({
+      promptTokens: acc.promptTokens + r.promptTokens,
+      completionTokens: acc.completionTokens + r.completionTokens,
+      totalTokens: acc.totalTokens + r.totalTokens,
+      cachedInputTokens: acc.cachedInputTokens + r.cachedInputTokens,
+      cacheCreationTokens: acc.cacheCreationTokens + r.cacheCreationTokens,
+    }), zero());
+
+    const byModel: Record<string, ReturnType<typeof zero>> = {};
+    for (const r of records) {
+      if (!byModel[r.model]) byModel[r.model] = zero();
+      byModel[r.model].promptTokens += r.promptTokens;
+      byModel[r.model].completionTokens += r.completionTokens;
+      byModel[r.model].totalTokens += r.totalTokens;
+      byModel[r.model].cachedInputTokens += r.cachedInputTokens;
+      byModel[r.model].cacheCreationTokens += r.cacheCreationTokens;
+    }
+
+    return reply.send({
+      success: true,
+      data: {
+        month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+        ...totals,
+        byModel,
+        recordCount: records.length,
+      },
+    });
+  });
 }

@@ -199,15 +199,72 @@ function DiscordSettings({ onUpdate: _onUpdate }: DiscordSettingsProps) {
   );
 }
 
+// Pricing per token (rates in $ per million tokens divided by 1M)
+// For Anthropic: promptTokens = non-cached input only (separate from cache reads/writes)
+// For Grok/OpenAI: promptTokens = total input including cached (non-cached = prompt - cachedInput)
+const MODEL_PRICING: Record<string, { input: number; cachedInput: number; cacheCreation: number; output: number }> = {
+  'grok-4-1-fast-non-reasoning': { input: 0.20 / 1e6, cachedInput: 0.05 / 1e6, cacheCreation: 0, output: 0.50 / 1e6 },
+  'claude-haiku-4-5':            { input: 1.00 / 1e6, cachedInput: 0.10 / 1e6, cacheCreation: 1.25 / 1e6, output: 5.00 / 1e6 },
+};
+
+type ModelTokens = { promptTokens: number; completionTokens: number; cachedInputTokens: number; cacheCreationTokens: number };
+
+function getPricing(model: string) {
+  // Exact match first, then prefix match (handles versioned names like claude-haiku-4-5-20251001)
+  if (MODEL_PRICING[model]) return { pricing: MODEL_PRICING[model], isAnthropic: model.startsWith('claude-') };
+  const key = Object.keys(MODEL_PRICING).find(k => model.startsWith(k));
+  if (key) return { pricing: MODEL_PRICING[key], isAnthropic: model.startsWith('claude-') };
+  return null;
+}
+
+function calculateCost(model: string, t: ModelTokens): number | null {
+  const match = getPricing(model);
+  if (!match) return null;
+  const { pricing, isAnthropic } = match;
+  if (isAnthropic) {
+    // promptTokens is already non-cached; cache reads and writes are tracked separately
+    return t.promptTokens * pricing.input
+      + t.cachedInputTokens * pricing.cachedInput
+      + t.cacheCreationTokens * pricing.cacheCreation
+      + t.completionTokens * pricing.output;
+  } else {
+    // promptTokens includes cached tokens; subtract to get non-cached portion
+    const nonCached = Math.max(0, t.promptTokens - t.cachedInputTokens);
+    return nonCached * pricing.input
+      + t.cachedInputTokens * pricing.cachedInput
+      + t.completionTokens * pricing.output;
+  }
+}
+
 function AccountSettings() {
   const { user } = useAuthStore();
   const [displayName, setDisplayName] = React.useState(user?.name || '');
   const [loading, setLoading] = React.useState(false);
   const [savedMessage, setSavedMessage] = React.useState('');
+  const [tokenUsage, setTokenUsage] = React.useState<{
+    month: string;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedInputTokens: number;
+    cacheCreationTokens: number;
+    byModel: Record<string, ModelTokens>;
+  } | null>(null);
+  const [tokenUsageLoading, setTokenUsageLoading] = React.useState(true);
 
   React.useEffect(() => {
     setDisplayName(user?.name || '');
   }, [user?.name]);
+
+  React.useEffect(() => {
+    apiFetch('/api/auth/me/token-usage')
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) setTokenUsage(data.data);
+      })
+      .catch(() => {})
+      .finally(() => setTokenUsageLoading(false));
+  }, []);
 
   const handleSave = async () => {
     setLoading(true);
@@ -278,6 +335,56 @@ function AccountSettings() {
           <p className={`text-xs ${savedMessage.includes('success') ? 'text-green-600' : 'text-red-600'}`}>
             {savedMessage}
           </p>
+        )}
+      </div>
+
+      <div className="mt-4 pt-4 border-t border-border">
+        <label className="text-xs font-medium text-muted-foreground block mb-2">
+          Token Usage — {tokenUsage ? new Date(tokenUsage.month + '-01').toLocaleString('default', { month: 'long', year: 'numeric' }) : 'This Month'}
+        </label>
+        {tokenUsageLoading ? (
+          <p className="text-xs text-muted-foreground">Loading...</p>
+        ) : tokenUsage ? (() => {
+          const totalCost = Object.entries(tokenUsage.byModel).reduce((sum, [model, t]) => {
+            const cost = calculateCost(model, t);
+            return cost !== null ? sum + cost : sum;
+          }, 0);
+          const hasCost = Object.keys(tokenUsage.byModel).some(m => getPricing(m) !== null);
+          return (
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <p className="text-xs text-muted-foreground">Input</p>
+                  <p className="text-sm font-semibold">{tokenUsage.promptTokens.toLocaleString()}</p>
+                </div>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <p className="text-xs text-muted-foreground">Output</p>
+                  <p className="text-sm font-semibold">{tokenUsage.completionTokens.toLocaleString()}</p>
+                </div>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <p className="text-xs text-muted-foreground">Total</p>
+                  <p className="text-sm font-semibold">{tokenUsage.totalTokens.toLocaleString()}</p>
+                  {hasCost && (
+                    <p className="text-xs text-muted-foreground mt-0.5">${totalCost.toFixed(4)}</p>
+                  )}
+                </div>
+              </div>
+              {(tokenUsage.cachedInputTokens > 0 || tokenUsage.cacheCreationTokens > 0) && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-2 text-center">
+                    <p className="text-xs text-muted-foreground">Cache Read</p>
+                    <p className="text-sm font-semibold text-green-600">{tokenUsage.cachedInputTokens.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-2 text-center">
+                    <p className="text-xs text-muted-foreground">Cache Write</p>
+                    <p className="text-sm font-semibold text-yellow-600">{tokenUsage.cacheCreationTokens.toLocaleString()}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })() : (
+          <p className="text-xs text-muted-foreground">No usage data available.</p>
         )}
       </div>
     </div>

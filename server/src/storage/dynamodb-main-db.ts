@@ -14,7 +14,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { v4 as uuidv4 } from 'uuid';
 import type { User, Session, Group, GroupMember, Invitation } from '@local-agent/shared';
-import type { IMainDatabase } from './main-db-interface.js';
+import type { IMainDatabase, TokenUsageRecord } from './main-db-interface.js';
 import type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob } from './main-db.js';
 
 // ============================================================
@@ -38,6 +38,7 @@ function tableNames(prefix: string) {
     magicLinkTokens: `${prefix}magic_link_tokens`,
     memoryEntities: `${prefix}memory_entities`,
     memoryRelations: `${prefix}memory_relations`,
+    tokenUsage: `${prefix}token_usage`,
   };
 }
 
@@ -1412,6 +1413,78 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     } while (lastKey);
 
     return true;
+  }
+
+  // ============================================================
+  // Token Usage
+  // ============================================================
+
+  async recordTokenUsage(record: {
+    userId: string;
+    model: string;
+    provider: string;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedInputTokens?: number;
+    cacheCreationTokens?: number;
+    source?: string;
+  }): Promise<void> {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+    await this.client.send(new PutCommand({
+      TableName: this.tables.tokenUsage,
+      Item: {
+        userId: record.userId,
+        sk: `${now}#${id}`,
+        id,
+        model: record.model,
+        provider: record.provider,
+        promptTokens: record.promptTokens,
+        completionTokens: record.completionTokens,
+        totalTokens: record.totalTokens,
+        cachedInputTokens: record.cachedInputTokens ?? 0,
+        cacheCreationTokens: record.cacheCreationTokens ?? 0,
+        source: record.source ?? 'chat',
+        createdAt: now,
+      },
+    }));
+  }
+
+  async getTokenUsageByUser(userId: string, options?: { from?: Date; to?: Date; limit?: number }): Promise<TokenUsageRecord[]> {
+    const params: QueryCommandInput = {
+      TableName: this.tables.tokenUsage,
+      KeyConditionExpression: 'userId = :userId',
+      ExpressionAttributeValues: { ':userId': userId },
+      ScanIndexForward: false,
+    };
+
+    if (options?.from || options?.to) {
+      const from = options?.from?.toISOString() ?? '0000-00-00';
+      const to = options?.to?.toISOString() ?? '9999-99-99';
+      params.KeyConditionExpression += ' AND sk BETWEEN :from AND :to';
+      (params.ExpressionAttributeValues as Record<string, unknown>)[':from'] = from;
+      (params.ExpressionAttributeValues as Record<string, unknown>)[':to'] = `${to}~`;
+    }
+
+    if (options?.limit) {
+      params.Limit = options.limit;
+    }
+
+    const resp = await this.client.send(new QueryCommand(params));
+    return (resp.Items ?? []).map(item => ({
+      id: item.id as string,
+      userId: item.userId as string,
+      model: item.model as string,
+      provider: item.provider as string,
+      promptTokens: item.promptTokens as number,
+      completionTokens: item.completionTokens as number,
+      totalTokens: item.totalTokens as number,
+      cachedInputTokens: (item.cachedInputTokens as number) ?? 0,
+      cacheCreationTokens: (item.cacheCreationTokens as number) ?? 0,
+      source: item.source as string,
+      createdAt: new Date(item.createdAt as string),
+    }));
   }
 
   // ============================================================

@@ -64,6 +64,8 @@ export class AnthropicProvider implements LLMProvider {
         prompt: response.usage.input_tokens,
         completion: response.usage.output_tokens,
         total: response.usage.input_tokens + response.usage.output_tokens,
+        cachedInput: (response.usage as any).cache_read_input_tokens || 0,
+        cacheCreation: (response.usage as any).cache_creation_input_tokens || 0,
       },
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     };
@@ -97,7 +99,7 @@ export class AnthropicProvider implements LLMProvider {
       }
     }
 
-    // Get the final message to extract tool calls
+    // Get the final message to extract tool calls and usage
     const finalMessage = await stream.finalMessage();
 
     // Yield tool calls from the final message
@@ -114,6 +116,17 @@ export class AnthropicProvider implements LLMProvider {
         };
       }
     }
+
+    yield {
+      type: 'usage',
+      tokens: {
+        prompt: finalMessage.usage.input_tokens,
+        completion: finalMessage.usage.output_tokens,
+        total: finalMessage.usage.input_tokens + finalMessage.usage.output_tokens,
+        cachedInput: (finalMessage.usage as any).cache_read_input_tokens || 0,
+        cacheCreation: (finalMessage.usage as any).cache_creation_input_tokens || 0,
+      },
+    };
 
     yield { type: 'done' };
   }

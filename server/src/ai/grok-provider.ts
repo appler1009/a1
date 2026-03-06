@@ -49,6 +49,7 @@ export class GrokProvider implements LLMProvider {
         prompt: response.usage?.prompt_tokens ?? 0,
         completion: response.usage?.completion_tokens ?? 0,
         total: response.usage?.total_tokens ?? 0,
+        cachedInput: response.usage?.prompt_tokens_details?.cached_tokens ?? 0,
       },
       toolCalls: choice.message.tool_calls?.map(tc => ({
         id: tc.id,
@@ -74,11 +75,13 @@ export class GrokProvider implements LLMProvider {
       temperature: request.temperature ?? 0.7,
       max_tokens: request.maxTokens ?? 4096,
       stream: true,
+      stream_options: { include_usage: true },
       tools: request.tools,
     });
 
     let currentToolCall: Partial<ToolCall> | null = null;
     let toolCallArgs = '';
+    let usageTokens: { prompt: number; completion: number; total: number; cachedInput?: number } | undefined;
 
     const parseToolArgs = (argsString: string): Record<string, unknown> => {
       if (!argsString.trim()) return {};
@@ -133,6 +136,15 @@ export class GrokProvider implements LLMProvider {
     };
 
     for await (const chunk of stream) {
+      if (chunk.usage) {
+        usageTokens = {
+          prompt: chunk.usage.prompt_tokens,
+          completion: chunk.usage.completion_tokens,
+          total: chunk.usage.total_tokens,
+          cachedInput: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
+        };
+      }
+
       const delta = chunk.choices[0]?.delta;
 
       if (!delta) continue;
@@ -183,6 +195,10 @@ export class GrokProvider implements LLMProvider {
           arguments: parsedArgs,
         },
       };
+    }
+
+    if (usageTokens) {
+      yield { type: 'usage', tokens: usageTokens };
     }
 
     yield { type: 'done' };

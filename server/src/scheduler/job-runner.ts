@@ -63,7 +63,7 @@ export class JobRunner {
 
     for (let i = 0; i < JobRunner.MAX_ITERATIONS; i++) {
       console.log(`[JobRunner] Job ${job.id} — iteration ${i + 1}/${JobRunner.MAX_ITERATIONS}`);
-      const response = await this.llmRouter.complete({ messages, tools });
+      const response = await this.llmRouter.complete({ messages, tools, userId: job.userId, source: 'scheduler' });
       const toolCalls = response.toolCalls || [];
 
       if (response.content) {

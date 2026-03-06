@@ -346,6 +346,21 @@ const tables: Array<CreateTableCommandInput & { ttlAttribute?: string }> = [
     ],
   },
 
+  // ── token_usage ────────────────────────────────────────────────────────────
+  // PK=userId, SK=sk (createdAt#id) for time-sorted per-user queries
+  {
+    TableName: t('token_usage'),
+    BillingMode: 'PAY_PER_REQUEST',
+    AttributeDefinitions: [
+      { AttributeName: 'userId', AttributeType: 'S' },
+      { AttributeName: 'sk',     AttributeType: 'S' },
+    ],
+    KeySchema: [
+      { AttributeName: 'userId', KeyType: 'HASH' },
+      { AttributeName: 'sk',     KeyType: 'RANGE' },
+    ],
+  },
+
   // ── magic_link_tokens ───────────────────────────────────────────────────────
   // Stores magic link tokens for email authentication
   // PK=tokenId (the actual token), GSI=email-index for querying by email

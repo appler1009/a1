@@ -3,7 +3,7 @@ import type { User, Session, Group, GroupMember, Invitation } from '@local-agent
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
-import type { IMainDatabase } from './main-db-interface.js';
+import type { IMainDatabase, TokenUsageRecord } from './main-db-interface.js';
 
 /**
  * Role definition stored in the main database
@@ -283,6 +283,24 @@ export class MainDatabase implements IMainDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_magic_link_token ON magic_link_tokens(token);
       CREATE INDEX IF NOT EXISTS idx_magic_link_email ON magic_link_tokens(email);
+
+      -- Token usage tracking table
+      CREATE TABLE IF NOT EXISTS token_usage (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        model TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        promptTokens INTEGER NOT NULL DEFAULT 0,
+        completionTokens INTEGER NOT NULL DEFAULT 0,
+        totalTokens INTEGER NOT NULL DEFAULT 0,
+        cachedInputTokens INTEGER NOT NULL DEFAULT 0,
+        cacheCreationTokens INTEGER NOT NULL DEFAULT 0,
+        source TEXT NOT NULL DEFAULT 'chat',
+        createdAt TEXT NOT NULL,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_token_usage_user ON token_usage(userId, createdAt);
     `);
 
     // Migrate old MCP server IDs to new package names
@@ -1845,6 +1863,90 @@ export class MainDatabase implements IMainDatabase {
       return true;
     }
     return false;
+  }
+
+  // ============================================
+  // Token Usage
+  // ============================================
+
+  async recordTokenUsage(record: {
+    userId: string;
+    model: string;
+    provider: string;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedInputTokens?: number;
+    cacheCreationTokens?: number;
+    source?: string;
+  }): Promise<void> {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO token_usage (id, userId, model, provider, promptTokens, completionTokens, totalTokens, cachedInputTokens, cacheCreationTokens, source, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      record.userId,
+      record.model,
+      record.provider,
+      record.promptTokens,
+      record.completionTokens,
+      record.totalTokens,
+      record.cachedInputTokens ?? 0,
+      record.cacheCreationTokens ?? 0,
+      record.source ?? 'chat',
+      now
+    );
+  }
+
+  async getTokenUsageByUser(userId: string, options?: { from?: Date; to?: Date; limit?: number }): Promise<TokenUsageRecord[]> {
+    let query = 'SELECT * FROM token_usage WHERE userId = ?';
+    const params: (string | number)[] = [userId];
+
+    if (options?.from) {
+      query += ' AND createdAt >= ?';
+      params.push(options.from.toISOString());
+    }
+    if (options?.to) {
+      query += ' AND createdAt <= ?';
+      params.push(options.to.toISOString());
+    }
+
+    query += ' ORDER BY createdAt DESC';
+
+    if (options?.limit) {
+      query += ' LIMIT ?';
+      params.push(options.limit);
+    }
+
+    const rows = this.db.prepare(query).all(...params) as Array<{
+      id: string;
+      userId: string;
+      model: string;
+      provider: string;
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+      cachedInputTokens: number;
+      cacheCreationTokens: number;
+      source: string;
+      createdAt: string;
+    }>;
+
+    return rows.map(row => ({
+      id: row.id,
+      userId: row.userId,
+      model: row.model,
+      provider: row.provider,
+      promptTokens: row.promptTokens,
+      completionTokens: row.completionTokens,
+      totalTokens: row.totalTokens,
+      cachedInputTokens: row.cachedInputTokens,
+      cacheCreationTokens: row.cacheCreationTokens,
+      source: row.source,
+      createdAt: new Date(row.createdAt),
+    }));
   }
 }
 

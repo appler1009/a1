@@ -84,6 +84,8 @@ export interface LLMRequest {
   maxTokens?: number;
   stream?: boolean;
   tools?: MCPToolDefinition[];
+  userId?: string;
+  source?: string;
 }
 
 export interface LLMResponse {
@@ -93,15 +95,24 @@ export interface LLMResponse {
     prompt: number;
     completion: number;
     total: number;
+    cachedInput?: number;
+    cacheCreation?: number;
   };
   toolCalls?: ToolCall[];
 }
 
 export interface LLMStreamChunk {
-  type: 'text' | 'tool_call' | 'done' | 'error';
+  type: 'text' | 'tool_call' | 'done' | 'error' | 'usage';
   content?: string;
   toolCall?: ToolCall;
   error?: string;
+  tokens?: {
+    prompt: number;
+    completion: number;
+    total: number;
+    cachedInput?: number;
+    cacheCreation?: number;
+  };
 }
 
 export interface ToolCall {

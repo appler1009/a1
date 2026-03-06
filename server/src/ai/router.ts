@@ -4,6 +4,18 @@ import { GrokProvider } from './grok-provider.js';
 import { OpenAIProvider } from './openai-provider.js';
 import { AnthropicProvider } from './anthropic-provider.js';
 
+export interface TokenUsageEvent {
+  userId?: string;
+  model: string;
+  provider: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number;
+  source?: string;
+}
+
 export interface LLMRouterConfig {
   provider?: 'grok' | 'openai' | 'anthropic';
   grokKey?: string;
@@ -15,6 +27,7 @@ export interface LLMRouterConfig {
     keywords: string[];
     model: string;
   }>;
+  onTokensUsed?: (event: TokenUsageEvent) => void;
 }
 
 /**
@@ -26,6 +39,8 @@ export class LLMRouter {
   private defaultModel: string;
   private routerEnabled: boolean;
   private rules: Array<{ keywords: string[]; model: string }>;
+  private onTokensUsed?: (event: TokenUsageEvent) => void;
+  private providerName: string;
 
   constructor(config: LLMRouterConfig) {
     // Determine which provider to use
@@ -62,8 +77,10 @@ export class LLMRouter {
       throw new Error(`Unknown provider: ${providerType}`);
     }
 
+    this.providerName = providerType;
     this.routerEnabled = config.routerEnabled ?? false;
     this.rules = config.rules || [];
+    this.onTokensUsed = config.onTokensUsed;
   }
 
   /**
@@ -92,7 +109,21 @@ export class LLMRouter {
    */
   async complete(request: LLMRequest): Promise<LLMResponse> {
     const model = request.model || this.selectModel(request.messages[request.messages.length - 1]?.content || '');
-    return this.provider.complete({ ...request, model });
+    const response = await this.provider.complete({ ...request, model });
+    if (this.onTokensUsed && response.tokens) {
+      this.onTokensUsed({
+        userId: request.userId,
+        model: response.model,
+        provider: this.providerName,
+        promptTokens: response.tokens.prompt,
+        completionTokens: response.tokens.completion,
+        totalTokens: response.tokens.total,
+        cachedInputTokens: response.tokens.cachedInput ?? 0,
+        cacheCreationTokens: response.tokens.cacheCreation ?? 0,
+        source: request.source,
+      });
+    }
+    return response;
   }
 
   /**
@@ -100,7 +131,22 @@ export class LLMRouter {
    */
   async *stream(request: LLMRequest): AsyncGenerator<LLMStreamChunk> {
     const model = request.model || this.selectModel(request.messages[request.messages.length - 1]?.content || '');
-    yield* this.provider.stream({ ...request, model });
+    for await (const chunk of this.provider.stream({ ...request, model })) {
+      if (chunk.type === 'usage' && chunk.tokens && this.onTokensUsed) {
+        this.onTokensUsed({
+          userId: request.userId,
+          model,
+          provider: this.providerName,
+          promptTokens: chunk.tokens.prompt,
+          completionTokens: chunk.tokens.completion,
+          totalTokens: chunk.tokens.total,
+          cachedInputTokens: chunk.tokens.cachedInput ?? 0,
+          cacheCreationTokens: chunk.tokens.cacheCreation ?? 0,
+          source: request.source,
+        });
+      }
+      yield chunk;
+    }
   }
 
   /**
