@@ -42,6 +42,18 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('/react-pdf') || id.includes('/pdfjs-dist')) return 'vendor-pdf';
+          if (id.includes('/react-markdown') || id.includes('/marked') || id.includes('/remark-') || id.includes('/rehype-') || id.includes('/micromark') || id.includes('/mdast-') || id.includes('/unist-') || id.includes('/hast-util')) return 'vendor-markdown';
+          if (id.includes('/react-dom') || id.includes('/react-router')) return 'vendor-react';
+          if (id.includes('/lucide-react') || id.includes('/react-resizable-panels') || id.includes('/@radix-ui/')) return 'vendor-ui';
+          if (id.includes('/zustand')) return 'vendor-state';
+        },
+      },
+    },
   },
   test: {
     globals: true,

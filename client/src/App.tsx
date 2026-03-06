@@ -1,18 +1,20 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import { useAuthStore, useEnvironmentStore, useUIStore, useRolesStore } from './store';
 import { initializePreviewAdapters } from './lib/adapters';
-import { LoginPage } from './pages/LoginPage';
-import { LoginVerifyPage } from './pages/LoginVerifyPage';
-import { OnboardingPage } from './pages/OnboardingPage';
-import { JoinPage } from './pages/JoinPage';
-import { OAuthCallbackPage } from './pages/OAuthCallbackPage';
 import { Sidebar } from './components/Sidebar';
 import { ChatPane } from './components/panes/ChatPane';
 import { ViewerPane, MCPManagerDialog } from './components/panes/ViewerPane';
 import { OnboardingPane } from './components/panes/OnboardingPane';
 import { useIsMobile } from './hooks/useIsMobile';
+
+// Lazy-load route-only pages to keep the main bundle lean
+const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
+const LoginVerifyPage = lazy(() => import('./pages/LoginVerifyPage').then(m => ({ default: m.LoginVerifyPage })));
+const OnboardingPage = lazy(() => import('./pages/OnboardingPage').then(m => ({ default: m.OnboardingPage })));
+const JoinPage = lazy(() => import('./pages/JoinPage').then(m => ({ default: m.JoinPage })));
+const OAuthCallbackPage = lazy(() => import('./pages/OAuthCallbackPage').then(m => ({ default: m.OAuthCallbackPage })));
 
 function MainApp() {
   const isMobile = useIsMobile();
@@ -20,7 +22,6 @@ function MainApp() {
   const { showMcpManager, setShowMcpManager, viewerFile, setViewerFile, mobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
   const { currentRole, rolesLoaded } = useRolesStore();
 
-  // Handle keyboard shortcuts: CMD+SHIFT+, to open Settings, ESC to close
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
@@ -43,7 +44,6 @@ function MainApp() {
     return <Navigate to="/login" replace />;
   }
 
-  // Show onboarding when roles are loaded but no role is selected
   const showOnboarding = rolesLoaded && !currentRole;
 
   return (
@@ -52,10 +52,8 @@ function MainApp() {
 
       <main className="flex-1 flex flex-col min-w-0">
         {showOnboarding ? (
-          /* Full-screen onboarding */
           <OnboardingPane />
         ) : isMobile ? (
-          /* Mobile layout: single pane, viewer as overlay */
           <div className="flex-1 h-full overflow-hidden">
             <ChatPane />
             {viewerFile && (
@@ -65,7 +63,6 @@ function MainApp() {
             )}
           </div>
         ) : (
-          /* Desktop layout: resizable panels */
           <div className="flex-1 h-full overflow-hidden">
             <PanelGroup direction="horizontal" autoSaveId="main-panels">
               <Panel defaultSize={50} minSize={30} className="h-full overflow-hidden">
@@ -82,7 +79,6 @@ function MainApp() {
         )}
       </main>
 
-      {/* Mobile sidebar backdrop */}
       {isMobile && mobileSidebarOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-[50]"
@@ -90,7 +86,6 @@ function MainApp() {
         />
       )}
 
-      {/* MCP Manager Modal */}
       {showMcpManager && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <MCPManagerDialog
@@ -108,14 +103,10 @@ function App() {
   const user = useAuthStore((state) => state.user);
 
   useEffect(() => {
-    // Initialize preview adapters on app startup
     initializePreviewAdapters();
-
-    // Fetch environment info on app startup
     fetchEnvironment();
   }, [fetchEnvironment]);
 
-  // Fetch roles when user is authenticated
   useEffect(() => {
     if (user) {
       console.log('[App] User authenticated, fetching roles...');
@@ -125,15 +116,17 @@ function App() {
 
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/login/verify" element={<LoginVerifyPage />} />
-        <Route path="/onboarding" element={<OnboardingPage />} />
-        <Route path="/join" element={<JoinPage />} />
-        <Route path="/auth/google/callback" element={<OAuthCallbackPage />} />
-        <Route path="/oauth/callback" element={<OAuthCallbackPage />} />
-        <Route path="/*" element={<MainApp />} />
-      </Routes>
+      <Suspense fallback={null}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/login/verify" element={<LoginVerifyPage />} />
+          <Route path="/onboarding" element={<OnboardingPage />} />
+          <Route path="/join" element={<JoinPage />} />
+          <Route path="/auth/google/callback" element={<OAuthCallbackPage />} />
+          <Route path="/oauth/callback" element={<OAuthCallbackPage />} />
+          <Route path="/*" element={<MainApp />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 }
