@@ -3,6 +3,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { TopBanner } from '../TopBanner';
 import { apiFetch } from '../../lib/api';
+import { getPricing as getModelPricing, calculateCost as calcCost, type TokenCounts } from '../../lib/token-pricing';
 import { previewAdapterRegistry } from '../../lib/preview-adapters';
 
 interface MCPServer {
@@ -199,41 +200,14 @@ function DiscordSettings({ onUpdate: _onUpdate }: DiscordSettingsProps) {
   );
 }
 
-// Pricing per token (rates in $ per million tokens divided by 1M)
-// For Anthropic: promptTokens = non-cached input only (separate from cache reads/writes)
-// For Grok/OpenAI: promptTokens = total input including cached (non-cached = prompt - cachedInput)
-const MODEL_PRICING: Record<string, { input: number; cachedInput: number; cacheCreation: number; output: number }> = {
-  'grok-4-1-fast-non-reasoning': { input: 0.20 / 1e6, cachedInput: 0.05 / 1e6, cacheCreation: 0, output: 0.50 / 1e6 },
-  'claude-haiku-4-5':            { input: 1.00 / 1e6, cachedInput: 0.10 / 1e6, cacheCreation: 1.25 / 1e6, output: 5.00 / 1e6 },
-};
-
-type ModelTokens = { promptTokens: number; completionTokens: number; cachedInputTokens: number; cacheCreationTokens: number };
+type ModelTokens = TokenCounts;
 
 function getPricing(model: string) {
-  // Exact match first, then prefix match (handles versioned names like claude-haiku-4-5-20251001)
-  if (MODEL_PRICING[model]) return { pricing: MODEL_PRICING[model], isAnthropic: model.startsWith('claude-') };
-  const key = Object.keys(MODEL_PRICING).find(k => model.startsWith(k));
-  if (key) return { pricing: MODEL_PRICING[key], isAnthropic: model.startsWith('claude-') };
-  return null;
+  return getModelPricing(model);
 }
 
 function calculateCost(model: string, t: ModelTokens): number | null {
-  const match = getPricing(model);
-  if (!match) return null;
-  const { pricing, isAnthropic } = match;
-  if (isAnthropic) {
-    // promptTokens is already non-cached; cache reads and writes are tracked separately
-    return t.promptTokens * pricing.input
-      + t.cachedInputTokens * pricing.cachedInput
-      + t.cacheCreationTokens * pricing.cacheCreation
-      + t.completionTokens * pricing.output;
-  } else {
-    // promptTokens includes cached tokens; subtract to get non-cached portion
-    const nonCached = Math.max(0, t.promptTokens - t.cachedInputTokens);
-    return nonCached * pricing.input
-      + t.cachedInputTokens * pricing.cachedInput
-      + t.completionTokens * pricing.output;
-  }
+  return calcCost(model, t);
 }
 
 function AccountSettings() {
