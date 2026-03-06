@@ -1,11 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2, BookmarkPlus, Check, Menu } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useAuthStore, useRolesStore, useChatStore, useUIStore, type ViewerFile, type Message } from '../../store';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { MessageItem } from '../MessageItem';
 import { TopBanner } from '../TopBanner';
 import { apiFetch } from '../../lib/api';
 import { formatToolName, parseGoogleDriveSearchResult, parseDisplayEmailMarker } from '../../lib/chat-utils';
+
+const remarkPlugins = [remarkGfm];
 
 /**
  * Parse preview file tags from model response
@@ -856,7 +860,9 @@ export function ChatPane() {
             {streaming && currentContent && (
               <div className="flex justify-start">
                 <div className="max-w-[80%] rounded-lg px-4 py-2 bg-muted">
-                  <p className="whitespace-pre-wrap">{currentContent}</p>
+                  <div className="prose prose-sm dark:prose-invert max-w-none leading-[1.5]">
+                    <ReactMarkdown remarkPlugins={remarkPlugins}>{currentContent}</ReactMarkdown>
+                  </div>
                 </div>
               </div>
             )}

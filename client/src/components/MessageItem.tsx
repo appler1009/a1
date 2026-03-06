@@ -1,7 +1,9 @@
-import { memo, ReactNode } from 'react';
+import { memo, ReactNode, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Message } from '../store';
+
+const remarkPlugins = [remarkGfm];
 import { useUIStore, type ViewerFile } from '../store';
 import { apiFetch } from '../lib/api';
 
@@ -18,10 +20,12 @@ function TextWithHighlight({ children, keyword }: { children: ReactNode; keyword
     return <>{children}</>;
   }
 
-  // Escape special regex characters
-  const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(`(${escapedKeyword})`, 'gi');
-  const parts = children.split(regex);
+  // Memoize highlighted parts to avoid re-splitting on every render
+  const parts = useMemo(() => {
+    const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escapedKeyword})`, 'gi');
+    return children.split(regex);
+  }, [children, keyword]);
 
   return (
     <>
@@ -82,6 +86,43 @@ export const MessageItem = memo(function MessageItem({ message, highlightKeyword
 
   const isToolCall = message.from === 'tool';
 
+  // Memoize markdown components to avoid recreating them on every render
+  const markdownComponents = useMemo(() => ({
+    text: ({ children }: { children: ReactNode }) => (
+      <TextWithHighlight keyword={highlightKeyword}>
+        {children}
+      </TextWithHighlight>
+    ),
+    a: ({ href, children, ...props }: any) => {
+      // Check if this is a preview-file link
+      // Format: [preview-file:filename.ext](url)
+      const linkText = children?.toString() || '';
+      if (linkText.startsWith('preview-file:')) {
+        let filename = linkText.replace('preview-file:', '');
+        // Only remove .json extension for email cache files (not Google Drive .json files)
+        // Email cache URLs contain "_email" in the cache ID pattern (e.g., gmail_email, outlook_email)
+        const isEmailCache = href?.toLowerCase().includes('_email');
+        if (isEmailCache && filename.toLowerCase().endsWith('.json') && filename.length > 5) {
+          filename = filename.slice(0, -5);
+        }
+        return (
+          <button
+            onClick={() => handlePreviewFileClick(filename, href || '')}
+            className="text-blue-500 hover:text-blue-600 underline cursor-pointer bg-transparent border-0 p-0 font-inherit"
+          >
+            {filename}
+          </button>
+        );
+      }
+      // Regular link
+      return (
+        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+          {children}
+        </a>
+      );
+    },
+  } as any), [highlightKeyword, handlePreviewFileClick]);
+
   return (
     <div
       data-message-id={message.id}
@@ -100,43 +141,8 @@ export const MessageItem = memo(function MessageItem({ message, highlightKeyword
       >
         <div className={isToolCall ? 'system-message' : `prose prose-sm dark:prose-invert max-w-none leading-[1.5]`}>
           <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              // Highlight keywords in text nodes
-              text: ({ children }) => (
-                <TextWithHighlight keyword={highlightKeyword}>
-                  {children}
-                </TextWithHighlight>
-              ),
-              a: ({ href, children, ...props }) => {
-                // Check if this is a preview-file link
-                // Format: [preview-file:filename.ext](url)
-                const linkText = children?.toString() || '';
-                if (linkText.startsWith('preview-file:')) {
-                  let filename = linkText.replace('preview-file:', '');
-                  // Only remove .json extension for email cache files (not Google Drive .json files)
-                  // Email cache URLs contain "_email" in the cache ID pattern (e.g., gmail_email, outlook_email)
-                  const isEmailCache = href?.toLowerCase().includes('_email');
-                  if (isEmailCache && filename.toLowerCase().endsWith('.json') && filename.length > 5) {
-                    filename = filename.slice(0, -5);
-                  }
-                  return (
-                    <button
-                      onClick={() => handlePreviewFileClick(filename, href || '')}
-                      className="text-blue-500 hover:text-blue-600 underline cursor-pointer bg-transparent border-0 p-0 font-inherit"
-                    >
-                      {filename}
-                    </button>
-                  );
-                }
-                // Regular link
-                return (
-                  <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                    {children}
-                  </a>
-                );
-              },
-            }}
+            remarkPlugins={remarkPlugins}
+            components={markdownComponents}
           >
             {message.content}
           </ReactMarkdown>
