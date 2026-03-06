@@ -212,7 +212,7 @@ export function Sidebar() {
       <div className="p-4 border-t border-border">
         {(isMobile || sidebarOpen) && (
           <>
-            {environment && (
+            {environment && environment.env !== 'production' && (
               <div className="mb-4">
                 <span className={`px-2 py-1 rounded text-xs font-medium ${getEnvironmentBadgeClass(environment.env)}`}>
                   {environment.env.toUpperCase()}

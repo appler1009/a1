@@ -127,15 +127,18 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-card rounded-lg shadow-lg w-[600px] max-w-[90vw] max-h-[80vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center gap-2 px-6 py-4 border-b border-border shrink-0">
-          <Brain className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold flex-1 truncate">{role.name} — Memory</h2>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-muted rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+        <div className="px-6 py-4 border-b border-border shrink-0">
+          <div className="flex items-center gap-2 mb-2">
+            <Brain className="w-5 h-5 text-primary" />
+            <h2 className="text-lg font-semibold flex-1 truncate">{role.name} — Memory</h2>
+            <button
+              onClick={onClose}
+              className="p-1 hover:bg-muted rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground pl-7">Summary of stored memories. Select text to edit or remove.</p>
         </div>
 
         {/* Body */}
