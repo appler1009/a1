@@ -14,3 +14,4 @@ export { GmailInProcess, initializeGmailInProcess, isGmailCacheId, isGmailThread
 export { RoleManagerInProcess } from './role-manager.js';
 export { AlphaVantageInProcess } from './alpha-vantage.js';
 export { TwelveDataInProcess } from './twelve-data.js';
+export { FetchUrlInProcess } from './fetch-url.js';

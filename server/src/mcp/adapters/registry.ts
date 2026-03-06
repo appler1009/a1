@@ -13,6 +13,7 @@ import { RoleManagerInProcess } from '../in-process/role-manager.js';
 import { AlphaVantageInProcess } from '../in-process/alpha-vantage.js';
 import { TwelveDataInProcess } from '../in-process/twelve-data.js';
 import { SchedulerInProcess } from '../in-process/scheduler.js';
+import { FetchUrlInProcess } from '../in-process/fetch-url.js';
 import { getMainDatabaseSync } from '../../storage/index.js';
 
 /**
@@ -170,6 +171,10 @@ class AdapterRegistry {
       const mainDb = getMainDatabaseSync();
       return new SchedulerInProcess(mainDb, userId, tokenData?.roleId || '');
     });
+
+    // Fetch URL - in-process web fetching with HTML→markdown conversion
+    this.registerInProcess('fetch-url', () => new FetchUrlInProcess());
+    this.registerInProcess('Fetch URL', () => new FetchUrlInProcess());
 
     // Future: this.register('github', GithubAdapter);
     // Future: this.register('brave-search', BraveSearchAdapter);

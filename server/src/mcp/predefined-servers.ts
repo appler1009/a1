@@ -203,6 +203,19 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     inProcess: true,
   },
 
+  {
+    id: 'fetch-url',
+    name: 'Fetch URL',
+    description: 'Fetch web pages and APIs by URL, converting HTML/JSON/text responses to markdown. Supports form extraction and submission.',
+    command: '',
+    args: [],
+    auth: {
+      provider: 'none',
+    },
+    hidden: true, // Hidden from UI - automatically available
+    inProcess: true,
+  },
+
   // DISABLED: Testing email preview with cache IDs instead
   // {
   //   id: 'display-email',
