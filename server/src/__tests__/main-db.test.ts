@@ -458,3 +458,310 @@ describe('MCP Server Configs', () => {
     expect(await db.getMCPServerConfig('del-server')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+describe('Settings', () => {
+  it('sets and gets a string setting', async () => {
+    await db.setSetting('theme', 'dark');
+    const val = await db.getSetting<string>('theme');
+    expect(val).toBe('dark');
+  });
+
+  it('sets and gets an object setting', async () => {
+    await db.setSetting('prefs', { fontSize: 14, lang: 'en' });
+    const val = await db.getSetting<{ fontSize: number; lang: string }>('prefs');
+    expect(val?.fontSize).toBe(14);
+    expect(val?.lang).toBe('en');
+  });
+
+  it('returns null for unknown key', async () => {
+    expect(await db.getSetting('no-such-key')).toBeNull();
+  });
+
+  it('overwrites an existing setting', async () => {
+    await db.setSetting('color', 'blue');
+    await db.setSetting('color', 'red');
+    expect(await db.getSetting('color')).toBe('red');
+  });
+
+  it('deletes a setting', async () => {
+    await db.setSetting('tmp', 'x');
+    await db.deleteSetting('tmp');
+    expect(await db.getSetting('tmp')).toBeNull();
+  });
+
+  it('getAllSettings returns all stored settings', async () => {
+    await db.setSetting('s1', 1);
+    await db.setSetting('s2', 2);
+    const all = await db.getAllSettings();
+    expect(all['s1']).toBe(1);
+    expect(all['s2']).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Skills
+// ---------------------------------------------------------------------------
+
+describe('Skills', () => {
+  it('upserts and retrieves a skill', async () => {
+    await db.upsertSkill({ id: 'sk-1', name: 'Greet', content: 'Say hello', enabled: true });
+    const skill = await db.getSkill('sk-1');
+    expect(skill).not.toBeNull();
+    expect(skill!.name).toBe('Greet');
+    expect(skill!.content).toBe('Say hello');
+    expect(skill!.enabled).toBe(true);
+  });
+
+  it('returns null for unknown skill id', async () => {
+    expect(await db.getSkill('nonexistent')).toBeNull();
+  });
+
+  it('updates a skill on second upsert', async () => {
+    await db.upsertSkill({ id: 'sk-2', name: 'Original', content: 'v1', enabled: true });
+    await db.upsertSkill({ id: 'sk-2', name: 'Updated', content: 'v2', enabled: false });
+    const skill = await db.getSkill('sk-2');
+    expect(skill!.name).toBe('Updated');
+    expect(skill!.content).toBe('v2');
+    expect(skill!.enabled).toBe(false);
+  });
+
+  it('listSkills returns all skills', async () => {
+    await db.upsertSkill({ id: 'ls-1', name: 'A', content: 'a', enabled: true });
+    await db.upsertSkill({ id: 'ls-2', name: 'B', content: 'b', enabled: false });
+    const all = await db.listSkills();
+    const ids = all.map(s => s.id);
+    expect(ids).toContain('ls-1');
+    expect(ids).toContain('ls-2');
+  });
+
+  it('listSkills with enabledOnly=true filters disabled skills', async () => {
+    await db.upsertSkill({ id: 'en-1', name: 'Enabled', content: 'e', enabled: true });
+    await db.upsertSkill({ id: 'en-2', name: 'Disabled', content: 'd', enabled: false });
+    const enabled = await db.listSkills(true);
+    const ids = enabled.map(s => s.id);
+    expect(ids).toContain('en-1');
+    expect(ids).not.toContain('en-2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OAuth Tokens
+// ---------------------------------------------------------------------------
+
+describe('OAuth Tokens', () => {
+  it('stores and retrieves an OAuth token', async () => {
+    const user = await db.createUser('oauth@example.com');
+    await db.storeOAuthToken(user.id, 'google', 'access-123', 'refresh-456', Date.now() + 3600000, 'oauth@gmail.com');
+
+    const token = await db.getOAuthToken(user.id, 'google', 'oauth@gmail.com');
+    expect(token).not.toBeNull();
+    expect(token!.accessToken).toBe('access-123');
+    expect(token!.refreshToken).toBe('refresh-456');
+  });
+
+  it('returns null for unknown user/provider', async () => {
+    expect(await db.getOAuthToken('no-user', 'google')).toBeNull();
+  });
+
+  it('getAllUserOAuthTokens returns all tokens for a provider', async () => {
+    const user = await db.createUser('multi-oauth@example.com');
+    await db.storeOAuthToken(user.id, 'google', 'token-a', undefined, undefined, 'a@gmail.com');
+    await db.storeOAuthToken(user.id, 'google', 'token-b', undefined, undefined, 'b@gmail.com');
+
+    const all = await db.getAllUserOAuthTokens(user.id, 'google');
+    expect(all).toHaveLength(2);
+    const emails = all.map(t => t.accountEmail);
+    expect(emails).toContain('a@gmail.com');
+    expect(emails).toContain('b@gmail.com');
+  });
+
+  it('revokes an OAuth token', async () => {
+    const user = await db.createUser('revoke-oauth@example.com');
+    await db.storeOAuthToken(user.id, 'github', 'gh-token');
+    const revoked = await db.revokeOAuthToken(user.id, 'github');
+    expect(revoked).toBe(true);
+    expect(await db.getOAuthToken(user.id, 'github')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scheduled Jobs
+// ---------------------------------------------------------------------------
+
+describe('Scheduled Jobs', () => {
+  it('creates and retrieves a scheduled job', async () => {
+    const user = await db.createUser('jobs@example.com');
+    const role = await db.createRole(user.id, 'Job Role');
+    const job = await db.createScheduledJob({
+      userId: user.id,
+      roleId: role.id,
+      description: 'Send daily summary',
+      scheduleType: 'once',
+      runAt: new Date(Date.now() + 60000),
+    });
+
+    expect(job.id).toBeTruthy();
+    expect(job.description).toBe('Send daily summary');
+    expect(job.status).toBe('pending');
+
+    const found = await db.getScheduledJob(job.id);
+    expect(found?.userId).toBe(user.id);
+  });
+
+  it('returns null for unknown job id', async () => {
+    expect(await db.getScheduledJob('no-such-job')).toBeNull();
+  });
+
+  it('listScheduledJobs returns jobs for user', async () => {
+    const user = await db.createUser('listjobs@example.com');
+    const role = await db.createRole(user.id, 'List Role');
+    await db.createScheduledJob({ userId: user.id, roleId: role.id, description: 'Job 1', scheduleType: 'once' });
+    await db.createScheduledJob({ userId: user.id, roleId: role.id, description: 'Job 2', scheduleType: 'recurring' });
+
+    const jobs = await db.listScheduledJobs(user.id);
+    expect(jobs).toHaveLength(2);
+  });
+
+  it('updateScheduledJobStatus updates status and lastRunAt', async () => {
+    const user = await db.createUser('update-job@example.com');
+    const role = await db.createRole(user.id, 'Update Role');
+    const job = await db.createScheduledJob({ userId: user.id, roleId: role.id, description: 'Update me', scheduleType: 'once' });
+
+    const ranAt = new Date();
+    await db.updateScheduledJobStatus(job.id, { status: 'completed', lastRunAt: ranAt });
+
+    const updated = await db.getScheduledJob(job.id);
+    expect(updated?.status).toBe('completed');
+  });
+
+  it('cancelScheduledJob removes the job and returns true', async () => {
+    const user = await db.createUser('cancel-job@example.com');
+    const role = await db.createRole(user.id, 'Cancel Role');
+    const job = await db.createScheduledJob({ userId: user.id, roleId: role.id, description: 'Cancel me', scheduleType: 'once' });
+
+    const cancelled = await db.cancelScheduledJob(job.id, user.id);
+    expect(cancelled).toBe(true);
+
+    // Job is deleted, not merely status-updated
+    const found = await db.getScheduledJob(job.id);
+    expect(found).toBeNull();
+  });
+
+  it('cancelScheduledJob returns false for wrong user', async () => {
+    const user = await db.createUser('cancel-owner@example.com');
+    const role = await db.createRole(user.id, 'Owner Role');
+    const job = await db.createScheduledJob({ userId: user.id, roleId: role.id, description: 'Mine', scheduleType: 'once' });
+
+    const result = await db.cancelScheduledJob(job.id, 'other-user-id');
+    expect(result).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Magic Link Tokens
+// ---------------------------------------------------------------------------
+
+describe('Magic Link Tokens', () => {
+  it('creates and verifies a magic link token', async () => {
+    const user = await db.createUser('magic@example.com');
+    const token = await db.createMagicLinkToken('magic@example.com', user.id);
+
+    expect(token.token).toBeTruthy();
+
+    const verified = await db.verifyMagicLinkToken(token.token);
+    expect(verified).not.toBeNull();
+    expect(verified!.userId).toBe(user.id);
+    expect(verified!.email).toBe('magic@example.com');
+  });
+
+  it('verifyMagicLinkToken returns null for unknown token', async () => {
+    expect(await db.verifyMagicLinkToken('not-a-real-token')).toBeNull();
+  });
+
+  it('useMagicLinkToken consumes the token', async () => {
+    const user = await db.createUser('use-magic@example.com');
+    const token = await db.createMagicLinkToken('use-magic@example.com', user.id);
+
+    const used = await db.useMagicLinkToken(token.token);
+    expect(used).toBe(true);
+
+    // Token should no longer verify after being used
+    const verified = await db.verifyMagicLinkToken(token.token);
+    expect(verified).toBeNull();
+  });
+
+  it('useMagicLinkToken returns false for unknown token', async () => {
+    expect(await db.useMagicLinkToken('bogus')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Token Usage
+// ---------------------------------------------------------------------------
+
+describe('Token Usage', () => {
+  it('records and retrieves token usage', async () => {
+    const user = await db.createUser('usage@example.com');
+    await db.recordTokenUsage({
+      userId: user.id,
+      model: 'grok-4-1-fast-non-reasoning',
+      provider: 'grok',
+      promptTokens: 100,
+      completionTokens: 50,
+      totalTokens: 150,
+      cachedInputTokens: 20,
+      cacheCreationTokens: 0,
+      source: 'chat',
+    });
+
+    const records = await db.getTokenUsageByUser(user.id);
+    expect(records).toHaveLength(1);
+    expect(records[0].model).toBe('grok-4-1-fast-non-reasoning');
+    expect(records[0].promptTokens).toBe(100);
+    expect(records[0].completionTokens).toBe(50);
+    expect(records[0].totalTokens).toBe(150);
+    expect(records[0].cachedInputTokens).toBe(20);
+    expect(records[0].source).toBe('chat');
+  });
+
+  it('records multiple entries for a user', async () => {
+    const user = await db.createUser('usage2@example.com');
+    await db.recordTokenUsage({ userId: user.id, model: 'model-a', provider: 'x', promptTokens: 10, completionTokens: 5, totalTokens: 15, source: 'chat' });
+    await db.recordTokenUsage({ userId: user.id, model: 'model-b', provider: 'x', promptTokens: 20, completionTokens: 10, totalTokens: 30, source: 'scheduler' });
+
+    const records = await db.getTokenUsageByUser(user.id);
+    expect(records).toHaveLength(2);
+  });
+
+  it('filters by date range', async () => {
+    const user = await db.createUser('usage3@example.com');
+    await db.recordTokenUsage({ userId: user.id, model: 'm', provider: 'x', promptTokens: 1, completionTokens: 1, totalTokens: 2 });
+
+    const from = new Date(Date.now() - 1000);
+    const to = new Date(Date.now() + 1000);
+    const records = await db.getTokenUsageByUser(user.id, { from, to });
+    expect(records).toHaveLength(1);
+
+    const future = new Date(Date.now() + 100000);
+    const empty = await db.getTokenUsageByUser(user.id, { from: future });
+    expect(empty).toHaveLength(0);
+  });
+
+  it('returns empty array for user with no usage', async () => {
+    const user = await db.createUser('nousage@example.com');
+    expect(await db.getTokenUsageByUser(user.id)).toHaveLength(0);
+  });
+
+  it('isolates usage between different users', async () => {
+    const u1 = await db.createUser('isolated-u1@example.com');
+    const u2 = await db.createUser('isolated-u2@example.com');
+    await db.recordTokenUsage({ userId: u1.id, model: 'm', provider: 'x', promptTokens: 5, completionTokens: 5, totalTokens: 10 });
+
+    expect(await db.getTokenUsageByUser(u2.id)).toHaveLength(0);
+    expect(await db.getTokenUsageByUser(u1.id)).toHaveLength(1);
+  });
+});
