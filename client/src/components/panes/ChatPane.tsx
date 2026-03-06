@@ -261,9 +261,10 @@ export function ChatPane() {
         // must be deferred because the event fires synchronously but state changes
         // may happen after. Use setTimeout to let the event loop process first.
         setTimeout(() => {
-          // If the connection is still open or connecting, don't reconnect
+          // If the connection is still open or connecting, don't reconnect or log error
           if (es && (es.readyState === EventSource.OPEN || es.readyState === EventSource.CONNECTING)) {
-            console.log('[ChatPane] Message stream error but connection still active (state:', es.readyState === EventSource.OPEN ? 'OPEN' : 'CONNECTING', '), not reconnecting');
+            // Only log occasionally to avoid spamming console during connection setup
+            // (EventSource can fire error events multiple times while establishing connection)
             return;
           }
 
@@ -736,7 +737,7 @@ export function ChatPane() {
     }
   };
 
-  // Auto-resize textarea up to 5 lines
+  // Auto-resize textarea up to 5 lines (minimum 1 line)
   useEffect(() => {
     const textarea = inputRef.current;
     if (textarea) {
@@ -744,9 +745,10 @@ export function ChatPane() {
       textarea.style.height = 'auto';
       // Calculate line height (approximately 24px per line with py-2 and text)
       const lineHeight = 24;
+      const minHeight = lineHeight; // Minimum 1 line
       const maxHeight = lineHeight * 5;
-      // Set height to scrollHeight, capped at maxHeight
-      textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+      // Set height to scrollHeight, capped between min and max
+      textarea.style.height = `${Math.max(Math.min(textarea.scrollHeight, maxHeight), minHeight)}px`;
     }
   }, [input]);
 

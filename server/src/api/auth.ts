@@ -6,6 +6,7 @@ import { GoogleOAuthHandler } from '../auth/google-oauth.js';
 import { GitHubOAuthHandler } from '../auth/github-oauth.js';
 import { getMainDatabase } from '../storage/index.js';
 import { config } from '../config/index.js';
+import { getEmailService } from '../email-service.js';
 
 export async function authRoutes(fastify: FastifyInstance) {
   // Check if email exists
@@ -261,6 +262,135 @@ export async function authRoutes(fastify: FastifyInstance) {
     return reply.send({
       success: true,
     });
+  });
+
+  // Request magic link
+  fastify.post('/magic-link/request', async (request, reply) => {
+    const body = request.body as { email: string };
+    const { email } = body;
+
+    if (!email) {
+      return reply.code(400).send({
+        success: false,
+        error: { message: 'Email is required' },
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return reply.code(400).send({
+        success: false,
+        error: { message: 'Invalid email format' },
+      });
+    }
+
+    try {
+      const mainDb = await getMainDatabase(config.storage.root);
+      
+      // Get or create user (always create user for security - don't reveal if email exists)
+      let user = await mainDb.getUserByEmail(email);
+      if (!user) {
+        user = await mainDb.createUser(email, undefined, 'individual');
+      }
+
+      // Clean up expired tokens for this email
+      await mainDb.deleteExpiredMagicLinkTokens(email);
+
+      // Create magic link token (expires in 5 minutes)
+      const magicLinkToken = await mainDb.createMagicLinkToken(email, user.id, 300);
+
+      // Build magic link URL using the request's hostname and port
+      const hostname = request.hostname;
+      // Extract port from hostname if present (e.g., "localhost:3000"), otherwise use default
+      const portMatch = hostname.match(/:(\d+)$/);
+      const port = portMatch ? portMatch[1] : (request.protocol === 'https' ? '443' : '80');
+      const cleanHostname = portMatch ? hostname.replace(/:\d+$/, '') : hostname;
+      const protocol = request.protocol === 'https' ? 'https' : 'http';
+      const magicLink = `${protocol}://${cleanHostname}:${port}/login/verify?token=${magicLinkToken.token}`;
+
+      // Send email
+      const emailService = getEmailService();
+      await emailService.sendMagicLinkEmail(email, magicLink);
+
+      return reply.send({
+        success: true,
+        data: {
+          message: 'Magic link sent to your email',
+        },
+      });
+    } catch (error) {
+      console.error('[MagicLink] Error:', error);
+      return reply.code(500).send({
+        success: false,
+        error: { message: 'Failed to send magic link' },
+      });
+    }
+  });
+
+  // Verify magic link
+  fastify.get('/magic-link/verify', async (request, reply) => {
+    const { token } = request.query as { token?: string };
+
+    if (!token) {
+      return reply.code(400).send({
+        success: false,
+        error: { message: 'Token is required' },
+      });
+    }
+
+    try {
+      const mainDb = await getMainDatabase(config.storage.root);
+      
+      // Verify the token
+      const verification = await mainDb.verifyMagicLinkToken(token);
+      if (!verification) {
+        return reply.code(400).send({
+          success: false,
+          error: { message: 'Invalid or expired token' },
+        });
+      }
+
+      // Mark token as used
+      await mainDb.useMagicLinkToken(token);
+
+      // Get user
+      const user = await mainDb.getUser(verification.userId);
+      if (!user) {
+        return reply.code(404).send({
+          success: false,
+          error: { message: 'User not found' },
+        });
+      }
+
+      // Create session
+      const session = await mainDb.createSession(user.id);
+
+      // Use secure cookies in production unless explicitly disabled
+      const useSecureCookies = config.env.isProduction && process.env.COOKIE_SECURE !== 'false';
+
+      reply.setCookie('session_id', session.id, {
+        path: '/',
+        httpOnly: true,
+        secure: useSecureCookies,
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      });
+
+      return reply.send({
+        success: true,
+        data: {
+          user,
+          session,
+        },
+      });
+    } catch (error) {
+      console.error('[MagicLink] Verify error:', error);
+      return reply.code(500).send({
+        success: false,
+        error: { message: 'Failed to verify token' },
+      });
+    }
   });
 
   // Get current user

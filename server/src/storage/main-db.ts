@@ -70,6 +70,19 @@ export interface ScheduledJob {
 }
 
 /**
+ * Magic link token for email authentication
+ */
+export interface MagicLinkToken {
+  id: string;
+  email: string;
+  userId: string;
+  token: string;
+  expiresAt: Date;
+  usedAt: Date | null;
+  createdAt: Date;
+}
+
+/**
  * Main database schema for user registration and role mapping
  * This is the central database that maps users to their roles
  * Each role has its own separate SQLite database for complete isolation
@@ -255,6 +268,21 @@ export class MainDatabase implements IMainDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_user ON scheduled_jobs(userId, status);
       CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_once ON scheduled_jobs(runAt, status);
+
+      -- Magic link tokens table (for email magic-link authentication)
+      CREATE TABLE IF NOT EXISTS magic_link_tokens (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        userId TEXT NOT NULL,
+        token TEXT UNIQUE NOT NULL,
+        expiresAt TEXT NOT NULL,
+        usedAt TEXT,
+        createdAt TEXT NOT NULL,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_magic_link_token ON magic_link_tokens(token);
+      CREATE INDEX IF NOT EXISTS idx_magic_link_email ON magic_link_tokens(email);
     `);
 
     // Migrate old MCP server IDs to new package names
@@ -1705,6 +1733,102 @@ export class MainDatabase implements IMainDatabase {
     // Actually delete the job from the database
     const result = this.db.prepare(`DELETE FROM scheduled_jobs WHERE id = ?`).run(id);
     return result.changes > 0;
+  }
+
+  // ============================================
+  // Magic Link Token Operations
+  // ============================================
+
+  /**
+   * Create a magic link token for email authentication
+   */
+  async createMagicLinkToken(email: string, userId: string, expiresInSeconds: number = 300): Promise<MagicLinkToken> {
+    const id = uuidv4();
+    const token = this.generateSecureToken();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + expiresInSeconds * 1000);
+
+    this.db.prepare(`
+      INSERT INTO magic_link_tokens (id, email, userId, token, expiresAt, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, email, userId, token, expiresAt.toISOString(), now.toISOString());
+
+    return {
+      id,
+      email,
+      userId,
+      token,
+      expiresAt,
+      usedAt: null,
+      createdAt: now,
+    };
+  }
+
+  /**
+   * Verify a magic link token
+   * Returns the user ID if valid, null otherwise
+   */
+  async verifyMagicLinkToken(token: string): Promise<{ userId: string; email: string } | null> {
+    const row = this.db.prepare(`
+      SELECT * FROM magic_link_tokens WHERE token = ? AND usedAt IS NULL
+    `).get(token) as {
+      id: string;
+      email: string;
+      userId: string;
+      token: string;
+      expiresAt: string;
+      usedAt: string | null;
+      createdAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    // Check if expired
+    const expiresAt = new Date(row.expiresAt);
+    if (expiresAt < new Date()) {
+      return null;
+    }
+
+    return {
+      userId: row.userId,
+      email: row.email,
+    };
+  }
+
+  /**
+   * Mark a magic link token as used
+   */
+  async useMagicLinkToken(token: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const result = this.db.prepare(`
+      UPDATE magic_link_tokens SET usedAt = ? WHERE token = ? AND usedAt IS NULL
+    `).run(now, token);
+
+    return result.changes > 0;
+  }
+
+  /**
+   * Delete expired magic link tokens for an email
+   */
+  async deleteExpiredMagicLinkTokens(email: string): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      DELETE FROM magic_link_tokens WHERE email = ? AND (usedAt IS NOT NULL OR expiresAt < ?)
+    `).run(email, now);
+  }
+
+  /**
+   * Generate a secure random token
+   */
+  private generateSecureToken(): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let token = '';
+    const randomValues = new Uint32Array(32);
+    crypto.getRandomValues(randomValues);
+    for (let i = 0; i < 32; i++) {
+      token += chars.charAt(randomValues[i] % chars.length);
+    }
+    return token;
   }
 
   // ============================================

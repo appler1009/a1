@@ -345,6 +345,29 @@ const tables: Array<CreateTableCommandInput & { ttlAttribute?: string }> = [
       },
     ],
   },
+
+  // ── magic_link_tokens ───────────────────────────────────────────────────────
+  // Stores magic link tokens for email authentication
+  // PK=tokenId (the actual token), GSI=email-index for querying by email
+  {
+    TableName: t('magic_link_tokens'),
+    BillingMode: 'PAY_PER_REQUEST',
+    AttributeDefinitions: [
+      { AttributeName: 'tokenId', AttributeType: 'S' },
+      { AttributeName: 'email', AttributeType: 'S' },
+    ],
+    KeySchema: [
+      { AttributeName: 'tokenId', KeyType: 'HASH' },
+    ],
+    GlobalSecondaryIndexes: [
+      {
+        IndexName: 'email-index',
+        KeySchema: [{ AttributeName: 'email', KeyType: 'HASH' }],
+        Projection: { ProjectionType: 'ALL' },
+      },
+    ],
+    ttlAttribute: 'ttl', // auto-expire tokens after 5 minutes
+  },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

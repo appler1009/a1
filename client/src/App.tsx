@@ -4,6 +4,7 @@ import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import { useAuthStore, useEnvironmentStore, useUIStore, useRolesStore } from './store';
 import { initializePreviewAdapters } from './lib/adapters';
 import { LoginPage } from './pages/LoginPage';
+import { LoginVerifyPage } from './pages/LoginVerifyPage';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { JoinPage } from './pages/JoinPage';
 import { OAuthCallbackPage } from './pages/OAuthCallbackPage';
@@ -126,6 +127,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/login/verify" element={<LoginVerifyPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/join" element={<JoinPage />} />
         <Route path="/auth/google/callback" element={<OAuthCallbackPage />} />

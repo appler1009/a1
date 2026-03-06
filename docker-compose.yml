@@ -54,7 +54,7 @@ services:
       - MAIN_DB_TYPE=${MAIN_DB_TYPE:-dynamodb}
       - DYNAMODB_REGION=${DYNAMODB_REGION:-us-west-2}
       - DYNAMODB_TABLE_PREFIX=${DYNAMODB_TABLE_PREFIX:-a1_prod_}
-      # S3 storage configuration (set STORAGE_TYPE=s3 to use)
+      - SES_SENDER_EMAIL=appler@gmail.com
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]

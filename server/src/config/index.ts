@@ -21,6 +21,7 @@ export interface AppConfig {
   gmail: { clientId: string; clientSecret: string; redirectUri: string };
   github: { clientId: string; clientSecret: string; redirectUri: string };
   discord: { botToken?: string; clientId?: string; channelIds: string[] };
+  ses: { region: string; senderEmail: string };
 }
 
 // Mutable singleton — populated by initConfig() before any request handlers run
@@ -73,6 +74,10 @@ export function initConfig(): void {
       botToken: process.env.DISCORD_BOT_TOKEN,
       clientId: process.env.DISCORD_CLIENT_ID,
       channelIds: (process.env.DISCORD_CHANNEL_IDS || '').split(',').map(s => s.trim()).filter(Boolean),
+    },
+    ses: {
+      region: process.env.AWS_REGION || 'us-east-1',
+      senderEmail: process.env.SES_SENDER_EMAIL || 'noreply@example.com',
     },
   };
 }

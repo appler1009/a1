@@ -1,7 +1,7 @@
 import type { User, Session, Group, GroupMember, Invitation } from '@local-agent/shared';
-import type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob } from './main-db.js';
+import type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob, MagicLinkToken } from './main-db.js';
 
-export type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob };
+export type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob, MagicLinkToken };
 
 export type MessageFrom = 'user' | 'assistant' | 'tool' | 'system';
 
@@ -160,6 +160,12 @@ export interface IMainDatabase {
     runCount?: number;
   }): Promise<void>;
   cancelScheduledJob(id: string, userId: string): Promise<boolean>;
+
+  // ---- Magic Link Tokens ----
+  createMagicLinkToken(email: string, userId: string, expiresInSeconds?: number): Promise<MagicLinkToken>;
+  verifyMagicLinkToken(token: string): Promise<{ userId: string; email: string } | null>;
+  useMagicLinkToken(token: string): Promise<boolean>;
+  deleteExpiredMagicLinkTokens(email: string): Promise<void>;
 
   // ---- Memory ----
   deleteMemoryDb(dataDir: string, roleId: string): boolean | Promise<boolean>;

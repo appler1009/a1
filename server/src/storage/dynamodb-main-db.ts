@@ -35,6 +35,7 @@ function tableNames(prefix: string) {
     skills: `${prefix}skills`,
     messages: `${prefix}messages`,
     scheduledJobs: `${prefix}scheduled_jobs`,
+    magicLinkTokens: `${prefix}magic_link_tokens`,
     memoryEntities: `${prefix}memory_entities`,
     memoryRelations: `${prefix}memory_relations`,
   };
@@ -1253,6 +1254,106 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       Key: { jobId: id },
     }));
     return true;
+  }
+
+  // ============================================================
+  // Magic Link Token Operations
+  // ============================================================
+
+  async createMagicLinkToken(email: string, userId: string, expiresInSeconds: number = 300): Promise<import('./main-db.js').MagicLinkToken> {
+    const token = this._generateSecureToken();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + expiresInSeconds * 1000);
+    const ttl = Math.floor(expiresAt.getTime() / 1000);
+
+    // Store token as the primary key (tokenId), and include other fields
+    const item: Record<string, unknown> = {
+      tokenId: token,  // Use actual token as the primary key
+      email,
+      userId,
+      expiresAt: expiresAt.toISOString(),
+      ttl,
+      createdAt: now.toISOString(),
+    };
+
+    await this.client.send(new PutCommand({ TableName: this.tables.magicLinkTokens, Item: item }));
+    return {
+      id: token,  // Use token as the ID for consistency
+      email,
+      userId,
+      token,
+      expiresAt,
+      usedAt: null,
+      createdAt: now,
+    };
+  }
+
+  async verifyMagicLinkToken(token: string): Promise<{ userId: string; email: string } | null> {
+    const { Item } = await this.client.send(new GetCommand({
+      TableName: this.tables.magicLinkTokens,
+      Key: { tokenId: token },
+    }));
+
+    if (!Item) return null;
+
+    // Check if already used
+    if (Item.usedAt) return null;
+
+    // Check if expired
+    const expiresAt = new Date(Item.expiresAt as string);
+    if (expiresAt < new Date()) {
+      return null;
+    }
+
+    return {
+      userId: Item.userId as string,
+      email: Item.email as string,
+    };
+  }
+
+  async useMagicLinkToken(token: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    try {
+      await this.client.send(new UpdateCommand({
+        TableName: this.tables.magicLinkTokens,
+        Key: { tokenId: token },
+        UpdateExpression: 'SET usedAt = :usedAt',
+        ExpressionAttributeValues: { ':usedAt': now },
+      }));
+      return true;
+    } catch (err: any) {
+      if (err.name === 'ConditionalCheckFailedException') return false;
+      throw err;
+    }
+  }
+
+  async deleteExpiredMagicLinkTokens(email: string): Promise<void> {
+    // Query tokens for this email
+    const { Items } = await this.client.send(new QueryCommand({
+      TableName: this.tables.magicLinkTokens,
+      IndexName: 'email-index',
+      KeyConditionExpression: 'email = :email',
+      ExpressionAttributeValues: { ':email': email },
+    }));
+
+    if (!Items?.length) return;
+
+    // Delete expired or used tokens
+    const expiredTokens = Items.filter(item => 
+      item.usedAt || new Date(item.expiresAt as string) < new Date()
+    );
+
+    for (const tok of expiredTokens) {
+      await this.client.send(new DeleteCommand({
+        TableName: this.tables.magicLinkTokens,
+        Key: { tokenId: tok.tokenId as string },
+      }));
+    }
+  }
+
+  private _generateSecureToken(): string {
+    // Use UUID v4 which uses cryptographically secure random values
+    return uuidv4();
   }
 
   async deleteMemoryDb(_dataDir: string, roleId: string): Promise<boolean> {
