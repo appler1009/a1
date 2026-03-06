@@ -20,6 +20,52 @@ import { parse as parseHtml, type HTMLElement, type Node } from 'node-html-parse
 
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 const MAX_REDIRECTS = 10;
+const DNS_TIMEOUT_MS = 5_000;
+
+// ---------------------------------------------------------------------------
+// Security: Rate limiting
+// ---------------------------------------------------------------------------
+
+const RATE_LIMIT_MAX = 60;           // max requests
+const RATE_LIMIT_WINDOW_MS = 60_000; // per minute (sliding window)
+export const _requestTimestamps: number[] = [];
+
+function checkRateLimit(): void {
+  const now = Date.now();
+  const cutoff = now - RATE_LIMIT_WINDOW_MS;
+  // evict entries outside the window
+  while (_requestTimestamps.length > 0 && _requestTimestamps[0] < cutoff) {
+    _requestTimestamps.shift();
+  }
+  if (_requestTimestamps.length >= RATE_LIMIT_MAX) {
+    throw new Error(`Rate limit exceeded: max ${RATE_LIMIT_MAX} requests per ${RATE_LIMIT_WINDOW_MS / 1000}s`);
+  }
+  _requestTimestamps.push(now);
+}
+
+// ---------------------------------------------------------------------------
+// Security: Header sanitization
+// ---------------------------------------------------------------------------
+
+// Headers users must not be able to set — would allow session riding, spoofing,
+// or bypassing server-side request validation.
+const BLOCKED_USER_HEADERS = new Set([
+  'cookie',
+  'authorization',
+  'host',
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-real-ip',
+]);
+
+function sanitizeUserHeaders(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (!BLOCKED_USER_HEADERS.has(k.toLowerCase())) out[k] = v;
+  }
+  return out;
+}
 
 function ipv4ToNumber(ip: string): number {
   const parts = ip.split('.').map(Number);
@@ -84,9 +130,21 @@ async function assertSafeUrl(urlStr: string): Promise<void> {
     return;
   }
 
+  // DNS rebinding note: there is an inherent race between our lookup and the
+  // actual TCP connection made by fetch(). A sophisticated attacker who controls
+  // DNS could flip the record between the two calls. The architectural mitigation
+  // is IMDSv2 (HttpTokens=required on the ECS task), which rejects unauthenticated
+  // metadata requests even if the connection reaches 169.254.169.254. A code-level
+  // fix would require replacing fetch() with a custom socket that re-validates the
+  // connected IP — not implemented here due to TLS complexity.
   let records: { address: string; family: number }[];
   try {
-    records = await dnsLookup(hostname, { all: true });
+    records = await Promise.race([
+      dnsLookup(hostname, { all: true }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`DNS lookup timed out for ${hostname}`)), DNS_TIMEOUT_MS)
+      ),
+    ]);
   } catch (err) {
     throw new Error(`DNS resolution failed for ${hostname}: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -97,6 +155,7 @@ async function assertSafeUrl(urlStr: string): Promise<void> {
 }
 
 async function safeFetch(urlStr: string, init: RequestInit & { signal?: AbortSignal }): Promise<Response> {
+  checkRateLimit();
   await assertSafeUrl(urlStr);
   let currentUrl = urlStr;
   let currentInit: RequestInit = { ...init, redirect: 'manual' };
@@ -109,6 +168,10 @@ async function safeFetch(urlStr: string, init: RequestInit & { signal?: AbortSig
     const location = response.headers.get('location');
     if (!location) throw new Error('Redirect response missing Location header');
     const nextUrl = new URL(location, currentUrl).toString();
+    // Block protocol downgrade: HTTPS → HTTP leaks data and bypasses TLS
+    if (new URL(currentUrl).protocol === 'https:' && new URL(nextUrl).protocol === 'http:') {
+      throw new Error(`Blocked: HTTPS to HTTP redirect is not permitted`);
+    }
     await assertSafeUrl(nextUrl);
     currentUrl = nextUrl;
     if ([301, 302, 303].includes(status) && (currentInit as any).method !== 'GET') {
@@ -184,12 +247,12 @@ const DEFAULT_REQUEST_HEADERS: Record<string, string> = {
  * Build request headers by merging default headers with user-provided headers
  */
 function buildRequestHeaders(userHeaders?: Record<string, string>): Record<string, string> {
-  const headers = {
+  return {
     ...DEFAULT_REQUEST_HEADERS,
-    ...userHeaders,
+    // Strip sensitive headers before merging so the LLM can't ride sessions
+    // or spoof internal routing headers.
+    ...sanitizeUserHeaders(userHeaders ?? {}),
   };
-  console.log('[fetch-url] User-Agent:', headers['User-Agent']);
-  return headers;
 }
 
 /**

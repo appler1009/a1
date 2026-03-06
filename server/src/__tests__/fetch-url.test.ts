@@ -28,7 +28,7 @@ const dnsLookupMock = mock(async (_hostname: string, _opts: any) => [
 mock.module('dns/promises', () => ({ lookup: dnsLookupMock }));
 
 // Dynamic import so the mock above is already in place when fetch-url.ts loads
-const { FetchUrlInProcess } = await import('../mcp/in-process/fetch-url.js');
+const { FetchUrlInProcess, _requestTimestamps } = await import('../mcp/in-process/fetch-url.js');
 
 // ---------------------------------------------------------------------------
 // fetch mock helpers
@@ -110,6 +110,8 @@ beforeEach(() => {
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   // Reset DNS mock to safe default before each test
   dnsLookupMock.mockImplementation(async () => [{ address: '93.184.216.34', family: 4 }]);
+  // Reset rate-limit state so tests don't bleed into each other
+  _requestTimestamps.length = 0;
 });
 
 afterEach(() => {
@@ -553,6 +555,158 @@ describe('SSRF protection', () => {
     });
     expect(result.text).toContain('Error submitting form');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // IPv4 alternate notation — the WHATWG URL parser normalises all of these to
+  // dotted-decimal before our regex/range check ever sees them.
+  it('blocks hex IPv4 (0x7f000001 → 127.0.0.1)', async () => {
+    await expectBlocked('http://0x7f000001/');
+  });
+
+  it('blocks decimal-integer IPv4 (2130706433 → 127.0.0.1)', async () => {
+    await expectBlocked('http://2130706433/');
+  });
+
+  it('blocks octal IPv4 (0177.0.0.1 → 127.0.0.1)', async () => {
+    await expectBlocked('http://0177.0.0.1/');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DNS timeout
+// ---------------------------------------------------------------------------
+
+describe('DNS timeout', () => {
+  it('returns error when DNS lookup hangs beyond 5 s', async () => {
+    // Make DNS never resolve
+    dnsLookupMock.mockImplementation(() => new Promise(() => {}));
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'http://slow-dns.example.com/' });
+    expect(result.type).toBe('text');
+    expect(result.text).toMatch(/DNS.*timed out|DNS resolution failed/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  }, 10_000);
+});
+
+// ---------------------------------------------------------------------------
+// HTTPS → HTTP downgrade
+// ---------------------------------------------------------------------------
+
+describe('HTTPS → HTTP redirect block', () => {
+  it('blocks redirect from HTTPS to HTTP', async () => {
+    fetchMock.mockImplementationOnce(async () =>
+      makeRedirectResponse('http://example.com/insecure', 301)
+    );
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'https://example.com/page' });
+    expect(result.text).toContain('Error fetching URL');
+    expect(result.text).toMatch(/HTTPS to HTTP/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows HTTPS → HTTPS redirect', async () => {
+    fetchMock
+      .mockImplementationOnce(async () => makeRedirectResponse('https://example.com/new', 301))
+      .mockImplementationOnce(async () => makeFetchResponse({ body: '<p>OK</p>', url: 'https://example.com/new' }));
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'https://example.com/old' });
+    expect(result.text).toContain('OK');
+  });
+
+  it('allows HTTP → HTTP redirect', async () => {
+    fetchMock
+      .mockImplementationOnce(async () => makeRedirectResponse('http://example.com/new', 302))
+      .mockImplementationOnce(async () => makeFetchResponse({ body: '<p>OK</p>', url: 'http://example.com/new' }));
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'http://example.com/old' });
+    expect(result.text).toContain('OK');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Header sanitisation
+// ---------------------------------------------------------------------------
+
+describe('Header sanitisation', () => {
+  async function captureHeaders(userHeaders: Record<string, string>): Promise<Record<string, string>> {
+    let captured: Record<string, string> = {};
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      captured = (init?.headers ?? {}) as Record<string, string>;
+      return makeFetchResponse({ body: '<p>ok</p>', url: 'https://example.com/' });
+    });
+    const m = new FetchUrlInProcess();
+    await m.web_fetch_url({ url: 'https://example.com/', headers: userHeaders });
+    return captured;
+  }
+
+  it('strips Cookie header', async () => {
+    const h = await captureHeaders({ Cookie: 'session=abc' });
+    expect(h['Cookie']).toBeUndefined();
+    expect(h['cookie']).toBeUndefined();
+  });
+
+  it('strips Authorization header', async () => {
+    const h = await captureHeaders({ Authorization: 'Bearer token' });
+    expect(h['Authorization']).toBeUndefined();
+    expect(h['authorization']).toBeUndefined();
+  });
+
+  it('strips Host header', async () => {
+    const h = await captureHeaders({ Host: 'internal.corp' });
+    expect(h['Host']).toBeUndefined();
+    expect(h['host']).toBeUndefined();
+  });
+
+  it('strips X-Forwarded-For header', async () => {
+    const h = await captureHeaders({ 'X-Forwarded-For': '127.0.0.1' });
+    expect(h['X-Forwarded-For']).toBeUndefined();
+    expect(h['x-forwarded-for']).toBeUndefined();
+  });
+
+  it('allows safe custom headers through', async () => {
+    const h = await captureHeaders({ 'X-Custom-Token': 'abc123', 'Accept-Language': 'en' });
+    expect(h['X-Custom-Token']).toBe('abc123');
+    expect(h['Accept-Language']).toBe('en');
+  });
+
+  it('preserves default User-Agent when not overridden', async () => {
+    const h = await captureHeaders({});
+    expect(h['User-Agent']).toContain('assist1.me');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+describe('Rate limiting', () => {
+  it('blocks requests beyond 60 per minute', async () => {
+    fetchMock.mockImplementation(async () =>
+      makeFetchResponse({ body: '<p>ok</p>', url: 'https://example.com/' })
+    );
+
+    // Fill the window with 60 fake recent timestamps
+    const now = Date.now();
+    for (let i = 0; i < 60; i++) _requestTimestamps.push(now - i * 100);
+
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'https://example.com/' });
+    expect(result.text).toContain('Error fetching URL');
+    expect(result.text).toMatch(/Rate limit/i);
+  });
+
+  it('allows requests once old entries expire from the window', async () => {
+    fetchMock.mockImplementation(async () =>
+      makeFetchResponse({ body: '<p>ok</p>', url: 'https://example.com/' })
+    );
+
+    // Fill with 60 timestamps that are 2 minutes old (outside the window)
+    const old = Date.now() - 120_000;
+    for (let i = 0; i < 60; i++) _requestTimestamps.push(old + i * 100);
+
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'https://example.com/' });
+    expect(result.text).not.toMatch(/Rate limit/i);
   });
 });
 
