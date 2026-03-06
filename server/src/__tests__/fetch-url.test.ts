@@ -9,10 +9,26 @@
  *   - Plain text passthrough
  *   - web_fetch_url: status line, redirect URL, error handling
  *   - web_submit_form: GET (query params), POST url-encoded, POST multipart
+ *   - SSRF protection: blocked private/reserved IPs, localhost, bad protocols,
+ *                      DNS-resolved private IPs, redirect-to-private-IP
+ *   - Response size limit: Content-Length header, streaming body
+ *   - Hidden-content stripping: display:none, visibility:hidden, hidden attribute
  */
 
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
-import { FetchUrlInProcess } from '../mcp/in-process/fetch-url.js';
+
+// ---------------------------------------------------------------------------
+// Mock dns/promises before the module under test loads it
+// ---------------------------------------------------------------------------
+
+// Default: resolve any hostname to a safe public IP
+const dnsLookupMock = mock(async (_hostname: string, _opts: any) => [
+  { address: '93.184.216.34', family: 4 },
+]);
+mock.module('dns/promises', () => ({ lookup: dnsLookupMock }));
+
+// Dynamic import so the mock above is already in place when fetch-url.ts loads
+const { FetchUrlInProcess } = await import('../mcp/in-process/fetch-url.js');
 
 // ---------------------------------------------------------------------------
 // fetch mock helpers
@@ -24,16 +40,64 @@ function makeFetchResponse(opts: {
   status?: number;
   statusText?: string;
   url?: string;
+  headers?: Record<string, string>;
 }): Response {
-  const { body, contentType = 'text/html', status = 200, statusText = 'OK', url = 'https://example.com/' } = opts;
+  const {
+    body,
+    contentType = 'text/html',
+    status = 200,
+    statusText = 'OK',
+    url = 'https://example.com/',
+    headers: extraHeaders = {},
+  } = opts;
+
+  const allHeaders: Record<string, string> = {
+    'content-type': contentType,
+    ...extraHeaders,
+  };
+
   return {
     ok: status >= 200 && status < 300,
     status,
     statusText,
     url,
-    headers: { get: (h: string) => (h.toLowerCase() === 'content-type' ? contentType : null) },
+    headers: { get: (h: string) => allHeaders[h.toLowerCase()] ?? null },
+    body: null, // use .text() by default
     text: async () => body,
     json: async () => JSON.parse(body),
+  } as unknown as Response;
+}
+
+/** A redirect response (manual mode returns 3xx as-is) */
+function makeRedirectResponse(location: string, status = 302): Response {
+  return {
+    ok: false,
+    status,
+    statusText: 'Found',
+    url: 'https://example.com/redirect',
+    headers: { get: (h: string) => h.toLowerCase() === 'location' ? location : null },
+    body: null,
+    text: async () => '',
+  } as unknown as Response;
+}
+
+/** A response whose body is a ReadableStream of `totalBytes` bytes */
+function makeLargeStreamResponse(totalBytes: number): Response {
+  const chunkSize = 4096;
+  let sent = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent >= totalBytes) { controller.close(); return; }
+      const size = Math.min(chunkSize, totalBytes - sent);
+      controller.enqueue(new Uint8Array(size).fill(65)); // 'A'
+      sent += size;
+    },
+  });
+  return {
+    ok: true, status: 200, statusText: 'OK',
+    url: 'https://example.com/big',
+    headers: { get: (h: string) => h.toLowerCase() === 'content-type' ? 'text/plain' : null },
+    body: stream,
   } as unknown as Response;
 }
 
@@ -44,6 +108,8 @@ beforeEach(() => {
   originalFetch = globalThis.fetch;
   fetchMock = mock(async () => makeFetchResponse({ body: '' }));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
+  // Reset DNS mock to safe default before each test
+  dnsLookupMock.mockImplementation(async () => [{ address: '93.184.216.34', family: 4 }]);
 });
 
 afterEach(() => {
@@ -64,15 +130,13 @@ describe('getTools', () => {
   it('web_fetch_url schema requires url', async () => {
     const m = new FetchUrlInProcess();
     const tools = await m.getTools();
-    const fetchTool = tools.find(t => t.name === 'web_fetch_url')!;
-    expect(fetchTool.inputSchema.required).toContain('url');
+    expect(tools.find(t => t.name === 'web_fetch_url')!.inputSchema.required).toContain('url');
   });
 
   it('web_submit_form schema requires url', async () => {
     const m = new FetchUrlInProcess();
     const tools = await m.getTools();
-    const submitTool = tools.find(t => t.name === 'web_submit_form')!;
-    expect((submitTool.inputSchema as any).required).toContain('url');
+    expect((tools.find(t => t.name === 'web_submit_form')!.inputSchema as any).required).toContain('url');
   });
 });
 
@@ -84,8 +148,7 @@ describe('web_fetch_url: HTML conversion', () => {
   async function fetchHtml(html: string, url = 'https://example.com/'): Promise<string> {
     const m = new FetchUrlInProcess();
     fetchMock.mockImplementation(async () => makeFetchResponse({ body: html, url }));
-    const result = await m.web_fetch_url({ url });
-    return result.text;
+    return (await m.web_fetch_url({ url })).text;
   }
 
   it('includes status line with URL', async () => {
@@ -185,8 +248,52 @@ describe('web_fetch_url: HTML conversion', () => {
       '<body><nav>Navigation noise</nav><main><p>Main content</p></main></body>'
     );
     expect(text).toContain('Main content');
-    // nav is a separate element but inside body; main is preferred so nav content shouldn't dominate
     expect(text).not.toContain('Navigation noise');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hidden-content stripping (prompt-injection mitigation)
+// ---------------------------------------------------------------------------
+
+describe('web_fetch_url: hidden content stripping', () => {
+  async function fetchHtml(html: string): Promise<string> {
+    const m = new FetchUrlInProcess();
+    fetchMock.mockImplementation(async () => makeFetchResponse({ body: html, url: 'https://example.com/' }));
+    return (await m.web_fetch_url({ url: 'https://example.com/' })).text;
+  }
+
+  it('strips elements with display:none style', async () => {
+    const text = await fetchHtml(
+      '<p>Visible</p><div style="display:none">Hidden injection</div>'
+    );
+    expect(text).toContain('Visible');
+    expect(text).not.toContain('Hidden injection');
+  });
+
+  it('strips elements with visibility:hidden style', async () => {
+    const text = await fetchHtml(
+      '<p>Visible</p><span style="visibility:hidden">Invisible text</span>'
+    );
+    expect(text).toContain('Visible');
+    expect(text).not.toContain('Invisible text');
+  });
+
+  it('strips elements with the hidden attribute', async () => {
+    const text = await fetchHtml(
+      '<p>Visible</p><p hidden>Secret instructions</p>'
+    );
+    expect(text).toContain('Visible');
+    expect(text).not.toContain('Secret instructions');
+  });
+
+  it('strips nested hidden elements', async () => {
+    const text = await fetchHtml(
+      '<div style="display:none"><p>Outer hidden</p><span>Inner also hidden</span></div><p>Real</p>'
+    );
+    expect(text).toContain('Real');
+    expect(text).not.toContain('Outer hidden');
+    expect(text).not.toContain('Inner also hidden');
   });
 });
 
@@ -225,7 +332,6 @@ describe('web_fetch_url: form extraction', () => {
       '<form action="/login" method="post"><input name="password" type="password" value="secret"></form>'
     );
     expect(text).toContain('`password`');
-    // Password values must not be echoed
     expect(text).not.toContain('secret');
   });
 
@@ -333,6 +439,178 @@ describe('web_fetch_url: error handling', () => {
 });
 
 // ---------------------------------------------------------------------------
+// SSRF protection
+// ---------------------------------------------------------------------------
+
+describe('SSRF protection', () => {
+  async function expectBlocked(url: string): Promise<void> {
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url });
+    expect(result.type).toBe('text');
+    expect(result.text).toMatch(/Error fetching URL|Blocked|Protocol not allowed|Invalid URL|DNS/i);
+    // fetch must never have been called
+    expect(fetchMock).not.toHaveBeenCalled();
+  }
+
+  beforeEach(() => {
+    fetchMock.mockClear();
+  });
+
+  it('blocks AWS metadata endpoint (169.254.169.254)', async () => {
+    await expectBlocked('http://169.254.169.254/latest/meta-data/');
+  });
+
+  it('blocks loopback 127.0.0.1', async () => {
+    await expectBlocked('http://127.0.0.1/');
+  });
+
+  it('blocks private 10.x.x.x', async () => {
+    await expectBlocked('http://10.0.0.1/internal');
+  });
+
+  it('blocks private 172.16.x.x', async () => {
+    await expectBlocked('http://172.16.1.1/');
+  });
+
+  it('blocks private 192.168.x.x', async () => {
+    await expectBlocked('http://192.168.1.1/');
+  });
+
+  it('blocks localhost hostname', async () => {
+    await expectBlocked('http://localhost/');
+  });
+
+  it('blocks IPv6 loopback ::1', async () => {
+    await expectBlocked('http://[::1]/');
+  });
+
+  it('blocks file:// protocol', async () => {
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'file:///etc/passwd' });
+    expect(result.text).toContain('Error fetching URL');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks ftp:// protocol', async () => {
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'ftp://example.com/file' });
+    expect(result.text).toContain('Error fetching URL');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks when DNS resolves hostname to a private IP', async () => {
+    dnsLookupMock.mockImplementation(async () => [{ address: '10.0.0.5', family: 4 }]);
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'http://internal.corp/' });
+    expect(result.text).toContain('Error fetching URL');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks when DNS resolves hostname to link-local IP', async () => {
+    dnsLookupMock.mockImplementation(async () => [{ address: '169.254.1.1', family: 4 }]);
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'http://sneaky.attacker.com/' });
+    expect(result.text).toContain('Error fetching URL');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks redirect to private IP', async () => {
+    // First call returns a redirect to the metadata service
+    fetchMock.mockImplementationOnce(async () =>
+      makeRedirectResponse('http://169.254.169.254/latest/meta-data/')
+    );
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'https://example.com/redirect' });
+    expect(result.text).toContain('Error fetching URL');
+    // fetch was called once (the initial request) but not a second time (the redirect was blocked)
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks redirect to loopback', async () => {
+    fetchMock.mockImplementationOnce(async () =>
+      makeRedirectResponse('http://127.0.0.1:8080/admin')
+    );
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'https://example.com/go' });
+    expect(result.text).toContain('Error fetching URL');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows public HTTPS URLs', async () => {
+    fetchMock.mockImplementation(async () =>
+      makeFetchResponse({ body: '<p>OK</p>', url: 'https://example.com/' })
+    );
+    const m = new FetchUrlInProcess();
+    const result = await m.web_fetch_url({ url: 'https://example.com/' });
+    expect(result.text).toContain('OK');
+  });
+
+  it('also blocks SSRF in web_submit_form', async () => {
+    const m = new FetchUrlInProcess();
+    const result = await m.web_submit_form({
+      url: 'http://169.254.169.254/latest/meta-data/',
+      fields: {},
+    });
+    expect(result.text).toContain('Error submitting form');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Response size limit
+// ---------------------------------------------------------------------------
+
+describe('Response size limit', () => {
+  it('blocks response when Content-Length exceeds 5 MB', async () => {
+    const m = new FetchUrlInProcess();
+    fetchMock.mockImplementation(async () =>
+      makeFetchResponse({
+        body: 'data',
+        contentType: 'text/plain',
+        headers: { 'content-length': String(6 * 1024 * 1024) }, // 6 MB
+        url: 'https://example.com/big',
+      })
+    );
+    const result = await m.web_fetch_url({ url: 'https://example.com/big' });
+    expect(result.text).toContain('Error fetching URL');
+    expect(result.text).toMatch(/too large/i);
+  });
+
+  it('allows response within 5 MB Content-Length', async () => {
+    const m = new FetchUrlInProcess();
+    fetchMock.mockImplementation(async () =>
+      makeFetchResponse({
+        body: 'small',
+        contentType: 'text/plain',
+        headers: { 'content-length': String(1024) },
+        url: 'https://example.com/small',
+      })
+    );
+    const result = await m.web_fetch_url({ url: 'https://example.com/small' });
+    expect(result.text).toContain('small');
+  });
+
+  it('blocks response when streamed body exceeds 5 MB', async () => {
+    const m = new FetchUrlInProcess();
+    const SIX_MB = 6 * 1024 * 1024;
+    fetchMock.mockImplementation(async () => makeLargeStreamResponse(SIX_MB));
+    const result = await m.web_fetch_url({ url: 'https://example.com/stream' });
+    expect(result.text).toContain('Error fetching URL');
+    expect(result.text).toMatch(/too large/i);
+  });
+
+  it('allows streamed body within 5 MB', async () => {
+    const m = new FetchUrlInProcess();
+    const ONE_KB = 1024;
+    fetchMock.mockImplementation(async () => makeLargeStreamResponse(ONE_KB));
+    const result = await m.web_fetch_url({ url: 'https://example.com/stream' });
+    // Should succeed — content is plain text 'A' * 1024
+    expect(result.text).not.toMatch(/too large/i);
+    expect(result.text).not.toContain('Error fetching URL');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // web_submit_form
 // ---------------------------------------------------------------------------
 
@@ -410,7 +688,6 @@ describe('web_submit_form', () => {
     });
 
     expect(capturedInit?.body).toBeInstanceOf(FormData);
-    // Content-Type should NOT be set manually (fetch adds boundary automatically)
     const headers = capturedInit?.headers as Record<string, string>;
     expect(headers['Content-Type']).toBeUndefined();
   });

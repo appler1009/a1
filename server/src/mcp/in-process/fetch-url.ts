@@ -9,9 +9,152 @@
  *   web_submit_form — Submit form data (GET or POST) → markdown
  */
 
+import { lookup as dnsLookup } from 'dns/promises';
 import type { MCPToolInfo } from '@local-agent/shared';
 import type { InProcessMCPModule } from '../adapters/InProcessAdapter.js';
 import { parse as parseHtml, type HTMLElement, type Node } from 'node-html-parser';
+
+// ---------------------------------------------------------------------------
+// Security: SSRF protection
+// ---------------------------------------------------------------------------
+
+const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
+const MAX_REDIRECTS = 10;
+
+function ipv4ToNumber(ip: string): number {
+  const parts = ip.split('.').map(Number);
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+}
+
+const BLOCKED_IPV4: Array<{ base: number; mask: number }> = [
+  { base: ipv4ToNumber('0.0.0.0'),        mask: 0xff000000 }, // 0.0.0.0/8        this-network
+  { base: ipv4ToNumber('10.0.0.0'),       mask: 0xff000000 }, // 10.0.0.0/8       private
+  { base: ipv4ToNumber('100.64.0.0'),     mask: 0xffc00000 }, // 100.64.0.0/10    shared (RFC 6598)
+  { base: ipv4ToNumber('127.0.0.0'),      mask: 0xff000000 }, // 127.0.0.0/8      loopback
+  { base: ipv4ToNumber('169.254.0.0'),    mask: 0xffff0000 }, // 169.254.0.0/16   link-local / AWS metadata
+  { base: ipv4ToNumber('172.16.0.0'),     mask: 0xfff00000 }, // 172.16.0.0/12    private
+  { base: ipv4ToNumber('192.0.0.0'),      mask: 0xffffff00 }, // 192.0.0.0/24     IETF protocol
+  { base: ipv4ToNumber('192.168.0.0'),    mask: 0xffff0000 }, // 192.168.0.0/16   private
+  { base: ipv4ToNumber('198.18.0.0'),     mask: 0xfffe0000 }, // 198.18.0.0/15    benchmarking
+  { base: ipv4ToNumber('198.51.100.0'),   mask: 0xffffff00 }, // 198.51.100.0/24  documentation
+  { base: ipv4ToNumber('203.0.113.0'),    mask: 0xffffff00 }, // 203.0.113.0/24   documentation
+  { base: ipv4ToNumber('240.0.0.0'),      mask: 0xf0000000 }, // 240.0.0.0/4      reserved
+  { base: ipv4ToNumber('255.255.255.255'), mask: 0xffffffff }, // broadcast
+];
+
+function isBlockedIPv4(ip: string): boolean {
+  try {
+    const n = ipv4ToNumber(ip);
+    // Apply >>> 0 to masked value: JS & returns signed 32-bit, which won't ===
+    // the unsigned base for any IP with bit 31 set (≥128.x, incl 169.254, 172.16, 192.168).
+    return BLOCKED_IPV4.some(({ base, mask }) => ((n & mask) >>> 0) === base);
+  } catch {
+    return true;
+  }
+}
+
+function isBlockedIPv6(raw: string): boolean {
+  const ip = raw.replace(/^\[|\]$/g, '').toLowerCase();
+  if (ip === '::1' || ip === '0:0:0:0:0:0:0:1') return true;  // loopback
+  if (ip === '::' || ip === '0:0:0:0:0:0:0:0') return true;   // unspecified
+  if (/^f[cd]/i.test(ip)) return true;                         // fc00::/7 unique-local
+  if (/^fe[89ab]/i.test(ip)) return true;                      // fe80::/10 link-local
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return isBlockedIPv4(mapped[1]);
+  return false;
+}
+
+async function assertSafeUrl(urlStr: string): Promise<void> {
+  let parsed: URL;
+  try { parsed = new URL(urlStr); } catch { throw new Error(`Invalid URL: ${urlStr}`); }
+
+  if (!ALLOWED_PROTOCOLS.has(parsed.protocol)) {
+    throw new Error(`Protocol not allowed: ${parsed.protocol}. Only http and https are permitted.`);
+  }
+
+  const { hostname } = parsed;
+
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+    if (isBlockedIPv4(hostname)) throw new Error(`Blocked: ${hostname} is a private or reserved IPv4 address`);
+    return;
+  }
+  if (hostname === 'localhost') throw new Error(`Blocked: localhost is not allowed`);
+  if (hostname.startsWith('[') || /^[0-9a-f:]+$/i.test(hostname)) {
+    if (isBlockedIPv6(hostname)) throw new Error(`Blocked: ${hostname} is a private or reserved IPv6 address`);
+    return;
+  }
+
+  let records: { address: string; family: number }[];
+  try {
+    records = await dnsLookup(hostname, { all: true });
+  } catch (err) {
+    throw new Error(`DNS resolution failed for ${hostname}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  for (const { address, family } of records) {
+    if (family === 4 && isBlockedIPv4(address)) throw new Error(`Blocked: ${hostname} resolves to private IPv4 ${address}`);
+    if (family === 6 && isBlockedIPv6(address)) throw new Error(`Blocked: ${hostname} resolves to private IPv6 ${address}`);
+  }
+}
+
+async function safeFetch(urlStr: string, init: RequestInit & { signal?: AbortSignal }): Promise<Response> {
+  await assertSafeUrl(urlStr);
+  let currentUrl = urlStr;
+  let currentInit: RequestInit = { ...init, redirect: 'manual' };
+  let redirectsLeft = MAX_REDIRECTS;
+  while (true) {
+    const response = await fetch(currentUrl, currentInit);
+    const { status } = response;
+    if (status < 300 || status >= 400) return response;
+    if (redirectsLeft-- <= 0) throw new Error(`Too many redirects (max ${MAX_REDIRECTS})`);
+    const location = response.headers.get('location');
+    if (!location) throw new Error('Redirect response missing Location header');
+    const nextUrl = new URL(location, currentUrl).toString();
+    await assertSafeUrl(nextUrl);
+    currentUrl = nextUrl;
+    if ([301, 302, 303].includes(status) && (currentInit as any).method !== 'GET') {
+      const { body: _b, ...rest } = currentInit as any;
+      currentInit = { ...rest, method: 'GET', body: undefined };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Security: Response size limit + timeout
+// ---------------------------------------------------------------------------
+
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024; // 5 MB
+const REQUEST_TIMEOUT_MS = 30_000;
+
+async function readBodyWithLimit(response: Response): Promise<string> {
+  const cl = response.headers.get('content-length');
+  if (cl) {
+    const bytes = parseInt(cl, 10);
+    if (!isNaN(bytes) && bytes > MAX_RESPONSE_BYTES)
+      throw new Error(`Response too large: Content-Length ${bytes} bytes exceeds ${MAX_RESPONSE_BYTES}-byte limit`);
+  }
+  if (!response.body) return response.text();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error(`Response too large: exceeded ${MAX_RESPONSE_BYTES}-byte limit`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { combined.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(combined);
+}
 
 // ---------------------------------------------------------------------------
 // HTML → Markdown converter
@@ -50,6 +193,17 @@ function buildRequestHeaders(userHeaders?: Record<string, string>): Record<strin
 }
 
 /**
+ * Return true if the element is visually hidden — common prompt-injection vector.
+ */
+function isHidden(el: HTMLElement): boolean {
+  if (el.hasAttribute('hidden')) return true;
+  const style = el.getAttribute('style') ?? '';
+  if (/display\s*:\s*none/i.test(style)) return true;
+  if (/visibility\s*:\s*hidden/i.test(style)) return true;
+  return false;
+}
+
+/**
  * Render an HTML node tree to markdown text
  */
 function renderNode(node: Node, indent = 0): string {
@@ -67,6 +221,9 @@ function renderNode(node: Node, indent = 0): string {
 
   // Navigation / chrome we can skip
   if (tag === 'nav' || tag === 'footer' || tag === 'aside') return '';
+
+  // Security: drop visually hidden elements to reduce prompt-injection surface
+  if (isHidden(el)) return '';
 
   const children = () => el.childNodes.map(c => renderNode(c, indent)).join('');
   const childrenTrimmed = () => children().trim();
@@ -322,27 +479,23 @@ async function processResponse(response: Response): Promise<string> {
   const finalUrl = response.url;
   const statusLine = `**${response.status} ${response.statusText}** — ${finalUrl}\n\n`;
 
+  const rawText = await readBodyWithLimit(response);
+
   if (contentType.includes('application/json') || contentType.includes('+json')) {
     let data: unknown;
-    try {
-      data = await response.json();
-    } catch {
-      data = await response.text();
-    }
+    try { data = JSON.parse(rawText); } catch { data = rawText; }
     return statusLine + jsonToMarkdown(data);
   }
 
   if (contentType.includes('text/html')) {
-    const html = await response.text();
-    return statusLine + htmlToMarkdown(html);
+    return statusLine + htmlToMarkdown(rawText);
   }
 
   // Plain text, XML, CSV, etc.
-  const text = await response.text();
   if (contentType.includes('text/xml') || contentType.includes('application/xml')) {
-    return statusLine + `\`\`\`xml\n${text}\n\`\`\``;
+    return statusLine + `\`\`\`xml\n${rawText}\n\`\`\``;
   }
-  return statusLine + text;
+  return statusLine + rawText;
 }
 
 // ---------------------------------------------------------------------------
@@ -419,10 +572,10 @@ export class FetchUrlInProcess implements InProcessMCPModule {
     const { url, headers = {} } = args;
 
     try {
-      const response = await fetch(url, {
+      const response = await safeFetch(url, {
         method: 'GET',
         headers: buildRequestHeaders(headers),
-        redirect: 'follow',
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       const text = await processResponse(response);
@@ -471,11 +624,11 @@ export class FetchUrlInProcess implements InProcessMCPModule {
         }
       }
 
-      const response = await fetch(finalUrl, {
+      const response = await safeFetch(finalUrl, {
         method,
         headers: reqHeaders,
         body,
-        redirect: 'follow',
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       const text = await processResponse(response);
