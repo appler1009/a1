@@ -27,6 +27,28 @@ const INLINE_TAGS = new Set(['a', 'b', 'strong', 'i', 'em', 'code', 'span', 'lab
  */
 const DROP_TAGS = new Set(['script', 'style', 'noscript', 'head', 'meta', 'link', 'svg', 'canvas', 'iframe', 'embed', 'object']);
 
+// ---------------------------------------------------------------------------
+// Shared HTTP configuration
+// ----------------------------------------------------------------------------
+
+/** Default headers for web fetch requests */
+const DEFAULT_REQUEST_HEADERS: Record<string, string> = {
+  'User-Agent': 'Mozilla/5.0 (compatible; assist1.me/1.0)',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
+};
+
+/**
+ * Build request headers by merging default headers with user-provided headers
+ */
+function buildRequestHeaders(userHeaders?: Record<string, string>): Record<string, string> {
+  const headers = {
+    ...DEFAULT_REQUEST_HEADERS,
+    ...userHeaders,
+  };
+  console.log('[fetch-url] User-Agent:', headers['User-Agent']);
+  return headers;
+}
+
 /**
  * Render an HTML node tree to markdown text
  */
@@ -399,11 +421,7 @@ export class FetchUrlInProcess implements InProcessMCPModule {
     try {
       const response = await fetch(url, {
         method: 'GET',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; local-agent/1.0)',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
-          ...headers,
-        },
+        headers: buildRequestHeaders(headers),
         redirect: 'follow',
       });
 
@@ -433,11 +451,7 @@ export class FetchUrlInProcess implements InProcessMCPModule {
     try {
       let finalUrl = url;
       let body: string | FormData | undefined;
-      const reqHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (compatible; local-agent/1.0)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
-        ...headers,
-      };
+      const reqHeaders = buildRequestHeaders(headers);
 
       if (method === 'GET') {
         const params = new URLSearchParams(fields);
