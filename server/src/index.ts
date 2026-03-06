@@ -1731,6 +1731,8 @@ fastify.register(async (instance) => {
     reply.raw.setHeader('Content-Type', 'text/event-stream');
     reply.raw.setHeader('Cache-Control', 'no-cache');
     reply.raw.setHeader('Connection', 'keep-alive');
+    reply.hijack();
+    reply.raw.flushHeaders();
 
     const subscriberKey = `${request.user.id}#${roleId}`;
     if (!messageSubscribers.has(subscriberKey)) {
