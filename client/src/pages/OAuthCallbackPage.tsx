@@ -25,16 +25,16 @@ export function OAuthCallbackPage() {
         setStatus('success');
         setMessage(`Successfully authenticated with ${provider}! Closing this window...`);
 
-        // Notify parent window (if opened from popup)
+        // Notify parent window via BroadcastChannel (works even when window.opener
+        // is null due to Google's Cross-Origin-Opener-Policy header)
+        const channel = new BroadcastChannel('oauth-callback');
+        channel.postMessage({ type: 'oauth_success', provider, accountEmail, code, state });
+        channel.close();
+
+        // Also try window.opener as fallback (may be null after COOP)
         if (window.opener) {
           window.opener.postMessage(
-            {
-              type: 'oauth_success',
-              provider,
-              accountEmail,
-              code,
-              state,
-            },
+            { type: 'oauth_success', provider, accountEmail, code, state },
             window.location.origin
           );
         }

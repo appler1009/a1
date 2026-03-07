@@ -274,6 +274,29 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     return () => window.removeEventListener('message', handleOAuthMessage);
   }, [addServerAfterAuth]);
 
+  // BroadcastChannel listener — handles oauth_success when window.opener is null
+  // (Google's Cross-Origin-Opener-Policy severs the opener reference)
+  React.useEffect(() => {
+    const channel = new BroadcastChannel('oauth-callback');
+    channel.onmessage = (event) => {
+      if (event.data?.type === 'oauth_success') {
+        const { provider, accountEmail } = event.data;
+        console.log(`[OAuth] BroadcastChannel: success for ${provider} (account: ${accountEmail})`);
+
+        if (oauthPollIntervalRef.current) {
+          clearInterval(oauthPollIntervalRef.current);
+          oauthPollIntervalRef.current = null;
+        }
+
+        const serverId = selectedServerIdRef.current;
+        if (serverId) {
+          addServerAfterAuth(serverId, accountEmail);
+        }
+      }
+    };
+    return () => channel.close();
+  }, [addServerAfterAuth]);
+
   const startOAuthFlow = async (provider: string): Promise<boolean> => {
     try {
       const endpoint = `/api/auth/${provider}/start`;
@@ -348,6 +371,24 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     const requiresAuth = server.auth?.provider && server.auth.provider !== 'none';
 
     if (requiresAuth && server.auth?.provider) {
+      // If the user already has a token for this provider, skip OAuth and use it directly.
+      // This handles adding a second Google service (e.g. Calendar when Drive is already connected)
+      // and avoids the broken postMessage flow caused by Google's COOP header nullifying window.opener.
+      if (server.auth.provider === 'google') {
+        try {
+          const connResp = await apiFetch('/api/mcp/oauth/connections');
+          const connData = await connResp.json();
+          const existing: { accountEmail: string }[] = connData.data?.google || [];
+          if (existing.length > 0) {
+            console.log(`[OAuth] Existing Google account(s) found, skipping OAuth for ${serverId}`);
+            await addServerWithOptions(serverId);
+            return;
+          }
+        } catch {
+          // Fall through to full OAuth flow
+        }
+      }
+
       try {
         const connResp = await apiFetch('/api/mcp/oauth/connections');
         const connData = await connResp.json();
