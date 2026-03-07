@@ -34,6 +34,7 @@
     "fuse.js": "^7.0.0",
     "gmail-mcp-lib": "^1.1.0",
     "google-auth-library": "^9.6.3",
+    "google-calendar-mcp-lib": "^1.0.0",
     "google-drive-mcp-lib": "^1.0.0",
     "googleapis": "^144.0.0",
     "lucia": "^3.2.0",

@@ -11,6 +11,7 @@ export { SQLiteMemoryInProcess } from './sqlite-memory.js';
 export { MetaMcpSearchInProcess, updateToolManifest, searchTools, isSearchEngineReady } from './meta-mcp-search.js';
 export { DisplayEmailInProcess, getDisplayEmailToolDefinition, isDisplayEmailMarker, extractEmailDataFromMarker, initializeDisplayEmail } from './display-email.js';
 export { GmailInProcess, initializeGmailInProcess, isGmailCacheId, isGmailThreadCacheId, getGmailMessageIdFromCacheId, getGmailThreadIdFromCacheId, parseGmailMessage, fetchAndCacheGmailMessage } from './gmail.js';
+export { GoogleCalendarInProcess } from './google-calendar.js';
 export { RoleManagerInProcess } from './role-manager.js';
 export { AlphaVantageInProcess } from './alpha-vantage.js';
 export { TwelveDataInProcess } from './twelve-data.js';

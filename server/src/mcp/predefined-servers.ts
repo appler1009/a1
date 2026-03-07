@@ -139,6 +139,19 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
   },
 
   {
+    id: 'google-calendar-mcp-lib',
+    name: 'Google Calendar',
+    description: 'Access Google Calendar to list events, create meetings, manage calendars, and schedule appointments. Requires Google OAuth authentication.',
+    command: 'npx',
+    args: ['-y', 'google-calendar-mcp-lib'],
+    auth: {
+      provider: 'google',
+    },
+    icon: 'calendar',
+    inProcess: true, // Use InProcessAdapter for direct API calls (better performance)
+  },
+
+  {
     id: 'process-each',
     name: 'Process Each',
     description: 'Process a list of items (email IDs, file IDs, etc.) one at a time using a focused AI call per item. Avoids context overflow when handling large numbers of items.',
