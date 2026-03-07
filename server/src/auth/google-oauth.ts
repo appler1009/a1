@@ -23,6 +23,7 @@ const GOOGLE_OAUTH_SCOPES = [
   'email',                                          // Get user email address
   'https://www.googleapis.com/auth/drive',           // Full Drive access (includes Docs, Sheets, etc.)
   'https://www.googleapis.com/auth/gmail.modify',   // Full read/write access to Gmail
+  'https://www.googleapis.com/auth/calendar',       // Full read/write access to Google Calendar
 ];
 
 export class GoogleOAuthHandler {
