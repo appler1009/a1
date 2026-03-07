@@ -2173,6 +2173,15 @@ When showing email search results from gmailSearchMessages:
    - Format the draft display clearly with labeled sections
    - Verify subject, body, and recipient(s) match what the user intended
 
+## GOOGLE CALENDAR
+**CRITICAL WORKFLOW for calendar queries:**
+1. **ALWAYS list all calendars first** using googleCalendarListCalendars()
+2. **Map calendar names to IDs**: Find the calendar ID that matches the user's request (e.g., "work calendar" → find calendar with name containing "work")
+3. **Then query events** using googleCalendarListEvents() with the correct calendar ID
+- Users refer to calendars by name, but the API requires calendar IDs
+- Example: User asks "show me my work calendar events" → call googleCalendarListCalendars() → find the calendar with "work" in the name → use its ID to call googleCalendarListEvents()
+- The primary calendar ID is often "primary" but users may have other named calendars
+
 ${roleSection}${accountsSection}## MEMORY SYSTEM
 You have access to a knowledge graph memory system with the following tools:
 - **memory_search_nodes**: Search for relevant entities, relationships, and observations by query (e.g., "customer preferences", "project decisions")
