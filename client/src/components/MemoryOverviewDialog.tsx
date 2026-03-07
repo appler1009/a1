@@ -16,20 +16,18 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
   const [error, setError] = useState('');
   const [selectedText, setSelectedText] = useState('');
   const [removing, setRemoving] = useState(false);
-  const [removeResult, setRemoveResult] = useState<{ removed: string[]; count: number } | null>(null);
   const [removeError, setRemoveError] = useState('');
   const [editInstruction, setEditInstruction] = useState('');
   const [editing, setEditing] = useState(false);
-  const [editResult, setEditResult] = useState<{ updated: string[]; count: number } | null>(null);
   const [editError, setEditError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!role) return;
 
-    setRemoveResult(null);
+
     setRemoveError('');
-    setEditResult(null);
+
     setEditError('');
     setLoading(true);
     setOverview(null);
@@ -56,14 +54,14 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
   const handleMouseUp = () => {
     const sel = window.getSelection()?.toString().trim() ?? '';
     setSelectedText(sel);
-    if (!sel) setRemoveResult(null);
+
   };
 
   const handleMouseDown = () => {
     setSelectedText('');
-    setRemoveResult(null);
+
     setRemoveError('');
-    setEditResult(null);
+
     setEditError('');
     setEditInstruction('');
   };
@@ -72,7 +70,7 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
     if (!role || !selectedText) return;
     setRemoving(true);
     setRemoveError('');
-    setRemoveResult(null);
+
     try {
       const res = await apiFetch(`/api/roles/${role.id}/remove-memories`, {
         method: 'POST',
@@ -82,7 +80,6 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
       if (!data.success) {
         setRemoveError(data.error?.message || 'Failed to remove memories');
       } else {
-        setRemoveResult(data.data);
         setSelectedText('');
         window.getSelection()?.removeAllRanges();
         setTimeout(() => setRefreshKey((k) => k + 1), 800);
@@ -98,7 +95,7 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
     if (!role || !selectedText || !editInstruction.trim()) return;
     setEditing(true);
     setEditError('');
-    setEditResult(null);
+
     try {
       const res = await apiFetch(`/api/roles/${role.id}/edit-memories`, {
         method: 'POST',
@@ -108,7 +105,6 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
       if (!data.success) {
         setEditError(data.error?.message || 'Failed to edit memories');
       } else {
-        setEditResult(data.data);
         setSelectedText('');
         setEditInstruction('');
         window.getSelection()?.removeAllRanges();
@@ -125,7 +121,7 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-card rounded-lg shadow-lg w-[600px] max-w-[90vw] max-h-[80vh] flex flex-col">
+      <div className="bg-card rounded-lg shadow-lg w-[600px] max-w-[90vw] h-[80vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-border shrink-0">
           <div className="flex items-center gap-2 mb-2">
@@ -171,60 +167,38 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
           )}
         </div>
 
-        {/* Sticky footer */}
-        {(selectedText || removeResult || removeError || editResult || editError) && (
-          <div className="border-t border-border px-6 py-3 shrink-0 flex flex-col gap-2">
-            {removeResult && (
-              <p className="text-xs text-muted-foreground">
-                {removeResult.count === 0
-                  ? 'No matching memories found.'
-                  : `Removed ${removeResult.count} memor${removeResult.count === 1 ? 'y' : 'ies'}: ${removeResult.removed.join(', ')}`}
-              </p>
-            )}
-            {removeError && <p className="text-xs text-destructive">{removeError}</p>}
-            {editResult && (
-              <p className="text-xs text-muted-foreground">
-                {editResult.count === 0
-                  ? 'No matching memories found.'
-                  : `Updated ${editResult.count} memor${editResult.count === 1 ? 'y' : 'ies'}: ${editResult.updated.join(', ')}`}
-              </p>
-            )}
-            {editError && <p className="text-xs text-destructive">{editError}</p>}
-            {selectedText && (
-              <div className="flex flex-col gap-2">
-                <p className="text-xs text-muted-foreground truncate">
-                  Selected: "<span className="italic">{selectedText.length > 60 ? selectedText.slice(0, 60) + '…' : selectedText}</span>"
-                </p>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={editInstruction}
-                    onChange={(e) => setEditInstruction(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleEdit()}
-                    placeholder="Edit instruction…"
-                    className="flex-1 min-w-0 px-2.5 py-1.5 text-xs bg-muted rounded-lg border border-border focus:outline-none focus:ring-1 focus:ring-ring"
-                  />
-                  <button
-                    onClick={handleEdit}
-                    disabled={editing || removing || !editInstruction.trim()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity shrink-0"
-                  >
-                    {editing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pencil className="w-3 h-3" />}
-                    {editing ? 'Editing…' : 'Edit'}
-                  </button>
-                  <button
-                    onClick={handleRemove}
-                    disabled={removing || editing}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-destructive text-destructive-foreground rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity shrink-0"
-                  >
-                    {removing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-                    {removing ? 'Removing…' : 'Remove'}
-                  </button>
-                </div>
-              </div>
-            )}
+        {/* Sticky footer — always rendered at fixed height to prevent layout shifts during text selection */}
+        <div className="border-t border-border px-6 py-3 shrink-0 flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={editInstruction}
+              onChange={(e) => setEditInstruction(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleEdit()}
+              placeholder={selectedText ? 'Edit instruction…' : 'Select text above to edit or remove…'}
+              disabled={!selectedText}
+              className="flex-1 min-w-0 px-2.5 py-1.5 text-xs bg-muted rounded-lg border border-border focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40 disabled:cursor-not-allowed"
+            />
+            <button
+              onClick={handleEdit}
+              disabled={editing || removing || !selectedText || !editInstruction.trim()}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity shrink-0"
+            >
+              {editing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pencil className="w-3 h-3" />}
+              {editing ? 'Editing…' : 'Edit'}
+            </button>
+            <button
+              onClick={handleRemove}
+              disabled={removing || editing || !selectedText}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-destructive text-destructive-foreground rounded-lg hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity shrink-0"
+            >
+              {removing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+              {removing ? 'Removing…' : 'Remove'}
+            </button>
           </div>
-        )}
+          {removeError && <p className="text-xs text-destructive">{removeError}</p>}
+          {editError && <p className="text-xs text-destructive">{editError}</p>}
+        </div>
       </div>
     </div>
   );
