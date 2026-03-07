@@ -371,24 +371,6 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     const requiresAuth = server.auth?.provider && server.auth.provider !== 'none';
 
     if (requiresAuth && server.auth?.provider) {
-      // If the user already has a token for this provider, skip OAuth and use it directly.
-      // This handles adding a second Google service (e.g. Calendar when Drive is already connected)
-      // and avoids the broken postMessage flow caused by Google's COOP header nullifying window.opener.
-      if (server.auth.provider === 'google') {
-        try {
-          const connResp = await apiFetch('/api/mcp/oauth/connections');
-          const connData = await connResp.json();
-          const existing: { accountEmail: string }[] = connData.data?.google || [];
-          if (existing.length > 0) {
-            console.log(`[OAuth] Existing Google account(s) found, skipping OAuth for ${serverId}`);
-            await addServerWithOptions(serverId);
-            return;
-          }
-        } catch {
-          // Fall through to full OAuth flow
-        }
-      }
-
       try {
         const connResp = await apiFetch('/api/mcp/oauth/connections');
         const connData = await connResp.json();
@@ -498,7 +480,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   };
 
   const handleRemoveServer = async (serverId: string) => {
-    if (!confirm(`Are you sure you want to remove this server?`)) return;
+    if (!confirm(`Are you sure you want to remove this feature?`)) return;
 
     try {
       const response = await apiFetch(`/api/mcp/servers/${serverId}`, {
