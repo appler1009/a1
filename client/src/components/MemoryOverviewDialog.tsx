@@ -146,7 +146,7 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
           {loading && (
             <div className="flex items-center gap-3 text-muted-foreground">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="text-sm">Generating overview...</span>
+              <span className="text-sm">Generating summary...</span>
             </div>
           )}
 
