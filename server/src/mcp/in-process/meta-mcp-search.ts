@@ -220,19 +220,20 @@ After calling this tool, you'll receive tool names and their server information.
   /**
    * Call the search_tool
    */
-  async search_tool(args: { query: string; limit?: number }): Promise<{
+  async search_tool(args: { query: string; limit?: number; excluded_tools?: string[] }): Promise<{
     type: 'text';
     text: string;
   }> {
-    const { query, limit = 5 } = args;
-    
-    console.log(`[MetaMcpSearchInProcess] search_tool called: "${query}"`);
-    
+    const { query, limit = 5, excluded_tools = [] } = args;
+
+    console.log(`[MetaMcpSearchInProcess] search_tool called: "${query}"${excluded_tools.length ? ` (excluding: ${excluded_tools.join(', ')})` : ''}`);
+
     try {
       const rawResults = await searchTools(query, limit + 1); // Fetch one extra to account for potential self-filtering
-      
-      // Filter out search_tool itself from results
-      const results = rawResults.filter(({ tool }) => tool.name !== 'search_tool').slice(0, limit);
+
+      // Filter out search_tool itself and any caller-specified exclusions
+      const excluded = new Set(['search_tool', ...excluded_tools]);
+      const results = rawResults.filter(({ tool }) => !excluded.has(tool.name)).slice(0, limit);
       
       if (results.length === 0) {
         return {

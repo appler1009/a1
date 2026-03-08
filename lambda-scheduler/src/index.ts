@@ -63,7 +63,7 @@ const PROVIDER_DEFAULTS: Record<typeof LLM_PROVIDER, string> = {
 
 const EVALUATOR_MODEL = process.env.EVALUATOR_MODEL || PROVIDER_DEFAULTS[LLM_PROVIDER];
 
-const TABLE_PREFIX = process.env.DYNAMODB_TABLE_PREFIX ?? '';
+const TABLE_PREFIX = (process.env.DYNAMODB_TABLE_PREFIX ?? '').trim();
 const TOKEN_USAGE_TABLE = `${TABLE_PREFIX}token_usage`;
 
 // ---------------------------------------------------------------------------
