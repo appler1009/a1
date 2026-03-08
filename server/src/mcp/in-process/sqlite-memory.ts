@@ -48,6 +48,24 @@ interface Relation {
  * - Opening specific nodes
  */
 export class SQLiteMemoryInProcess implements InProcessMCPModule {
+  static readonly systemPrompt = `## MEMORY SYSTEM
+You have access to a knowledge graph memory system with the following tools:
+- **memory_search_nodes**: Search for relevant entities, relationships, and observations by query (e.g., "customer preferences", "project decisions")
+- **memory_read_graph**: Read the entire knowledge graph to get a complete overview of all learned information
+- **memory_open_nodes**: Retrieve specific entities by name to access their detailed observations and relationships
+
+**When to use memory:**
+- You MUST search memory before answering any question about the user, their preferences, past context, or prior decisions. Do not answer from assumption.
+- At the beginning of conversations, search memory for relevant context about the topic
+- Before making recommendations, check if related information exists in memory
+- When the user mentions a previous context or topic, look it up in memory first
+- Use memory to maintain continuity and personalization across conversations
+- For any factual question about the user's data, files, or past context — always use available tools to look it up. Never answer from training knowledge when a tool can retrieve the real answer.`;
+
+  getSystemPrompt(): string {
+    return SQLiteMemoryInProcess.systemPrompt;
+  }
+
   private db: Database | null = null;
   private dbPath: string;
 

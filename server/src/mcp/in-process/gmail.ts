@@ -275,6 +275,38 @@ export class GmailInProcess implements InProcessMCPModule {
     console.log('[GmailInProcess] Initialized with token data and storage root:', this.storageRoot);
   }
 
+  getSystemPrompt(): string {
+    return `## GMAIL EMAIL SEARCH RESULTS
+When showing email search results from gmailSearchMessages:
+- **NEVER** just list message IDs - they are useless to the user
+- **ALWAYS** fetch each message using gmailGetMessage() to get human-readable details
+- **MUST SHOW** for each email at minimum:
+  - Subject (as a [preview-file:...] link for direct viewing)
+  - Sender (From address and display name)
+  - Date (human-readable format)
+  - Brief preview/snippet if available
+- **IMPORTANT**: Any emails shown as links in your response MUST be downloaded using gmailGetMessage - never show raw email data or message IDs as links. Always use the cache-id from gmailGetMessage responses.
+- **NEVER** mention message IDs, thread IDs, or any internal Gmail IDs in your responses - useless to users
+- When retrieving emails with gmailGetMessage or gmailGetThread: NEVER include email bodies in your response text. The email will be displayed in the preview pane automatically. Format cached emails as: [preview-file:Email Subject.json](cache-id-from-response). Include .json extension so preview pane correctly detects it as email. Just acknowledge that you retrieved it and provide a brief summary (subject, sender, key details).
+
+## GMAIL EMAIL DRAFT CREATION
+**CRITICAL RULES for gmailCreateDraft:**
+1. **ALWAYS show the exact draft to the user BEFORE and AFTER creation:**
+   - Display the full draft with: To, Subject, and complete Body text
+   - Show exactly what will be saved to drafts
+   - Never paraphrase or summarize the draft content
+2. **When replying to an email:**
+   - ONLY create the draft to the same email account that received the original email
+   - If the original email was sent to user@example.com, create the draft replying to that address
+   - Do NOT create drafts to different accounts unless explicitly requested
+3. **Draft content verification:**
+   - Format the draft display clearly with labeled sections
+   - Verify subject, body, and recipient(s) match what the user intended
+
+## GMAIL SEARCH RECENCY
+Always include \`newer_than:90d\` in Gmail search queries unless the user specifies a different timeframe or is explicitly looking for something historical. For "recent" or "today" use \`newer_than:7d\` or \`newer_than:1d\`. Gmail returns results newest-first by default.`;
+  }
+
   /**
    * Get available tools for Gmail operations
    */

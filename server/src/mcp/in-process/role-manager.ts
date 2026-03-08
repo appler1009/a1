@@ -25,6 +25,19 @@ export class RoleManagerInProcess implements InProcessMCPModule {
     console.log(`[RoleManagerInProcess] Initialized for user: ${userId}`);
   }
 
+  getSystemPrompt(): string {
+    return `## ROLE MANAGEMENT
+You have access to role management tools. When the user asks to change or switch roles, you MUST call these tools — no exceptions:
+- **list_roles**: Lists all available roles
+- **switch_role**: Switches to a different role by name or ID
+
+**Rules — strictly enforced:**
+- ALWAYS call switch_role when asked to switch, even if you believe the role is already active
+- NEVER say "you're already in that role" or skip the tool call for any reason — the system requires switch_role to be called to apply the change
+- NEVER ask the user to switch the role themselves
+- Call list_roles first if you are unsure of the exact role name, then call switch_role`;
+  }
+
   /**
    * Get available tools for role management
    */

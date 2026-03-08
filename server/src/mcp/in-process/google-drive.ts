@@ -134,6 +134,11 @@ export class GoogleDriveInProcess implements InProcessMCPModule {
     return convertedQuery;
   }
 
+  getSystemPrompt(): string {
+    return `## GOOGLE DRIVE SEARCH
+Files are always returned ordered by most recently modified first. Mention the modification date when presenting results. When ranking or summarizing multiple results, give higher weight to more recent items.`;
+  }
+
   /**
    * List all available tools
    */

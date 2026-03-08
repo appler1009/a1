@@ -21,6 +21,12 @@ export interface InProcessToolModule {
   getTools(): Promise<RawToolInfo[]> | RawToolInfo[];
 
   /**
+   * Optional system prompt contribution for this MCP module.
+   * Returned text will be injected into the AI system prompt when this server is active.
+   */
+  getSystemPrompt?(): string;
+
+  /**
    * Tools are called as methods on the module
    * The module can have any additional methods/properties
    */
@@ -189,6 +195,15 @@ export class InProcessAdapter {
       console.error(`[InProcessAdapter:readResource] Error reading resource ${uri}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Return this module's system prompt contribution, if any.
+   */
+  getSystemPrompt(): string | undefined {
+    return typeof this.toolModule.getSystemPrompt === 'function'
+      ? this.toolModule.getSystemPrompt()
+      : undefined;
   }
 
   /**

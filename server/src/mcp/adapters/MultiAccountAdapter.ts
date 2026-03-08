@@ -76,6 +76,18 @@ export class MultiAccountAdapter implements McpAdapter {
     this.accounts.clear();
   }
 
+  /**
+   * Return this server's system prompt contribution from the first registered module, if any.
+   */
+  getSystemPrompt(): string | undefined {
+    const emails = this.getAccountEmails();
+    if (emails.length === 0) return undefined;
+    const firstModule = this.accounts.get(emails[0])!;
+    return typeof firstModule.getSystemPrompt === 'function'
+      ? firstModule.getSystemPrompt()
+      : undefined;
+  }
+
   // ---- Tools ----
 
   async listTools(): Promise<MCPToolInfo[]> {

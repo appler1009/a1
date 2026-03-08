@@ -35,6 +35,8 @@ import { GoogleOAuthHandler } from './auth/google-oauth.js';
 import { startDiscordBot } from './discord/bot.js';
 import { JobRunner } from './scheduler/job-runner.js';
 import { initializeGmailInProcess, isGmailCacheId, getGmailMessageIdFromCacheId, fetchAndCacheGmailMessage } from './mcp/in-process/gmail.js';
+import { SQLiteMemoryInProcess } from './mcp/in-process/sqlite-memory.js';
+import { DynamoDBMemoryInProcess } from './mcp/in-process/dynamodb-memory.js';
 import { initializeDisplayEmail } from './mcp/in-process/display-email.js';
 import fs from 'fs';
 
@@ -2183,9 +2185,18 @@ ${accountList}
       const usesMetric = userLocale !== 'en-US' && (userLocale.startsWith('fr') || userLocale.startsWith('de') || userLocale.startsWith('es') || userLocale.startsWith('pt') || userLocale.startsWith('it') || userLocale.startsWith('nl') || userLocale.startsWith('sv') || userLocale.startsWith('no') || userLocale.startsWith('da') || userLocale.startsWith('fi') || userLocale.startsWith('pl') || userLocale.startsWith('ru') || userLocale.startsWith('zh') || userLocale.startsWith('ja') || userLocale.startsWith('ko') || metricLocales.includes(userLocale));
       const unitSystem = usesMetric ? 'metric (Celsius, km, kg, L, cm)' : 'imperial (Fahrenheit, miles, lb, fl oz, inches)';
 
+      // Collect system prompt contributions from active MCP adapters
+      const mcpSystemPrompts = mcpManager.getSystemPrompts();
+
+      // Memory is role-scoped (not in the manager's adapter map), so always include it directly
+      const memorySystemPrompt = process.env.STORAGE_TYPE === 's3'
+        ? DynamoDBMemoryInProcess.systemPrompt
+        : SQLiteMemoryInProcess.systemPrompt;
+
       const systemMessage = {
         role: 'system' as const,
-        content: `You are a helpful assistant.
+        content: [
+          `You are a helpful assistant.
 
 **Current date and time**: ${currentDateTimeStr} (${currentDateStr})
 **User's timezone**: ${userTimezone} — always use this timezone when displaying or interpreting dates and times.
@@ -2202,7 +2213,6 @@ ${accountList}
 - NEVER mention any internal IDs in your responses to users - these IDs (cache IDs, email IDs, message IDs, file IDs, document IDs, attachment IDs, drive IDs, thread IDs) are internal only and useless to users. Always use the human-readable content instead.
 - For all cached files (PDFs, Google Drive files, emails): Use [preview-file:Filename](cache-id) format for preview pane display. Never mention cache IDs in plain text.
 - For Google Drive files: Format as [preview-file:Filename](cache-id) where cache-id is from the downloaded/cached file, not the Google Drive ID.
-- When retrieving emails with gmailGetMessage or gmailGetThread: NEVER include email bodies in your response text. The email will be displayed in the preview pane automatically. Format cached emails as: [preview-file:Email Subject.json](cache-id-from-response). Include .json extension so preview pane correctly detects it as email. Just acknowledge that you retrieved it and provide a brief summary (subject, sender, key details).
 
 ## PROCESSING MULTIPLE ITEMS
 **IMPORTANT**: When the user asks you to process multiple items (emails, files, documents, etc.):
@@ -2210,96 +2220,13 @@ ${accountList}
 - For each item: retrieve it, analyze it, show the result to the user
 - Move to the next item only after completing the current one
 - This prevents hitting token limits and ensures each item receives proper attention
-- Example: If user asks "summarize 10 emails", handle them sequentially—retrieve email 1, summarize it, then email 2, etc.
-
-## GMAIL EMAIL SEARCH RESULTS
-When showing email search results from gmailSearchMessages:
-- **NEVER** just list message IDs - they are useless to the user
-- **ALWAYS** fetch each message using gmailGetMessage() to get human-readable details
-- **MUST SHOW** for each email at minimum:
-  - Subject (as a [preview-file:...] link for direct viewing)
-  - Sender (From address and display name)
-  - Date (human-readable format)
-  - Brief preview/snippet if available
-- **IMPORTANT**: Any emails shown as links in your response MUST be downloaded using gmailGetMessage - never show raw email data or message IDs as links. Always use the cache-id from gmailGetMessage responses.
-- **NEVER** mention message IDs, thread IDs, or any internal Gmail IDs in your responses - useless to users
-
-## GMAIL EMAIL DRAFT CREATION
-**CRITICAL RULES for gmailCreateDraft:**
-1. **ALWAYS show the exact draft to the user BEFORE and AFTER creation:**
-   - Display the full draft with: To, Subject, and complete Body text
-   - Show exactly what will be saved to drafts
-   - Never paraphrase or summarize the draft content
-2. **When replying to an email:**
-   - ONLY create the draft to the same email account that received the original email
-   - If the original email was sent to user@example.com, create the draft replying to that address
-   - Do NOT create drafts to different accounts unless explicitly requested
-3. **Draft content verification:**
-   - Format the draft display clearly with labeled sections
-   - Verify subject, body, and recipient(s) match what the user intended
-
-## GOOGLE CALENDAR
-**CRITICAL WORKFLOW for calendar queries:**
-1. **ALWAYS list all calendars first** using googleCalendarListCalendars()
-2. **Map calendar names to IDs**: Find the calendar ID that matches the user's request (e.g., "work calendar" → find calendar with name containing "work")
-3. **Then query events** using googleCalendarListEvents() with the correct calendar ID
-- Users refer to calendars by name, but the API requires calendar IDs
-- Example: User asks "show me my work calendar events" → call googleCalendarListCalendars() → find the calendar with "work" in the name → use its ID to call googleCalendarListEvents()
-- The primary calendar ID is often "primary" but users may have other named calendars
-
-${roleSection}${accountsSection}## MEMORY SYSTEM
-You have access to a knowledge graph memory system with the following tools:
-- **memory_search_nodes**: Search for relevant entities, relationships, and observations by query (e.g., "customer preferences", "project decisions")
-- **memory_read_graph**: Read the entire knowledge graph to get a complete overview of all learned information
-- **memory_open_nodes**: Retrieve specific entities by name to access their detailed observations and relationships
-
-**When to use memory:**
-- You MUST search memory before answering any question about the user, their preferences, past context, or prior decisions. Do not answer from assumption.
-- At the beginning of conversations, search memory for relevant context about the topic
-- Before making recommendations, check if related information exists in memory
-- When the user mentions a previous context or topic, look it up in memory first
-- Use memory to maintain continuity and personalization across conversations
-- For any factual question about the user's data, files, or past context — always use available tools to look it up. Never answer from training knowledge when a tool can retrieve the real answer.
-
-## EMAIL AND FILE SEARCH RECENCY
-Always bias toward recent content when searching:
-- **Gmail**: include \`newer_than:90d\` in all search queries unless the user specifies a different timeframe or is explicitly looking for something historical. For "recent" or "today" use \`newer_than:7d\` or \`newer_than:1d\`. Gmail returns results newest-first by default.
-- **Google Drive**: files are always returned ordered by most recently modified first. Mention the modification date when presenting results.
-- When ranking or summarizing multiple results, give higher weight to more recent items.
-
-## MCP TOOLS
-**You MUST explore and use available MCP tools to be better equipped for the answer.**
-
-You have access to a \`search_tool\` that discovers available MCP tools by natural language query.
-
-**You MUST use \`search_tool\` before attempting any task that could benefit from external tools** (file access, email, calendar, search, APIs, data sources, etc.). Do not assume tools are unavailable — always check first. Examples:
-- User asks about a file → search_tool("read or convert a file")
-- User wants to send a message → search_tool("send message or email")
-- User needs web data → search_tool("web search or fetch URL")
-- User references Google Drive, Gmail, Slack, GitHub, etc. → search_tool with that service name
-
-After calling search_tool, use the returned tools to complete the task. Only tell the user a capability is unavailable if search_tool returns nothing relevant.
-
-## ROLE MANAGEMENT
-You have access to role management tools. When the user asks to change or switch roles, you MUST call these tools — no exceptions:
-- **list_roles**: Lists all available roles
-- **switch_role**: Switches to a different role by name or ID
-
-**Rules — strictly enforced:**
-- ALWAYS call switch_role when asked to switch, even if you believe the role is already active
-- NEVER say "you're already in that role" or skip the tool call for any reason — the system requires switch_role to be called to apply the change
-- NEVER ask the user to switch the role themselves
-- Call list_roles first if you are unsure of the exact role name, then call switch_role
-
-## SCHEDULED TASKS
-When the user asks to schedule, automate, or run something in the future (e.g. "every morning", "remind me", "check this daily", "run this at 9am"), you MUST use \`search_tool\` to find the scheduler tools:
-- search_tool("schedule a task") → finds \`schedule_task\` and \`list_scheduled_jobs\`
-
-**Rules:**
-- ALWAYS use \`schedule_task\` when the user wants something done automatically in the future — never just describe how to do it
-- For recurring jobs, embed the full schedule in the description (e.g. "Every weekday at 8am, fetch AAPL stock price and save to memory")
-- For one-time jobs, extract the exact datetime from the user's intent and pass it as ISO 8601 in \`runAt\`
-- Use \`list_scheduled_jobs\` when the user asks what tasks are scheduled${documentContext}`,
+- Example: If user asks "summarize 10 emails", handle them sequentially—retrieve email 1, summarize it, then email 2, etc.`,
+          roleSection ? roleSection.trim() : '',
+          accountsSection ? accountsSection.trim() : '',
+          memorySystemPrompt,
+          ...mcpSystemPrompts,
+          documentContext,
+        ].filter(Boolean).join('\n\n'),
       };
       
       let conversationMessages = [systemMessage, ...body.messages];

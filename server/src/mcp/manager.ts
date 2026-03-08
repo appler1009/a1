@@ -725,6 +725,29 @@ export class MCPManager {
   }
 
   /**
+   * Collect system prompt contributions from all active in-process adapters.
+   * Each adapter may optionally implement getSystemPrompt() to inject instructions
+   * relevant to that server into the AI system prompt.
+   */
+  getSystemPrompts(): string[] {
+    const prompts: string[] = [];
+    const seen = new Set<string>();
+
+    for (const adapter of this.inProcessAdapters.values()) {
+      const getPrompt = (adapter as any).getSystemPrompt;
+      if (typeof getPrompt === 'function') {
+        const prompt: string | undefined = getPrompt.call(adapter);
+        if (prompt && !seen.has(prompt)) {
+          seen.add(prompt);
+          prompts.push(prompt);
+        }
+      }
+    }
+
+    return prompts;
+  }
+
+  /**
    * Get list of connected server names (both stdio and in-process)
    */
   getConnectedServers(): string[] {

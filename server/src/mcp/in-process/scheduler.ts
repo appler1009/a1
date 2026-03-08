@@ -11,6 +11,18 @@ export class SchedulerInProcess implements InProcessMCPModule {
     private readonly roleId: string,
   ) {}
 
+  getSystemPrompt(): string {
+    return `## SCHEDULED TASKS
+When the user asks to schedule, automate, or run something in the future (e.g. "every morning", "remind me", "check this daily", "run this at 9am"), you MUST use \`search_tool\` to find the scheduler tools:
+- search_tool("schedule a task") → finds \`schedule_task\` and \`list_scheduled_jobs\`
+
+**Rules:**
+- ALWAYS use \`schedule_task\` when the user wants something done automatically in the future — never just describe how to do it
+- For recurring jobs, embed the full schedule in the description (e.g. "Every weekday at 8am, fetch AAPL stock price and save to memory")
+- For one-time jobs, extract the exact datetime from the user's intent and pass it as ISO 8601 in \`runAt\`
+- Use \`list_scheduled_jobs\` when the user asks what tasks are scheduled`;
+  }
+
   async getTools(): Promise<MCPToolInfo[]> {
     return [
       {

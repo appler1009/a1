@@ -161,6 +161,21 @@ export class MetaMcpSearchInProcess {
     console.log(`[MetaMcpSearchInProcess] Created adapter for user: ${userId}`);
   }
 
+  getSystemPrompt(): string {
+    return `## MCP TOOLS
+**You MUST explore and use available MCP tools to be better equipped for the answer.**
+
+You have access to a \`search_tool\` that discovers available MCP tools by natural language query.
+
+**You MUST use \`search_tool\` before attempting any task that could benefit from external tools** (file access, email, calendar, search, APIs, data sources, etc.). Do not assume tools are unavailable — always check first. Examples:
+- User asks about a file → search_tool("read or convert a file")
+- User wants to send a message → search_tool("send message or email")
+- User needs web data → search_tool("web search or fetch URL")
+- User references Google Drive, Gmail, Slack, GitHub, etc. → search_tool with that service name
+
+After calling search_tool, use the returned tools to complete the task. Only tell the user a capability is unavailable if search_tool returns nothing relevant.`;
+  }
+
   /**
    * Get available tools (just search_tool)
    */
