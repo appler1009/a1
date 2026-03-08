@@ -1,5 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { randomUUID } from 'crypto';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,6 +32,19 @@ interface EvaluatorResult {
   hold: Array<{ id: string; until: string }>;
 }
 
+interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number;
+}
+
+interface LLMResult {
+  text: string;
+  usage: TokenUsage;
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -47,12 +63,57 @@ const PROVIDER_DEFAULTS: Record<typeof LLM_PROVIDER, string> = {
 
 const EVALUATOR_MODEL = process.env.EVALUATOR_MODEL || PROVIDER_DEFAULTS[LLM_PROVIDER];
 
+const TABLE_PREFIX = process.env.DYNAMODB_TABLE_PREFIX ?? '';
+const TOKEN_USAGE_TABLE = `${TABLE_PREFIX}token_usage`;
+
+// ---------------------------------------------------------------------------
+// DynamoDB client (lazy-initialised)
+// ---------------------------------------------------------------------------
+
+let dynamoClient: DynamoDBDocumentClient | null = null;
+
+function getDynamoClient(): DynamoDBDocumentClient {
+  if (!dynamoClient) {
+    const raw = new DynamoDBClient({});
+    dynamoClient = DynamoDBDocumentClient.from(raw, {
+      marshallOptions: { removeUndefinedValues: true },
+    });
+  }
+  return dynamoClient;
+}
+
+async function recordTokenUsage(userId: string, usage: TokenUsage): Promise<void> {
+  try {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    await getDynamoClient().send(new PutCommand({
+      TableName: TOKEN_USAGE_TABLE,
+      Item: {
+        userId,
+        sk: `${now}#${id}`,
+        id,
+        model: EVALUATOR_MODEL,
+        provider: LLM_PROVIDER,
+        promptTokens: usage.promptTokens,
+        completionTokens: usage.completionTokens,
+        totalTokens: usage.totalTokens,
+        cachedInputTokens: usage.cachedInputTokens,
+        cacheCreationTokens: usage.cacheCreationTokens,
+        source: 'scheduler',
+        createdAt: now,
+      },
+    }));
+  } catch (err) {
+    console.error('[TokenUsage] Failed to record token usage for user', userId, err);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // LLM provider abstraction
 // The evaluator only needs a single text completion — no tools, no streaming.
 // ---------------------------------------------------------------------------
 
-async function llmComplete(prompt: string): Promise<string> {
+async function llmComplete(prompt: string): Promise<LLMResult> {
   if (LLM_PROVIDER === 'anthropic') {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
     const res = await client.messages.create({
@@ -60,7 +121,17 @@ async function llmComplete(prompt: string): Promise<string> {
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     });
-    return res.content[0].type === 'text' ? res.content[0].text : '';
+    const text = res.content[0].type === 'text' ? res.content[0].text : '';
+    return {
+      text,
+      usage: {
+        promptTokens: res.usage.input_tokens,
+        completionTokens: res.usage.output_tokens,
+        totalTokens: res.usage.input_tokens + res.usage.output_tokens,
+        cachedInputTokens: (res.usage as any).cache_read_input_tokens ?? 0,
+        cacheCreationTokens: (res.usage as any).cache_creation_input_tokens ?? 0,
+      },
+    };
   }
 
   if (LLM_PROVIDER === 'grok') {
@@ -73,7 +144,18 @@ async function llmComplete(prompt: string): Promise<string> {
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     });
-    return res.choices[0]?.message?.content ?? '';
+    const promptTokens = res.usage?.prompt_tokens ?? 0;
+    const completionTokens = res.usage?.completion_tokens ?? 0;
+    return {
+      text: res.choices[0]?.message?.content ?? '',
+      usage: {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+        cachedInputTokens: (res.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0,
+        cacheCreationTokens: 0,
+      },
+    };
   }
 
   if (LLM_PROVIDER === 'openai') {
@@ -83,7 +165,18 @@ async function llmComplete(prompt: string): Promise<string> {
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     });
-    return res.choices[0]?.message?.content ?? '';
+    const promptTokens = res.usage?.prompt_tokens ?? 0;
+    const completionTokens = res.usage?.completion_tokens ?? 0;
+    return {
+      text: res.choices[0]?.message?.content ?? '',
+      usage: {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+        cachedInputTokens: (res.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0,
+        cacheCreationTokens: 0,
+      },
+    };
   }
 
   throw new Error(`Unknown LLM_PROVIDER: ${LLM_PROVIDER}`);
@@ -120,12 +213,10 @@ async function dispatchDecisions(payload: DispatchRequest): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// LLM evaluation (same prompt as the backend evaluator)
+// LLM evaluation — one LLM call per user so token usage is attributed correctly
 // ---------------------------------------------------------------------------
 
-async function evaluateRecurringJobs(jobs: ScheduledJob[]): Promise<EvaluatorResult> {
-  if (jobs.length === 0) return { run: [], hold: [] };
-
+export function buildEvaluatorPrompt(jobs: ScheduledJob[]): string {
   const now = new Date();
   const timeStr =
     now.toLocaleString('en-US', {
@@ -145,7 +236,7 @@ async function evaluateRecurringJobs(jobs: ScheduledJob[]): Promise<EvaluatorRes
     })
     .join('\n');
 
-  const prompt = `You are a job scheduler evaluator. Current time: ${timeStr}
+  return `You are a job scheduler evaluator. Current time: ${timeStr}
 
 Evaluate each recurring scheduled job below. For each job decide:
 - RUN: the job description indicates it should execute now, and enough time has passed since last run
@@ -165,33 +256,75 @@ Reply with ONLY a valid JSON object like:
   "hold": [{"id": "id-of-job-to-hold", "until": "2026-02-27T09:00:00Z"}]
 }
 Both arrays may be empty. Jobs in "run" should also appear in "hold" with their next scheduled run time. Do not include any other text.`;
+}
 
-  console.log(`[Evaluator] Evaluating ${jobs.length} job(s) with ${LLM_PROVIDER}/${EVALUATOR_MODEL}`);
-
-  const text = (await llmComplete(prompt)).trim();
-
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) {
-    console.warn('[Evaluator] No JSON object found in response, skipping all jobs');
-    return { run: [], hold: [] };
-  }
+export function parseEvaluatorResponse(text: string): EvaluatorResult {
+  const match = text.trim().match(/\{[\s\S]*\}/);
+  if (!match) return { run: [], hold: [] };
 
   const parsed = JSON.parse(match[0]) as {
     run?: string[];
     hold?: Array<{ id: string; until: string }>;
   };
 
-  const result: EvaluatorResult = {
+  return {
     run: Array.isArray(parsed.run) ? parsed.run : [],
     hold: Array.isArray(parsed.hold) ? parsed.hold : [],
   };
+}
 
-  console.log(`[Evaluator] Decision → run: [${result.run.join(', ')}]`);
+async function evaluateRecurringJobsForUser(
+  userId: string,
+  jobs: ScheduledJob[],
+): Promise<EvaluatorResult> {
+  const prompt = buildEvaluatorPrompt(jobs);
+
   console.log(
-    `[Evaluator] Decision → hold: [${result.hold.map(h => `${h.id} until ${h.until}`).join(', ')}]`,
+    `[Evaluator] Evaluating ${jobs.length} job(s) for user ${userId} with ${LLM_PROVIDER}/${EVALUATOR_MODEL}`,
+  );
+
+  const { text, usage } = await llmComplete(prompt);
+
+  // Record token usage attributed to this user
+  await recordTokenUsage(userId, usage);
+  console.log(
+    `[TokenUsage] user=${userId} prompt=${usage.promptTokens} completion=${usage.completionTokens} total=${usage.totalTokens}`,
+  );
+
+  const result = parseEvaluatorResponse(text);
+  if (result.run.length === 0 && result.hold.length === 0 && !text.trim().match(/\{[\s\S]*\}/)) {
+    console.warn(`[Evaluator] No JSON found in response for user ${userId}, skipping`);
+  }
+
+  console.log(`[Evaluator] user=${userId} → run: [${result.run.join(', ')}]`);
+  console.log(
+    `[Evaluator] user=${userId} → hold: [${result.hold.map(h => `${h.id} until ${h.until}`).join(', ')}]`,
   );
 
   return result;
+}
+
+async function evaluateRecurringJobs(jobs: ScheduledJob[]): Promise<EvaluatorResult> {
+  if (jobs.length === 0) return { run: [], hold: [] };
+
+  // Group by userId so token usage can be recorded per user
+  const jobsByUser = new Map<string, ScheduledJob[]>();
+  for (const job of jobs) {
+    const list = jobsByUser.get(job.userId) ?? [];
+    list.push(job);
+    jobsByUser.set(job.userId, list);
+  }
+
+  const run: string[] = [];
+  const hold: Array<{ id: string; until: string }> = [];
+
+  for (const [userId, userJobs] of jobsByUser) {
+    const result = await evaluateRecurringJobsForUser(userId, userJobs);
+    run.push(...result.run);
+    hold.push(...result.hold);
+  }
+
+  return { run, hold };
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +353,7 @@ export const handler = async (): Promise<void> => {
     run.push(job.id);
   }
 
-  // 3. Recurring jobs: ask the LLM
+  // 3. Recurring jobs: ask the LLM (one call per user for per-user token accounting)
   if (recurringJobs.length > 0) {
     const result = await evaluateRecurringJobs(recurringJobs);
     run.push(...result.run);
