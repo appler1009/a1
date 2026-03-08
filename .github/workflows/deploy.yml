@@ -3,6 +3,8 @@ name: Deploy to AWS
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'lambda-scheduler/**'
 
 permissions:
   id-token: write   # required for OIDC
