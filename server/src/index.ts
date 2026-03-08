@@ -17,7 +17,7 @@ await loadSecrets();
 import { initConfig, config } from './config/index.js';
 initConfig();
 
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest, type FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
@@ -694,6 +694,71 @@ fastify.setNotFoundHandler(async (request, reply) => {
 // Health check
 fastify.get('/health', async () => {
   return { status: 'ok', timestamp: new Date().toISOString() };
+});
+
+// ---------------------------------------------------------------------------
+// Internal scheduler endpoints — called by the Lambda evaluator.
+// Protected by a shared secret; never exposed publicly.
+// ---------------------------------------------------------------------------
+
+function assertInternalApiKey(request: FastifyRequest, reply: FastifyReply): boolean {
+  const expected = process.env.INTERNAL_API_KEY;
+  if (!expected) {
+    reply.code(503).send({ error: 'Internal API key not configured' });
+    return false;
+  }
+  if (request.headers['x-internal-api-key'] !== expected) {
+    reply.code(401).send({ error: 'Unauthorized' });
+    return false;
+  }
+  return true;
+}
+
+// Returns jobs that the Lambda evaluator needs to assess.
+fastify.get('/internal/scheduler/pending', async (request, reply) => {
+  if (!assertInternalApiKey(request, reply)) return;
+  const mainDb = await getMainDatabase(config.storage.root);
+  const [onceJobs, recurringJobs] = await Promise.all([
+    mainDb.getDueOnceJobs(),
+    mainDb.getPendingRecurringJobs(),
+  ]);
+  return {
+    onceJobs: onceJobs.map(j => ({
+      id: j.id,
+      userId: j.userId,
+      roleId: j.roleId,
+      description: j.description,
+      scheduleType: j.scheduleType,
+      lastRunAt: j.lastRunAt?.toISOString() ?? null,
+    })),
+    recurringJobs: recurringJobs.map(j => ({
+      id: j.id,
+      userId: j.userId,
+      roleId: j.roleId,
+      description: j.description,
+      scheduleType: j.scheduleType,
+      lastRunAt: j.lastRunAt?.toISOString() ?? null,
+    })),
+  };
+});
+
+// Receives the Lambda's evaluation decisions and executes/holds accordingly.
+fastify.post('/internal/scheduler/dispatch', async (request, reply) => {
+  if (!assertInternalApiKey(request, reply)) return;
+  const body = request.body as {
+    run?: string[];
+    hold?: Array<{ id: string; until: string }>;
+  };
+
+  if (!scheduler) {
+    return reply.code(503).send({ error: 'Scheduler not initialised' });
+  }
+
+  const run: string[] = Array.isArray(body.run) ? body.run : [];
+  const hold: Array<{ id: string; until: string }> = Array.isArray(body.hold) ? body.hold : [];
+
+  await scheduler.dispatch({ run, hold });
+  return { ok: true, run: run.length, hold: hold.length };
 });
 
 // Test-only cleanup endpoint — deletes a user and all their data by email.
@@ -4100,11 +4165,15 @@ const start = async () => {
     });
     fastify.log.info({ provider: config.llm.provider, hasGrokKey: !!config.llm.grokApiKey }, 'LLM router initialized');
 
-    // Initialize and start scheduler
+    // Initialize scheduler — polling is disabled when Lambda handles evaluation
     const jobRunner = new JobRunner(llmRouter, mainDb, executeToolWithAdapters);
     scheduler = new Scheduler(mainDb, jobRunner, llmRouter);
-    scheduler.start();
-    fastify.log.info('Scheduler started');
+    if (process.env.LAMBDA_SCHEDULER !== 'true') {
+      scheduler.start();
+      fastify.log.info('Scheduler started (built-in polling)');
+    } else {
+      fastify.log.info('Scheduler polling disabled — Lambda evaluator is active');
+    }
 
     // Start listening
     await fastify.listen({

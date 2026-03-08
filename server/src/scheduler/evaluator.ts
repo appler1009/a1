@@ -32,6 +32,8 @@ Evaluate each recurring scheduled job below. For each job decide:
 
 The scheduler re-checks every 5 minutes, but a HOLD skips a job entirely until its holdUntil time, saving unnecessary AI evaluation.
 
+IMPORTANT: For every job you decide to RUN, also include it in the "hold" array with the next time it should be re-evaluated (i.e. the next scheduled run time). This prevents the scheduler from re-evaluating the job immediately after it runs.
+
 Jobs to evaluate:
 ${jobLines}
 
@@ -40,7 +42,7 @@ Reply with ONLY a valid JSON object like:
   "run": ["id-of-job-to-run"],
   "hold": [{"id": "id-of-job-to-hold", "until": "2026-02-27T09:00:00Z"}]
 }
-Both arrays may be empty. Do not include any other text.`;
+Both arrays may be empty. Jobs in "run" should also appear in "hold" with their next scheduled run time. Do not include any other text.`;
 
   try {
     console.log(`[Evaluator] Prompt:\n${prompt}\n`);

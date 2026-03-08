@@ -41,6 +41,41 @@ export class Scheduler {
     }
   }
 
+  /**
+   * Apply pre-computed run/hold decisions from the Lambda evaluator.
+   * Called by the /internal/scheduler/dispatch endpoint.
+   */
+  async dispatch(decisions: { run: string[]; hold: Array<{ id: string; until: string }> }): Promise<void> {
+    const { run, hold } = decisions;
+    console.log(`[Scheduler] dispatch() — run: ${run.length}, hold: ${hold.length}`);
+
+    // Fetch all affected jobs in one pass
+    const allIds = new Set([...run, ...hold.map(h => h.id)]);
+    const allJobs = await Promise.all([...allIds].map(id => this.db.getScheduledJob(id)));
+    const jobMap = new Map(allJobs.filter(Boolean).map(j => [j!.id, j!]));
+
+    // Run first, then apply hold (mirrors the poll() ordering so run-jobs get
+    // their holdUntil set after execution)
+    for (const id of run) {
+      const job = jobMap.get(id);
+      if (job) await this.runJob(job, true);
+    }
+
+    for (const { id, until } of hold) {
+      const holdUntil = new Date(until);
+      if (!isNaN(holdUntil.getTime())) {
+        try {
+          await this.db.updateScheduledJobStatus(id, { holdUntil });
+          console.log(`[Scheduler] Job ${id} held until ${holdUntil.toISOString()}`);
+        } catch (err) {
+          console.error(`[Scheduler] Failed to hold job ${id}:`, err);
+        }
+      } else {
+        console.warn(`[Scheduler] Job ${id} hold has invalid date: ${until}`);
+      }
+    }
+  }
+
   private async poll(): Promise<void> {
     console.log('[Scheduler] Polling...');
 
@@ -60,7 +95,18 @@ export class Scheduler {
       console.log(`[Scheduler] Evaluating ${recurring.length} recurring job(s)`);
       const { run, hold } = await evaluateRecurringJobs(recurring, this.llmRouter);
 
-      // Apply hold decisions first
+      // Build a map of hold decisions for quick lookup after running
+      const holdMap = new Map(hold.map(h => [h.id, h.until]));
+
+      // Run triggered jobs — only jobs in 'run' list should execute and save messages
+      for (const id of run) {
+        const job = recurring.find(j => j.id === id);
+        if (job) {
+          await this.runJob(job, true);
+        }
+      }
+
+      // Apply hold decisions after running (covers both non-run jobs and next-run times for run jobs)
       for (const { id, until } of hold) {
         const holdUntil = new Date(until);
         if (!isNaN(holdUntil.getTime())) {
@@ -72,15 +118,6 @@ export class Scheduler {
           }
         } else {
           console.warn(`[Scheduler] Job ${id} hold has invalid date: ${until}`);
-        }
-      }
-
-      // Run triggered jobs — only jobs in 'run' list should execute and save messages
-      for (const id of run) {
-        const job = recurring.find(j => j.id === id);
-        if (job) {
-          // Only run job and save messages to chat if it's in the 'run' list
-          await this.runJob(job, true);
         }
       }
     }
@@ -96,7 +133,7 @@ export class Scheduler {
         status,
         lastRunAt: new Date(),
         runCount: job.runCount + 1,
-        holdUntil: null,  // clear any hold — evaluator will re-set it next poll if needed
+        // holdUntil is set by the scheduler after runJob using the evaluator's decision
       });
       console.log(`[Scheduler] Job ${job.id} completed, status → ${status}`);
     } catch (err) {

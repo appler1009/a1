@@ -24,7 +24,8 @@ export class JobRunner {
     const systemPrompt = [
       'You are an autonomous AI agent executing a scheduled background task.',
       `Current time: ${new Date().toISOString()}`,
-      'Execute the task completely using available tools. Do not ask for clarification.',
+      'CRITICAL: You MUST use the available MCP tools to complete this task. Never answer from memory or training data alone — always call the relevant tools to fetch real, live data.',
+      'Execute the task completely and then provide a full summary of what you found. Do not ask for clarification.',
       'IMPORTANT: Do not use schedule_task to re-schedule or duplicate this job. Recurring jobs are managed automatically by the scheduler — scheduling a similar job will create unwanted duplicates. Only use schedule_task if the task explicitly requires creating a genuinely new, distinct job.',
       role?.systemPrompt ? `\nRole context: ${role.systemPrompt}` : '',
     ].filter(Boolean).join('\n');
@@ -53,6 +54,8 @@ export class JobRunner {
       seen.add(t.name);
       return true;
     });
+
+    console.log(`[JobRunner] Job ${job.id} — ${uniqueTools.length} tools available: ${uniqueTools.map(t => t.name).join(', ')}`);
 
     const tools = this.llmRouter.convertMCPToolsToOpenAI(uniqueTools);
 
