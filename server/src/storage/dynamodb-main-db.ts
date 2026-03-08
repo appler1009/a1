@@ -1,5 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { getAwsCredentials } from '../config/aws.js';
+import { encryptToken, decryptToken } from '../config/kms.js';
 import {
   DynamoDBDocumentClient,
   GetCommand,
@@ -118,15 +119,15 @@ function toRole(item: Record<string, unknown>): RoleDefinition {
   };
 }
 
-function toOAuthToken(item: Record<string, unknown>): OAuthTokenEntry {
+async function toOAuthToken(item: Record<string, unknown>): Promise<OAuthTokenEntry> {
   const [provider, ...emailParts] = (item.providerKey as string).split('#');
   const accountEmail = emailParts.join('#');
   return {
     provider,
     userId: item.userId as string,
     accountEmail,
-    accessToken: item.accessToken as string,
-    refreshToken: (item.refreshToken as string) || null,
+    accessToken: await decryptToken(item.accessToken as string),
+    refreshToken: item.refreshToken ? await decryptToken(item.refreshToken as string) : null,
     expiryDate: (item.expiryDate as number) || null,
     createdAt: new Date(item.createdAt as string),
     updatedAt: new Date(item.updatedAt as string),
@@ -721,15 +722,25 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       providerKey,
       provider,
       accountEmail,
-      accessToken,
+      accessToken: await encryptToken(accessToken),
       createdAt: existing?.createdAt.toISOString() ?? now,
       updatedAt: now,
     };
-    if (refreshToken) item.refreshToken = refreshToken;
+    if (refreshToken) item.refreshToken = await encryptToken(refreshToken);
     if (expiryDate !== undefined) item.expiryDate = expiryDate;
 
     await this.client.send(new PutCommand({ TableName: this.tables.oauthTokens, Item: item }));
-    return toOAuthToken(item);
+    // Return with the original plaintext tokens (caller expects decrypted values)
+    return {
+      provider,
+      userId,
+      accountEmail,
+      accessToken,
+      refreshToken: refreshToken ?? null,
+      expiryDate: expiryDate ?? null,
+      createdAt: new Date(existing?.createdAt.toISOString() ?? now),
+      updatedAt: new Date(now),
+    };
   }
 
   async getOAuthToken(userId: string, provider: string, accountEmail?: string): Promise<OAuthTokenEntry | null> {
@@ -740,7 +751,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
         TableName: this.tables.oauthTokens,
         Key: { userId, providerKey },
       }));
-      return Item ? toOAuthToken(Item) : null;
+      return Item ? await toOAuthToken(Item) : null;
     }
 
     // No accountEmail — return first match for this provider
@@ -750,7 +761,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       ExpressionAttributeValues: { ':userId': userId, ':prefix': `${provider}#` },
       Limit: 1,
     }));
-    return Items?.[0] ? toOAuthToken(Items[0]) : null;
+    return Items?.[0] ? await toOAuthToken(Items[0]) : null;
   }
 
   async getAllUserOAuthTokens(userId: string, provider: string): Promise<OAuthTokenEntry[]> {
@@ -759,7 +770,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       KeyConditionExpression: 'userId = :userId AND begins_with(providerKey, :prefix)',
       ExpressionAttributeValues: { ':userId': userId, ':prefix': `${provider}#` },
     }));
-    return (Items ?? []).map(toOAuthToken);
+    return Promise.all((Items ?? []).map(toOAuthToken));
   }
 
   async getOAuthTokenByAccountEmail(provider: string, accountEmail: string): Promise<OAuthTokenEntry | null> {
@@ -771,7 +782,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       ExpressionAttributeValues: { ':provider': provider, ':email': accountEmail },
       Limit: 1,
     }));
-    return Items?.[0] ? toOAuthToken(Items[0]) : null;
+    return Items?.[0] ? await toOAuthToken(Items[0]) : null;
   }
 
   async revokeOAuthToken(userId: string, provider: string, accountEmail?: string): Promise<boolean> {

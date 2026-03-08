@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
 import type { IMainDatabase, TokenUsageRecord } from './main-db-interface.js';
+import { encryptToken, decryptToken } from '../config/kms.js';
 
 /**
  * Role definition stored in the main database
@@ -1152,6 +1153,9 @@ export class MainDatabase implements IMainDatabase {
   ): Promise<OAuthTokenEntry> {
     const now = new Date().toISOString();
 
+    const encryptedAccessToken = await encryptToken(accessToken);
+    const encryptedRefreshToken = refreshToken ? await encryptToken(refreshToken) : null;
+
     // If email is empty and we're storing a new token, delete old empty-email tokens first
     // This ensures we don't get stuck with stale empty-email entries
     if (!accountEmail) {
@@ -1163,7 +1167,7 @@ export class MainDatabase implements IMainDatabase {
     this.db.prepare(`
       INSERT OR REPLACE INTO oauth_tokens (provider, userId, accountEmail, accessToken, refreshToken, expiryDate, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT createdAt FROM oauth_tokens WHERE provider = ? AND userId = ? AND accountEmail = ?), ?), ?)
-    `).run(provider, userId, accountEmail, accessToken, refreshToken || null, expiryDate || null, provider, userId, accountEmail, now, now);
+    `).run(provider, userId, accountEmail, encryptedAccessToken, encryptedRefreshToken, expiryDate || null, provider, userId, accountEmail, now, now);
 
     return {
       provider,
@@ -1203,8 +1207,8 @@ export class MainDatabase implements IMainDatabase {
       provider: row.provider,
       userId: row.userId,
       accountEmail: row.accountEmail,
-      accessToken: row.accessToken,
-      refreshToken: row.refreshToken,
+      accessToken: await decryptToken(row.accessToken),
+      refreshToken: row.refreshToken ? await decryptToken(row.refreshToken) : null,
       expiryDate: row.expiryDate,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
@@ -1225,16 +1229,16 @@ export class MainDatabase implements IMainDatabase {
       updatedAt: string;
     }>;
 
-    return rows.map(row => ({
+    return Promise.all(rows.map(async row => ({
       provider: row.provider,
       userId: row.userId,
       accountEmail: row.accountEmail,
-      accessToken: row.accessToken,
-      refreshToken: row.refreshToken,
+      accessToken: await decryptToken(row.accessToken),
+      refreshToken: row.refreshToken ? await decryptToken(row.refreshToken) : null,
       expiryDate: row.expiryDate,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
-    }));
+    })));
   }
 
   async getOAuthTokenByAccountEmail(provider: string, accountEmail: string): Promise<OAuthTokenEntry | null> {
@@ -1257,8 +1261,8 @@ export class MainDatabase implements IMainDatabase {
       provider: row.provider,
       userId: row.userId,
       accountEmail: row.accountEmail,
-      accessToken: row.accessToken,
-      refreshToken: row.refreshToken,
+      accessToken: await decryptToken(row.accessToken),
+      refreshToken: row.refreshToken ? await decryptToken(row.refreshToken) : null,
       expiryDate: row.expiryDate,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
