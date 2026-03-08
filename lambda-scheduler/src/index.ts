@@ -56,9 +56,9 @@ const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY!;
 const LLM_PROVIDER = (process.env.LLM_PROVIDER || 'anthropic') as 'anthropic' | 'openai' | 'grok';
 
 const PROVIDER_DEFAULTS: Record<typeof LLM_PROVIDER, string> = {
-  anthropic: 'claude-haiku-4-5-20251001',
-  openai: 'gpt-4o-mini',
-  grok: 'grok-3-mini-fast',
+  anthropic: 'claude-haiku-4-5',
+  openai: 'gpt-5-mini',
+  grok: 'grok-4-1-fast-non-reasoning',
 };
 
 const EVALUATOR_MODEL = process.env.EVALUATOR_MODEL || PROVIDER_DEFAULTS[LLM_PROVIDER];
@@ -280,15 +280,24 @@ async function evaluateRecurringJobsForUser(
   const prompt = buildEvaluatorPrompt(jobs);
 
   console.log(
-    `[Evaluator] Evaluating ${jobs.length} job(s) for user ${userId} with ${LLM_PROVIDER}/${EVALUATOR_MODEL}`,
+    `[Evaluator] Evaluating ${jobs.length} job(s) for user ${userId} | provider=${LLM_PROVIDER} model=${EVALUATOR_MODEL}`,
   );
+  console.log(`[Evaluator] Jobs to evaluate for user ${userId}:`);
+  for (const job of jobs) {
+    console.log(
+      `[Evaluator]   id=${job.id} type=${job.scheduleType} lastRunAt=${job.lastRunAt ?? 'never'} description="${job.description}"`,
+    );
+  }
+  console.log(`[Evaluator] Prompt for user ${userId}:\n${prompt}`);
 
   const { text, usage } = await llmComplete(prompt);
+
+  console.log(`[Evaluator] Raw response for user ${userId}:\n${text}`);
 
   // Record token usage attributed to this user
   await recordTokenUsage(userId, usage);
   console.log(
-    `[TokenUsage] user=${userId} prompt=${usage.promptTokens} completion=${usage.completionTokens} total=${usage.totalTokens}`,
+    `[TokenUsage] user=${userId} prompt=${usage.promptTokens} completion=${usage.completionTokens} cached=${usage.cachedInputTokens} cacheCreation=${usage.cacheCreationTokens} total=${usage.totalTokens}`,
   );
 
   const result = parseEvaluatorResponse(text);
