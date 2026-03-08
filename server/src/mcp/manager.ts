@@ -26,12 +26,20 @@ function getBaseServerId(id: string): string {
 
 /**
  * MCP Manager
- * Manages multiple MCP server connections
- * Supports role-specific MCP server configurations
- * 
- * Server types:
- * - Global servers (global: true): Not affected by role switches, always running
- * - Per-role servers (global: false): Restarted on role switch with role-specific config
+ * Manages all MCP server connections at the user level.
+ *
+ * All servers are user-scoped and stored in main.db — there is no role-based switching.
+ * Role-scoped resources (memory, scheduler) are created lazily on demand via getMcpAdapter()
+ * in adapter-factory.ts and are never registered here.
+ *
+ * Startup sequence (initialize()):
+ *   1. startHiddenServers()  — always-on infrastructure servers (weather, meta-mcp-search, etc.)
+ *   2. loadPersistedConfigs() — auth-requiring servers saved from previous sessions (Gmail, Drive, etc.)
+ *   3. startDefaultServers()  — non-auth predefined servers not already running
+ *
+ * System prompt injection is two-tier:
+ *   - getSystemPromptSummaries() → one-liners for all active servers, included in every request
+ *   - getSystemPromptFor(id)     → full prompt injected on-demand after search_tool discovers the server
  */
 export class MCPManager {
   private clients: Map<string, MCPClientInterface> = new Map();
@@ -47,7 +55,7 @@ export class MCPManager {
     this.db = await getMainDatabase();
 
     // Start global hidden servers first (markitdown, weather, etc.)
-    await this.startGlobalServers();
+    await this.startHiddenServers();
 
     // Load persisted server configs from main database
     await this.loadPersistedConfigs();
@@ -57,9 +65,11 @@ export class MCPManager {
   }
 
   /**
-   * Start hidden servers (markitdown) - no longer per-role vs global distinction
+   * Start always-on hidden infrastructure servers (weather, meta-mcp-search, markitdown, etc.).
+   * These run for the lifetime of the process and are never exposed in the UI server list.
+   * The memory server is excluded here — it is created lazily per-role via getMcpAdapter().
    */
-  private async startGlobalServers(): Promise<void> {
+  private async startHiddenServers(): Promise<void> {
     // Exclude 'memory' — it is created lazily per-role via getMcpAdapter() in adapter-factory.ts
     // Allow disabling meta-mcp-search via ENABLE_META_MCP_SEARCH env var
     const enableMetaMcpSearch = process.env.ENABLE_META_MCP_SEARCH !== 'false';
@@ -116,7 +126,7 @@ export class MCPManager {
         }
       }
 
-      // Check if already running (from startGlobalServers or persisted configs)
+      // Check if already running (from startHiddenServers or persisted configs)
       if (this.clients.has(server.id) || this.inProcessAdapters.has(server.id)) {
         console.log(`[MCPManager] Server ${server.id} already running`);
         continue;
@@ -352,18 +362,18 @@ export class MCPManager {
           continue;
         }
 
-        // Skip hidden predefined servers — startGlobalServers() always starts them fresh
+        // Skip hidden predefined servers — startHiddenServers() always starts them fresh
         // using the canonical command from predefined-servers.ts (e.g. 'uvx', not an
         // absolute host path that may have been persisted from a previous run).
         const baseServerId = getBaseServerId(serverId);
         const predefined = PREDEFINED_MCP_SERVERS.find(s => s.id === baseServerId);
         if (predefined?.hidden) {
-          console.log(`[MCPManager] Skipping hidden predefined server ${serverId} (handled by startGlobalServers)`);
+          console.log(`[MCPManager] Skipping hidden predefined server ${serverId} (handled by startHiddenServers)`);
           continue;
         }
         
         if (typedConfig.enabled) {
-          // Check if already running (from startHiddenServers)
+          // Check if already running (from startHiddenServers or a duplicate persisted entry)
           if (this.clients.has(serverId)) {
             console.log(`[MCPManager] Server ${serverId} already running, skipping`);
             continue;
@@ -476,7 +486,7 @@ export class MCPManager {
   }
 
   /**
-   * Remove server config from role-specific database
+   * Remove server config from the main database (user-level, shared across all roles).
    */
   private async deletePersistedConfig(serverId: string): Promise<void> {
     if (!this.db) {

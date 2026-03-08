@@ -11,24 +11,35 @@ interface RawToolInfo {
 }
 
 /**
- * Interface for in-process MCP tool modules
- * These modules export tools directly without requiring a separate server process
+ * Interface for in-process MCP tool modules.
+ * These modules implement tools directly in Node.js without a separate subprocess.
+ *
+ * System prompt contract (two-tier injection):
+ *   getSystemPromptSummary() — short one-liner always prepended to the initial system prompt.
+ *     The AI sees this on every request so it knows what the server offers and can write
+ *     a useful search_tool query (e.g. "Gmail — read and send email via gmailSearchMessages…").
+ *
+ *   getSystemPrompt() — full usage instructions injected on-demand only after search_tool
+ *     returns this server's tools. Keeps the initial prompt short while still supplying
+ *     detailed rules (e.g. "never expose raw message IDs", "always list calendars first").
+ *
+ * Both methods are optional; omit them for servers that need no special AI guidance.
  */
 export interface InProcessToolModule {
   /**
-   * List all available tools
+   * Return all tools this module provides.
    */
   getTools(): Promise<RawToolInfo[]> | RawToolInfo[];
 
   /**
-   * One-liner summary always included in the initial system prompt so the AI knows
-   * what this server offers and can form a good search_tool query.
+   * Short one-liner always included in the initial system prompt.
+   * Keep it under ~120 characters so it doesn't bloat the prompt.
    */
   getSystemPromptSummary?(): string;
 
   /**
    * Full system prompt injected on-demand after search_tool discovers this server.
-   * Contains detailed usage rules (e.g. "never show message IDs", "list calendars first").
+   * Include detailed usage rules, ordering requirements, or field restrictions here.
    */
   getSystemPrompt?(): string;
 
@@ -60,23 +71,18 @@ export interface InProcessResourceModule {
 export type InProcessMCPModule = InProcessToolModule & InProcessResourceModule;
 
 /**
- * InProcessAdapter - Direct in-process MCP calls
- * 
- * This adapter bypasses the stdio transport and calls MCP tools directly
- * within the same Node.js process. This provides:
- * - Lower latency (no process spawning/IPC overhead)
- * - Better debugging (direct stack traces)
- * - Simpler deployment (no external process management)
- * 
- * Use cases:
- * - Pure Node.js MCP packages that export tools directly
- * - Speed-critical integrations
- * - Development/testing scenarios
- * 
- * Requirements:
- * - The MCP module must export getTools() function returning tool definitions
- * - Each tool must be exported as a callable function
- * - Optional: getResources() and readResource() for resource support
+ * InProcessAdapter — wraps an InProcessMCPModule as a McpAdapter.
+ *
+ * Calls tool methods directly on the module instance instead of going through stdio
+ * transport, giving lower latency and simpler error traces. All built-in servers
+ * (weather, Gmail, Google Drive, memory, scheduler, meta-mcp-search, …) use this.
+ *
+ * The module must implement InProcessMCPModule:
+ *   - getTools()            → tool definitions
+ *   - [toolName](args)      → callable method for each tool
+ *   - getResources?()       → optional resource list
+ *   - readResource?(uri)    → optional resource reader
+ *   - getSystemPromptSummary?() / getSystemPrompt?() → optional prompt injection
  */
 export class InProcessAdapter {
   protected _isConnected = false;
