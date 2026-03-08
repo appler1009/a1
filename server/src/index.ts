@@ -1338,10 +1338,6 @@ fastify.register(async (instance) => {
     serverCurrentRoleId = params.id;
     await mainDb.setSetting(`user:${request.user.id}:currentRoleId`, params.id);
 
-    // Switch MCP servers to the new role
-    // This will disconnect auth-required servers and load role-specific MCP configs
-    await mcpManager.switchRole(params.id, request.user.id);
-    
     console.log(`[Roles] User ${request.user.id} switched to role ${params.id} "${role.name}"`);
     
     return reply.send({
@@ -1625,12 +1621,6 @@ fastify.register(async (instance) => {
     // Persist the user's current role for cross-device restoration (on initial fetch only, not pagination)
     if (!query.before) {
       await mainDb.setSetting(`user:${request.user.id}:currentRoleId`, roleId);
-    }
-
-    // Switch MCP servers if role changed
-    if (roleChanged) {
-      console.log(`[/api/messages GET] Role changed, switching MCP servers...`);
-      await mcpManager.switchRole(roleId, request.user.id);
     }
 
     console.log(`[/api/messages GET] Fetching messages from main.db (limit: ${limit}, before: ${query.before || 'none'})`);
@@ -1955,17 +1945,7 @@ fastify.register(async (instance) => {
       // Phase 1: Start with only search_tool from meta-mcp-search
       // Phase 2: After search_tool is called, dynamically load relevant tools
 
-      // Ensure role-specific MCP servers (incl. multi-account Gmail/Drive) are loaded
-      // for this user. switchRole is idempotent — it only reloads when the role changes
-      // or when the adapter is empty.
       const chatRoleId = body.roleId;
-      if (chatRoleId && chatRoleId !== mcpManager.getCurrentRoleId()) {
-        console.log(`[ChatStream] Role mismatch (current=${mcpManager.getCurrentRoleId()}, request=${chatRoleId}), switching role...`);
-        await mcpManager.switchRole(chatRoleId, request.user.id);
-      } else if (chatRoleId) {
-        // Same role but ensure user-specific adapters (e.g. Gmail) are populated
-        await mcpManager.ensureUserServers(chatRoleId, request.user.id);
-      }
 
       // Import the meta-mcp-search module for tool discovery
       const { updateToolManifest } = await import('./mcp/in-process/meta-mcp-search.js');
@@ -3387,10 +3367,7 @@ fastify.register(async (instance) => {
     // No need to fetch it separately - the config contains it
     const enhancedServers = servers;
 
-    // Include current role ID in response
-    const currentRoleId = mcpManager.getCurrentRoleId();
-
-    return reply.send({ success: true, data: { servers: enhancedServers, currentRoleId } });
+    return reply.send({ success: true, data: { servers: enhancedServers, currentRoleId: serverCurrentRoleId } });
   });
 
   instance.post('/mcp/servers', async (request, reply) => {
@@ -3401,7 +3378,7 @@ fastify.register(async (instance) => {
     const body = request.body as any;
     
     // Get the current role ID
-    const currentRoleId = mcpManager.getCurrentRoleId() || serverCurrentRoleId;
+    const currentRoleId = serverCurrentRoleId;
 
     if (!currentRoleId) {
       return reply.code(400).send({
@@ -3528,7 +3505,7 @@ fastify.register(async (instance) => {
     }
 
     // Get the current role ID
-    const currentRoleId = mcpManager.getCurrentRoleId() || serverCurrentRoleId;
+    const currentRoleId = serverCurrentRoleId;
     if (!currentRoleId) {
       return reply.code(400).send({
         success: false,
@@ -3633,9 +3610,6 @@ fastify.register(async (instance) => {
         console.log(`[AddPredefinedServer:${requestId}] Using API key for ${serverId}`);
       }
 
-      // Add server via MCPManager
-      // Note: MCP servers are user-level (stored in main.db, shared across roles)
-      // No need to call switchRole() - servers work regardless of current role context
       console.log(`[AddPredefinedServer:${requestId}] Calling mcpManager.addServer...`);
       await mcpManager.addServer(serverConfig, userToken);
       console.log(`[AddPredefinedServer:${requestId}] Server added successfully`);

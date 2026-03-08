@@ -61,18 +61,6 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
     }
 
     const servers = mcpManager.getServers();
-    const currentRoleId = mcpManager.getCurrentRoleId();
-    
-    console.log('[MCP] getServers() type:', typeof servers);
-    console.log('[MCP] getServers() is array:', Array.isArray(servers));
-    console.log('[MCP] getServers() length:', servers?.length);
-    console.log('[MCP] Current role ID:', currentRoleId);
-    
-    if (servers && servers.length > 0) {
-      console.log('[MCP] First server type:', typeof servers[0]);
-      console.log('[MCP] First server:', JSON.stringify(servers[0], null, 2));
-    }
-    console.log('[MCP] Full getServers() returned:', JSON.stringify(servers, null, 2));
     return { success: true, data: servers };
   });
 
@@ -135,11 +123,6 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
         };
 
         console.log(`[MCP] Using user-level Google OAuth token for server ${config.name} (account: ${oauthToken.accountEmail})`);
-      }
-
-      // Make sure the manager's current role is set
-      if (mcpManager.getCurrentRoleId() !== roleId) {
-        await mcpManager.switchRole(roleId, request.user.id);
       }
 
       await mcpManager.addServer(config, userToken);

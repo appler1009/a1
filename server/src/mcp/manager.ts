@@ -38,7 +38,6 @@ export class MCPManager {
   private configs: Map<string, MCPServerConfig> = new Map();
   private inProcessAdapters: Map<string, McpAdapter> = new Map();
   private db: IMainDatabase | null = null;
-  private currentRoleId: string | null = null;
   private get dataDir(): string { return appConfig.storage.root; }
 
   /**
@@ -58,85 +57,10 @@ export class MCPManager {
   }
 
   /**
-   * Get the current role ID
-   */
-  getCurrentRoleId(): string | null {
-    return this.currentRoleId;
-  }
-
-  /**
-   * Switch to a new role - load role-specific configs
-   * All MCP servers are now user-level (stored in main.db, shared across roles)
-   */
-  async switchRole(newRoleId: string | null, userId?: string): Promise<void> {
-    console.log(`\n[MCPManager] ${'='.repeat(60)}`);
-    console.log(`[MCPManager] ROLE SWITCH INITIATED`);
-    console.log(`[MCPManager]   Old Role: ${this.currentRoleId || 'none'}`);
-    console.log(`[MCPManager]   New Role: ${newRoleId || 'none'}`);
-    console.log(`[MCPManager]   User ID: ${userId || 'not provided'}`);
-    console.log(`[MCPManager] ${'='.repeat(60)}\n`);
-    
-    const oldRoleId = this.currentRoleId;
-    this.currentRoleId = newRoleId;
-
-    // If no new role, nothing to do (all servers are user-level and stay running)
-    if (!newRoleId) {
-      console.log(`[MCPManager] No new role selected`);
-      this.logActiveServers();
-      return;
-    }
-
-    // Load role-specific MCP server configurations (all servers are user-level)
-    console.log(`\n[MCPManager] [Role: ${newRoleId}] Loading role-specific MCP configurations...`);
-    await this.loadRoleSpecificConfigs(newRoleId, userId);
-
-    // Start per-role hidden servers (memory)
-    await this.startPerRoleServers(newRoleId);
-
-    this.logActiveServers();
-  }
-
-  /**
-   * Ensure user-specific MCP servers (e.g. Gmail MultiAccountAdapter) are
-   * populated for the given user without doing a full role switch.
-   * Called from the chat stream when the role is already current.
-   */
-  async ensureUserServers(roleId: string, userId: string): Promise<void> {
-    // Check if any multi-account adapter is empty — if so, reload configs
-    let needsLoad = false;
-    for (const [, adapter] of this.inProcessAdapters) {
-      if (adapter instanceof MultiAccountAdapter && adapter.getAccountEmails().length === 0) {
-        needsLoad = true;
-        break;
-      }
-    }
-    if (!needsLoad) return;
-    console.log(`[MCPManager] ensureUserServers: some multi-account adapters are empty, reloading configs for role ${roleId}...`);
-    await this.loadRoleSpecificConfigs(roleId, userId);
-  }
-
-  /**
-   * Log active servers with names
-   */
-  private logActiveServers(): void {
-    const totalServers = this.clients.size + this.inProcessAdapters.size;
-    console.log(`\n[MCPManager] ${'='.repeat(60)}`);
-    console.log(`[MCPManager] ROLE SWITCH COMPLETE`);
-    console.log(`[MCPManager]   Active servers: ${totalServers}`);
-    for (const [id, config] of this.configs) {
-      const baseId = getBaseServerId(id);
-      const inProcess = this.inProcessAdapters.has(id) || this.inProcessAdapters.has(baseId);
-      const type = inProcess ? 'IN-PROCESS' : 'STDIO';
-      console.log(`[MCPManager]     - ${config.name} (${id}) [${type}]`);
-    }
-    console.log(`[MCPManager] ${'='.repeat(60)}\n`);
-  }
-
-  /**
    * Start hidden servers (markitdown) - no longer per-role vs global distinction
    */
   private async startGlobalServers(): Promise<void> {
-    // Exclude 'memory' — it is started per-role via startPerRoleServers with a role-specific DB path
+    // Exclude 'memory' — it is created lazily per-role via getMcpAdapter() in adapter-factory.ts
     // Allow disabling meta-mcp-search via ENABLE_META_MCP_SEARCH env var
     const enableMetaMcpSearch = process.env.ENABLE_META_MCP_SEARCH !== 'false';
     const hiddenServers = PREDEFINED_MCP_SERVERS.filter(s =>
@@ -204,29 +128,6 @@ export class MCPManager {
         console.log(`[MCPManager] Server ${server.id} started successfully`);
       } catch (error) {
         console.error(`[MCPManager] Failed to start default server ${server.id}:`, error);
-      }
-    }
-  }
-
-  /**
-   * Start per-role hidden servers (memory uses role-specific database paths)
-   */
-  private async startPerRoleServers(roleId: string): Promise<void> {
-    // Memory server uses role-specific database paths
-    const perRoleServers = PREDEFINED_MCP_SERVERS.filter(s => s.id === 'memory' && s.hidden);
-
-    for (const server of perRoleServers) {
-      if (this.clients.has(server.id)) {
-        console.log(`[MCPManager] Server ${server.id} already running for role: ${roleId}`);
-        continue;
-      }
-
-      try {
-        console.log(`[MCPManager] Starting role-specific server: ${server.id} for role: ${roleId}`);
-        await this.startPredefinedServer(server, roleId);
-        console.log(`[MCPManager] Server ${server.id} started successfully for role: ${roleId}`);
-      } catch (error) {
-        console.error(`[MCPManager] Failed to start role-specific server ${server.id}:`, error);
       }
     }
   }
@@ -410,172 +311,10 @@ export class MCPManager {
   }
 
   /**
-   * Load role-specific MCP server configurations
-   */
-  private async loadRoleSpecificConfigs(roleId: string, userId?: string): Promise<void> {
-    console.log(`[MCPManager] [Role: ${roleId}] ${'─'.repeat(50)}`);
-    console.log(`[MCPManager] [Role: ${roleId}] LOADING USER-LEVEL MCP CONFIGURATIONS`);
-    console.log(`[MCPManager] [Role: ${roleId}] ${'─'.repeat(50)}`);
-
-    try {
-      // Load all user-level MCP configs from main.db (migrated from role-specific databases)
-      // All roles share the same MCP server set
-      if (!this.db) {
-        console.log(`[MCPManager] [Role: ${roleId}] Database not initialized`);
-        return;
-      }
-
-      const allConfigs = await this.db.getMCPServerConfigs();
-      console.log(`[MCPManager] [Role: ${roleId}] Found ${allConfigs.length} MCP server configs in main database`);
-
-      // --- Helper: fetch Google OAuth token for a config ---
-      const getGoogleToken = async (config: any): Promise<any> => {
-        if (config.auth?.provider !== 'google' || !userId) return undefined;
-        const { authService } = await import('../auth/index.js');
-        const token = await authService.getOAuthToken(userId, 'google', config.accountEmail);
-        if (!token) return undefined;
-        return {
-          access_token: token.accessToken,
-          refresh_token: token.refreshToken,
-          expiry_date: token.expiryDate,
-          token_type: 'Bearer',
-        };
-      };
-
-      // --- Group multi-account capable configs; process single configs normally ---
-      // Map: baseId → [{ config, predefinedServer, token }]
-      const multiAccountGroups = new Map<string, Array<{ config: any; predefinedServer: PredefinedMCPServer; token: any }>>();
-
-      for (const { id: serverId, config: configData } of allConfigs) {
-        const config = configData as any;
-        console.log(`\n[MCPManager] [Role: ${roleId}] Processing server: ${config.id} (${config.name})`);
-        console.log(`[MCPManager] [Role: ${roleId}]   - Enabled: ${config.enabled}`);
-        console.log(`[MCPManager] [Role: ${roleId}]   - Auth Provider: ${config.auth?.provider || 'none'}`);
-
-        if (!config.enabled) {
-          console.log(`[MCPManager] [Role: ${roleId}]   - Skipping disabled server`);
-          continue;
-        }
-
-        const baseId = getBaseServerId(config.id);
-        const predefinedServer = PREDEFINED_MCP_SERVERS.find(s =>
-          s.id === baseId || s.name === config.name || s.id === config.name
-        );
-
-        // Multi-account in-process server: collect and group
-        if (predefinedServer?.inProcess && isMultiAccountCapable(baseId) && adapterRegistry.isInProcess(predefinedServer.id)) {
-          const token = await getGoogleToken(config);
-          if (!multiAccountGroups.has(baseId)) {
-            multiAccountGroups.set(baseId, []);
-          }
-          multiAccountGroups.get(baseId)!.push({ config, predefinedServer, token });
-          continue;
-        }
-
-        // Check if already running (single-account path)
-        if (this.clients.has(config.id) || this.inProcessAdapters.has(config.id)) {
-          console.log(`[MCPManager] [Role: ${roleId}]   - Server already running, skipping`);
-          continue;
-        }
-
-        try {
-          const userToken = await getGoogleToken(config);
-
-          if (predefinedServer?.inProcess && adapterRegistry.isInProcess(predefinedServer.id)) {
-            console.log(`[MCPManager] [Role: ${roleId}]   [Restart] Starting in-process server ${config.id}...`);
-            await this.startInProcessServer(predefinedServer, roleId, userToken, userId, config.id);
-            const existingConfig = this.configs.get(config.id);
-            if (existingConfig) {
-              this.configs.set(config.id, { ...existingConfig, accountEmail: config.accountEmail });
-            }
-            console.log(`[MCPManager] [Role: ${roleId}]   [Restart] ✓ In-process server ${config.id} started`);
-            continue;
-          }
-
-          const mcpConfig: MCPServerConfig = {
-            id: config.id,
-            name: config.name,
-            transport: config.transport,
-            command: config.command,
-            args: config.args,
-            cwd: config.cwd,
-            url: config.url,
-            env: config.env || {},
-            enabled: config.enabled,
-            autoStart: config.autoStart,
-            restartOnExit: config.restartOnExit,
-            auth: config.auth,
-            accountEmail: config.accountEmail,
-          };
-
-          console.log(`[MCPManager] [Role: ${roleId}]   [Restart] Starting server ${config.id}...`);
-          await this.addServer(mcpConfig, userToken);
-          console.log(`[MCPManager] [Role: ${roleId}]   [Restart] ✓ Server ${config.id} started`);
-        } catch (error) {
-          console.error(`[MCPManager] [Role: ${roleId}]   [Restart] ✗ Failed to start server ${config.id}:`, error);
-        }
-      }
-
-      // --- Create MultiAccountAdapters for grouped servers ---
-      for (const [baseId, entries] of multiAccountGroups) {
-        if (this.inProcessAdapters.has(baseId)) {
-          // Already exists — add any new accounts
-          const existing = this.inProcessAdapters.get(baseId);
-          if (existing instanceof MultiAccountAdapter) {
-            const knownEmails = new Set(existing.getAccountEmails());
-            for (const { config, predefinedServer, token } of entries) {
-              const email = config.accountEmail;
-              if (!email || knownEmails.has(email)) continue;
-              if (!token) { console.warn(`[MCPManager] No token for ${email}, skipping`); continue; }
-              try {
-                const module = await adapterRegistry.createRawModule(predefinedServer.id, userId || 'system', token);
-                existing.addAccount(email, module);
-                this.configs.set(config.id, { ...config, accountEmail: email });
-              } catch (err) {
-                console.error(`[MCPManager] Failed to add account ${email} to ${baseId}:`, err);
-              }
-            }
-          }
-          continue;
-        }
-
-        console.log(`[MCPManager] [Role: ${roleId}] Creating MultiAccountAdapter for ${baseId} (${entries.length} account(s))`);
-        const multiAdapter = new MultiAccountAdapter(baseId, baseId);
-
-        for (const { config, predefinedServer, token } of entries) {
-          const email = config.accountEmail;
-          if (!email || !token) {
-            console.warn(`[MCPManager] Skipping account for ${baseId}: missing email or token`);
-            continue;
-          }
-          try {
-            const module = await adapterRegistry.createRawModule(predefinedServer.id, userId || 'system', token);
-            multiAdapter.addAccount(email, module);
-            // Register per-account config for display (getServers() returns per-account entries)
-            this.configs.set(config.id, { ...config, accountEmail: email });
-          } catch (err) {
-            console.error(`[MCPManager] Failed to add account ${email} to ${baseId}:`, err);
-          }
-        }
-
-        if (multiAdapter.getAccountEmails().length > 0) {
-          this.inProcessAdapters.set(baseId, multiAdapter as unknown as McpAdapter);
-          console.log(`[MCPManager] [Role: ${roleId}] MultiAccountAdapter for ${baseId} ready with accounts: ${multiAdapter.getAccountEmails().join(', ')}`);
-        }
-      }
-      
-      console.log(`\n[MCPManager] [Role: ${roleId}] ${'─'.repeat(50)}`);
-      console.log(`[MCPManager] [Role: ${roleId}] CONFIGURATION LOADING COMPLETE`);
-      console.log(`[MCPManager] [Role: ${roleId}] ${'─'.repeat(50)}`);
-    } catch (error) {
-      console.error(`[MCPManager] [Role: ${roleId}] Error loading role-specific configs:`, error);
-    }
-  }
-
-  /**
-   * Load persisted server configs from main database
-   * Only loads servers that don't require authentication (auth-required servers are loaded via loadRoleSpecificConfigs)
-   * Memory server is handled separately by startPerRoleServers() during role switches
+   * Load persisted server configs from main database at startup.
+   * Loads all enabled servers, including auth-required ones (using the userId stored in each config).
+   * Role-scoped servers (memory, scheduler) are NOT loaded here — they are created lazily
+   * via getMcpAdapter() in adapter-factory.ts with the appropriate roleId.
    */
   private async loadPersistedConfigs(): Promise<void> {
     if (!this.db) return;
@@ -607,9 +346,9 @@ export class MCPManager {
           }
         }
 
-        // Skip memory server - it's handled by startPerRoleServers() with role-specific database path
+        // Skip memory server - it's created lazily per-role via getMcpAdapter() in adapter-factory.ts
         if (serverId === 'memory') {
-          console.log(`[MCPManager] Skipping server ${serverId} (handled by startPerRoleServers with role-specific path)`);
+          console.log(`[MCPManager] Skipping server ${serverId} (created lazily per role via adapter-factory)`);
           continue;
         }
 
@@ -776,14 +515,12 @@ export class MCPManager {
     config: MCPServerConfig,
     userToken?: { access_token: string; refresh_token?: string; expiry_date?: number; scope?: string; token_type?: string }
   ): Promise<void> {
-    const roleId = this.currentRoleId || 'no-role';
-    
     if (!config.auth) {
-      console.log(`[MCPManager] [Role: ${roleId}] [Token Setup] No auth config for ${serverId}, skipping token preparation`);
+      console.log(`[MCPManager] [Token Setup] No auth config for ${serverId}, skipping token preparation`);
       return;
     }
 
-    console.log(`[MCPManager] [Role: ${roleId}] [Token Setup] Preparing auth files for ${serverId}...`);
+    console.log(`[MCPManager] [Token Setup] Preparing auth files for ${serverId}...`);
 
     // Create credentials file from environment variables if needed
     if (config.auth.credentialsFilename && config.auth.provider === 'google') {
@@ -803,7 +540,7 @@ export class MCPManager {
       const dir = path.dirname(credentialsPath);
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(credentialsPath, JSON.stringify(credentials, null, 2));
-      console.log(`[MCPManager] [Role: ${roleId}] [Token Setup]   - Created credentials file: ${credentialsPath}`);
+      console.log(`[MCPManager] [Token Setup]   - Created credentials file: ${credentialsPath}`);
     }
 
     // Create token file if token is provided
@@ -827,7 +564,7 @@ export class MCPManager {
         tokenPath = path.join(process.cwd(), tokenFilename);
       }
 
-      console.log(`[MCPManager] [Role: ${roleId}] [Token Setup]   - Writing token file: ${tokenPath}`);
+      console.log(`[MCPManager] [Token Setup]   - Writing token file: ${tokenPath}`);
 
       // Create parent directory if needed
       const dir = path.dirname(tokenPath);
@@ -845,9 +582,9 @@ export class MCPManager {
         : userToken;
 
       await fs.writeFile(tokenPath, JSON.stringify(tokenData, null, 2));
-      console.log(`[MCPManager] [Role: ${roleId}] [Token Setup]   - ✓ Token file created successfully`);
+      console.log(`[MCPManager] [Token Setup]   - ✓ Token file created successfully`);
     } else {
-      console.log(`[MCPManager] [Role: ${roleId}] [Token Setup]   - No user token provided, skipping token file creation`);
+      console.log(`[MCPManager] [Token Setup]   - No user token provided, skipping token file creation`);
     }
   }
 
