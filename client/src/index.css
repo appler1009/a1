@@ -33,8 +33,6 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* Noticia Text for Latin web text, Gowun Batang for Korean */
-    font-family: 'Noticia Text', 'Gowun Batang', serif;
   }
 }
 

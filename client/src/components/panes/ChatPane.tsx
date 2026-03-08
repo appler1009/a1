@@ -747,10 +747,11 @@ export function ChatPane() {
     if (textarea) {
       // Reset height to auto to get the correct scrollHeight
       textarea.style.height = 'auto';
-      // Calculate line height (approximately 24px per line with py-2 and text)
+      // Calculate line height (approximately 24px per line with text)
       const lineHeight = 24;
-      const minHeight = lineHeight; // Minimum 1 line
-      const maxHeight = lineHeight * 5;
+      const verticalPadding = 16; // py-2 = 8px top + 8px bottom
+      const minHeight = lineHeight + verticalPadding; // Minimum 1 line with padding
+      const maxHeight = (lineHeight * 5) + verticalPadding;
       // Set height to scrollHeight, capped between min and max
       textarea.style.height = `${Math.max(Math.min(textarea.scrollHeight, maxHeight), minHeight)}px`;
     }
