@@ -11,6 +11,7 @@
 import type { MCPToolInfo } from '@local-agent/shared';
 import type { InProcessMCPModule } from '../adapters/InProcessAdapter.js';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { getAwsCredentials } from '../../config/aws.js';
 import {
   DynamoDBDocumentClient,
   PutCommand,
@@ -61,6 +62,7 @@ export class DynamoDBMemoryInProcess implements InProcessMCPModule {
     const dbClient = new DynamoDBClient({
       region: process.env.DYNAMODB_REGION || process.env.AWS_REGION || 'us-west-2',
       ...(process.env.DYNAMODB_ENDPOINT ? { endpoint: process.env.DYNAMODB_ENDPOINT } : {}),
+      credentials: getAwsCredentials(),
     });
     
     this.client = DynamoDBDocumentClient.from(dbClient, {

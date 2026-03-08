@@ -6,6 +6,7 @@ import {
   HeadObjectCommand,
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
+import { getAwsCredentials } from '../config/aws.js';
 import Fuse from 'fuse.js';
 import type { MemoryEntry } from '@local-agent/shared';
 import { BaseStorage } from './interface.js';
@@ -66,7 +67,7 @@ export class S3StorageAdapter extends BaseStorage {
       credentials: config.accessKeyId && config.secretAccessKey ? {
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,
-      } : undefined,
+      } : getAwsCredentials(),
     });
   }
 

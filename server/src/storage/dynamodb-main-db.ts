@@ -1,4 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { getAwsCredentials } from '../config/aws.js';
 import {
   DynamoDBDocumentClient,
   GetCommand,
@@ -192,6 +193,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     const dynamo = new DynamoDBClient({
       region: config.region || process.env.DYNAMODB_REGION || process.env.AWS_REGION || 'us-west-2',
       ...(config.endpoint ? { endpoint: config.endpoint } : {}),
+      credentials: getAwsCredentials(),
     });
     this.client = DynamoDBDocumentClient.from(dynamo, {
       marshallOptions: { removeUndefinedValues: true },

@@ -19,6 +19,7 @@ import {
   GetSecretValueCommand,
   type SecretsManagerClientConfig,
 } from '@aws-sdk/client-secrets-manager';
+import { getAwsCredentials } from './aws.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -142,7 +143,7 @@ export async function loadSecrets(): Promise<void> {
     process.env.DYNAMODB_REGION ??
     'us-west-2';
 
-  const clientConfig: SecretsManagerClientConfig = { region };
+  const clientConfig: SecretsManagerClientConfig = { region, credentials: getAwsCredentials() };
 
   // Allow a custom endpoint for local testing (e.g. LocalStack)
   if (process.env.SECRETS_MANAGER_ENDPOINT) {

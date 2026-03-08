@@ -1,5 +1,6 @@
 import { SESClient, SendEmailCommand, SendEmailCommandInput } from '@aws-sdk/client-ses';
 import { config } from './config/index.js';
+import { getAwsCredentials } from './config/aws.js';
 
 /**
  * Email service using AWS SES
@@ -11,6 +12,7 @@ export class EmailService {
   constructor() {
     this.client = new SESClient({
       region: config.ses.region,
+      credentials: getAwsCredentials(),
     });
     this.senderEmail = config.ses.senderEmail;
   }
