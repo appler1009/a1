@@ -138,4 +138,56 @@ export class JobRunner {
       });
     }
   }
+
+  /**
+   * Run a job and manage its DB lifecycle (status, lastRunAt, error messages).
+   * Called by the dispatch endpoint after the Lambda sends its decisions.
+   */
+  async execute(job: ScheduledJob, saveToChat = true): Promise<void> {
+    console.log(`[JobRunner] Running job ${job.id}: ${job.description.slice(0, 60)}`);
+    await this.db.updateScheduledJobStatus(job.id, { status: 'running', holdUntil: null });
+    try {
+      await this.run(job, saveToChat);
+      const status = job.scheduleType === 'once' ? 'completed' : 'pending';
+      await this.db.updateScheduledJobStatus(job.id, {
+        status,
+        lastRunAt: new Date(),
+        runCount: job.runCount + 1,
+      });
+      console.log(`[JobRunner] Job ${job.id} completed, status → ${status}`);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      await this.db.updateScheduledJobStatus(job.id, {
+        status: 'failed',
+        lastError: errorMsg,
+        lastRunAt: new Date(),
+        runCount: job.runCount + 1,
+        holdUntil: null,
+      });
+      console.error(`[JobRunner] Job ${job.id} failed:`, err);
+
+      const shortDesc = job.description.length > 60
+        ? job.description.slice(0, 60) + '…'
+        : job.description;
+      const now = new Date().toISOString();
+      await this.db.saveMessage({
+        id: uuidv4(),
+        userId: job.userId,
+        roleId: job.roleId,
+        groupId: null,
+        from: 'system' as const,
+        content: `*Scheduled job failed: ${shortDesc}*`,
+        createdAt: now,
+      });
+      await this.db.saveMessage({
+        id: uuidv4(),
+        userId: job.userId,
+        roleId: job.roleId,
+        groupId: null,
+        from: 'system' as const,
+        content: `**Error running scheduled task:**\n\`\`\`\n${errorMsg}\n\`\`\``,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
 }

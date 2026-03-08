@@ -34,7 +34,6 @@ import { authService } from './auth/index.js';
 import { GoogleOAuthHandler } from './auth/google-oauth.js';
 import { startDiscordBot } from './discord/bot.js';
 import { JobRunner } from './scheduler/job-runner.js';
-import { Scheduler } from './scheduler/scheduler.js';
 import { initializeGmailInProcess, isGmailCacheId, getGmailMessageIdFromCacheId, fetchAndCacheGmailMessage } from './mcp/in-process/gmail.js';
 import { initializeDisplayEmail } from './mcp/in-process/display-email.js';
 import fs from 'fs';
@@ -156,8 +155,8 @@ const fastify = Fastify({
 // Global LLM router instance
 let llmRouter: ReturnType<typeof createLLMRouter>;
 
-// Global scheduler instance
-let scheduler: Scheduler | null = null;
+// Global job runner instance (used by the Lambda dispatch endpoint)
+let jobRunner: JobRunner | null = null;
 
 // Global storage instance - initialized before routes (deprecated, kept for backward compatibility)
 const storage = createStorage({
@@ -745,19 +744,40 @@ fastify.get('/internal/scheduler/pending', async (request, reply) => {
 // Receives the Lambda's evaluation decisions and executes/holds accordingly.
 fastify.post('/internal/scheduler/dispatch', async (request, reply) => {
   if (!assertInternalApiKey(request, reply)) return;
+  if (!jobRunner) return reply.code(503).send({ error: 'Job runner not initialised' });
+
   const body = request.body as {
     run?: string[];
     hold?: Array<{ id: string; until: string }>;
   };
-
-  if (!scheduler) {
-    return reply.code(503).send({ error: 'Scheduler not initialised' });
-  }
-
   const run: string[] = Array.isArray(body.run) ? body.run : [];
   const hold: Array<{ id: string; until: string }> = Array.isArray(body.hold) ? body.hold : [];
 
-  await scheduler.dispatch({ run, hold });
+  console.log(`[Dispatch] run: ${run.length}, hold: ${hold.length}`);
+
+  const db = await getMainDatabase(config.storage.root);
+
+  // Fetch all affected jobs in one pass
+  const allIds = new Set([...run, ...hold.map(h => h.id)]);
+  const allJobs = await Promise.all([...allIds].map(id => db.getScheduledJob(id)));
+  const jobMap = new Map(allJobs.filter(Boolean).map((j) => [j!.id, j!]));
+
+  // Execute run-jobs first, then apply hold decisions
+  for (const id of run) {
+    const job = jobMap.get(id);
+    if (job) await jobRunner.execute(job);
+  }
+  for (const { id, until } of hold) {
+    const holdUntil = new Date(until);
+    if (!isNaN(holdUntil.getTime())) {
+      await db.updateScheduledJobStatus(id, { holdUntil }).catch((err: unknown) =>
+        console.error(`[Dispatch] Failed to hold job ${id}:`, err),
+      );
+    } else {
+      console.warn(`[Dispatch] Job ${id} has invalid hold date: ${until}`);
+    }
+  }
+
   return { ok: true, run: run.length, hold: hold.length };
 });
 
@@ -4165,15 +4185,8 @@ const start = async () => {
     });
     fastify.log.info({ provider: config.llm.provider, hasGrokKey: !!config.llm.grokApiKey }, 'LLM router initialized');
 
-    // Initialize scheduler — polling is disabled when Lambda handles evaluation
-    const jobRunner = new JobRunner(llmRouter, mainDb, executeToolWithAdapters);
-    scheduler = new Scheduler(mainDb, jobRunner, llmRouter);
-    if (process.env.LAMBDA_SCHEDULER !== 'true') {
-      scheduler.start();
-      fastify.log.info('Scheduler started (built-in polling)');
-    } else {
-      fastify.log.info('Scheduler polling disabled — Lambda evaluator is active');
-    }
+    jobRunner = new JobRunner(llmRouter, mainDb, executeToolWithAdapters);
+    fastify.log.info('Job runner initialized — awaiting Lambda dispatch');
 
     // Start listening
     await fastify.listen({
@@ -4218,8 +4231,6 @@ async function gracefulShutdown(signal: string) {
   closeActiveStreams();
   console.log('[shutdown] SSE streams closed');
 
-  scheduler?.stop();
-  console.log('[shutdown] Scheduler stopped');
 
   // Disconnect MCP clients with a hard timeout — a hung subprocess must not
   // block the entire shutdown and keep the container alive indefinitely.
