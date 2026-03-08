@@ -25,6 +25,10 @@ export class RoleManagerInProcess implements InProcessMCPModule {
     console.log(`[RoleManagerInProcess] Initialized for user: ${userId}`);
   }
 
+  getSystemPromptSummary(): string {
+    return 'Role Manager — list and switch between user-defined assistant roles.';
+  }
+
   getSystemPrompt(): string {
     return `## ROLE MANAGEMENT
 You have access to role management tools. When the user asks to change or switch roles, you MUST call these tools — no exceptions:

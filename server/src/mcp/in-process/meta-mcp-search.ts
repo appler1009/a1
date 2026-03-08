@@ -161,6 +161,10 @@ export class MetaMcpSearchInProcess {
     console.log(`[MetaMcpSearchInProcess] Created adapter for user: ${userId}`);
   }
 
+  getSystemPromptSummary(): string {
+    return 'search_tool — discover available MCP tools by natural language query before attempting any task.';
+  }
+
   getSystemPrompt(): string {
     return `## MCP TOOLS
 **You MUST explore and use available MCP tools to be better equipped for the answer.**

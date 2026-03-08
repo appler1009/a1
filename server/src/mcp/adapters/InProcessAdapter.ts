@@ -21,8 +21,14 @@ export interface InProcessToolModule {
   getTools(): Promise<RawToolInfo[]> | RawToolInfo[];
 
   /**
-   * Optional system prompt contribution for this MCP module.
-   * Returned text will be injected into the AI system prompt when this server is active.
+   * One-liner summary always included in the initial system prompt so the AI knows
+   * what this server offers and can form a good search_tool query.
+   */
+  getSystemPromptSummary?(): string;
+
+  /**
+   * Full system prompt injected on-demand after search_tool discovers this server.
+   * Contains detailed usage rules (e.g. "never show message IDs", "list calendars first").
    */
   getSystemPrompt?(): string;
 
@@ -197,9 +203,12 @@ export class InProcessAdapter {
     }
   }
 
-  /**
-   * Return this module's system prompt contribution, if any.
-   */
+  getSystemPromptSummary(): string | undefined {
+    return typeof this.toolModule.getSystemPromptSummary === 'function'
+      ? this.toolModule.getSystemPromptSummary()
+      : undefined;
+  }
+
   getSystemPrompt(): string | undefined {
     return typeof this.toolModule.getSystemPrompt === 'function'
       ? this.toolModule.getSystemPrompt()

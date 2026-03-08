@@ -62,6 +62,10 @@ You have access to a knowledge graph memory system with the following tools:
 - Use memory to maintain continuity and personalization across conversations
 - For any factual question about the user's data, files, or past context — always use available tools to look it up. Never answer from training knowledge when a tool can retrieve the real answer.`;
 
+  getSystemPromptSummary(): string {
+    return 'Memory — persistent knowledge graph for storing and retrieving facts, preferences, and context across conversations.';
+  }
+
   getSystemPrompt(): string {
     return SQLiteMemoryInProcess.systemPrompt;
   }

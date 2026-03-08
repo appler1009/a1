@@ -2118,7 +2118,6 @@ After calling this tool, you'll receive tool names and their server information.
         // Always show the Cache ID in the system prompt if we have a viewerFile
         // The resolver will look up the temp file by cache ID when MCP tools are called
         documentContext = `
-
 ## CURRENT DOCUMENT IN PREVIEW PANE
 The user currently has the following document displayed in their preview pane:
 - **Filename**: ${body.viewerFile.name}
@@ -2185,13 +2184,21 @@ ${accountList}
       const usesMetric = userLocale !== 'en-US' && (userLocale.startsWith('fr') || userLocale.startsWith('de') || userLocale.startsWith('es') || userLocale.startsWith('pt') || userLocale.startsWith('it') || userLocale.startsWith('nl') || userLocale.startsWith('sv') || userLocale.startsWith('no') || userLocale.startsWith('da') || userLocale.startsWith('fi') || userLocale.startsWith('pl') || userLocale.startsWith('ru') || userLocale.startsWith('zh') || userLocale.startsWith('ja') || userLocale.startsWith('ko') || metricLocales.includes(userLocale));
       const unitSystem = usesMetric ? 'metric (Celsius, km, kg, L, cm)' : 'imperial (Fahrenheit, miles, lb, fl oz, inches)';
 
-      // Collect system prompt contributions from active MCP adapters
-      const mcpSystemPrompts = mcpManager.getSystemPrompts();
-
-      // Memory is role-scoped (not in the manager's adapter map), so always include it directly
+      // Memory is role-scoped (not in the manager's adapter map), always include its full prompt
       const memorySystemPrompt = process.env.STORAGE_TYPE === 's3'
         ? DynamoDBMemoryInProcess.systemPrompt
         : SQLiteMemoryInProcess.systemPrompt;
+
+      // These servers always get their full prompt in the initial system message.
+      // All other servers contribute only a one-liner summary; full prompts are injected
+      // on-demand after search_tool returns results for them.
+      const ALWAYS_FULL_PROMPT_SERVERS = new Set(['meta-mcp-search', 'role-manager']);
+
+      const alwaysFullPrompts = [...ALWAYS_FULL_PROMPT_SERVERS]
+        .map(id => mcpManager.getSystemPromptFor(id))
+        .filter(Boolean) as string[];
+
+      const serverSummaries = mcpManager.getSystemPromptSummaries(ALWAYS_FULL_PROMPT_SERVERS);
 
       const systemMessage = {
         role: 'system' as const,
@@ -2212,7 +2219,6 @@ ${accountList}
 - Use human-readable filenames and email subjects, never mention cache IDs or internal identifiers.
 - NEVER mention any internal IDs in your responses to users - these IDs (cache IDs, email IDs, message IDs, file IDs, document IDs, attachment IDs, drive IDs, thread IDs) are internal only and useless to users. Always use the human-readable content instead.
 - For all cached files (PDFs, Google Drive files, emails): Use [preview-file:Filename](cache-id) format for preview pane display. Never mention cache IDs in plain text.
-- For Google Drive files: Format as [preview-file:Filename](cache-id) where cache-id is from the downloaded/cached file, not the Google Drive ID.
 
 ## PROCESSING MULTIPLE ITEMS
 **IMPORTANT**: When the user asks you to process multiple items (emails, files, documents, etc.):
@@ -2224,7 +2230,10 @@ ${accountList}
           roleSection ? roleSection.trim() : '',
           accountsSection ? accountsSection.trim() : '',
           memorySystemPrompt,
-          ...mcpSystemPrompts,
+          ...alwaysFullPrompts,
+          serverSummaries.length > 0
+            ? `## AVAILABLE TOOLS OVERVIEW\n${serverSummaries.map(s => `- ${s}`).join('\n')}`
+            : '',
           documentContext,
         ].filter(Boolean).join('\n\n'),
       };
@@ -2299,6 +2308,9 @@ ${accountList}
       // Track if we're in Phase 2 (tools have been loaded after search)
       let phase2Tools: Array<{ name: string; description: string; inputSchema: any; serverId: string }> = [];
       let hasLoadedPhase2Tools = false;
+
+      // Track which server system prompts have already been injected this request
+      const injectedServerIds = new Set(ALWAYS_FULL_PROMPT_SERVERS);
 
       // Handle tool execution if tools were called (with iteration limit)
       while (toolCalls.length > 0 && toolIteration < MAX_TOOL_ITERATIONS) {
@@ -2435,7 +2447,31 @@ ${accountList}
                 });
                 console.log('='.repeat(80) + '\n');
               }
-            } catch (parseError) {
+            // Inject full system prompts for newly discovered servers.
+            // Parse server IDs from the search result format: "1. **tool_name** (server_id)"
+            try {
+              const serverIdMatches = toolResult.matchAll(/\d+\.\s+\*\*[a-zA-Z0-9_-]+\*\*\s+\(([^)]+)\)/g);
+              const newPrompts: string[] = [];
+
+              for (const match of serverIdMatches) {
+                const serverId = match[1];
+                if (!serverId || serverId === 'unknown' || injectedServerIds.has(serverId)) continue;
+
+                const fullPrompt = mcpManager.getSystemPromptFor(serverId);
+                if (fullPrompt) {
+                  newPrompts.push(fullPrompt);
+                  injectedServerIds.add(serverId);
+                  console.log(`[ChatStream] Injecting full system prompt for server: ${serverId}`);
+                }
+              }
+
+              if (newPrompts.length > 0) {
+                systemMessage.content += '\n\n' + newPrompts.join('\n\n');
+              }
+            } catch (injectError) {
+              console.error('[ChatStream] Failed to inject server system prompts:', injectError);
+            }
+          } catch (parseError) {
               console.error('[ChatStream] Failed to parse search results:', parseError);
             }
           }

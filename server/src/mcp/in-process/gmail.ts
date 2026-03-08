@@ -275,6 +275,10 @@ export class GmailInProcess implements InProcessMCPModule {
     console.log('[GmailInProcess] Initialized with token data and storage root:', this.storageRoot);
   }
 
+  getSystemPromptSummary(): string {
+    return 'Gmail — search, read, draft, and send emails across connected Google accounts.';
+  }
+
   getSystemPrompt(): string {
     return `## GMAIL EMAIL SEARCH RESULTS
 When showing email search results from gmailSearchMessages:

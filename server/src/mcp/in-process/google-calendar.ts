@@ -50,6 +50,10 @@ export class GoogleCalendarInProcess implements InProcessMCPModule {
     console.log('[GoogleCalendarInProcess] Initialized with token data');
   }
 
+  getSystemPromptSummary(): string {
+    return 'Google Calendar — list calendars and query or create events across connected Google accounts.';
+  }
+
   getSystemPrompt(): string {
     return `## GOOGLE CALENDAR
 **CRITICAL WORKFLOW for calendar queries:**

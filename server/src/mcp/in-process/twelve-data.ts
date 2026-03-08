@@ -44,6 +44,10 @@ export class TwelveDataInProcess implements InProcessMCPModule {
     return data;
   }
 
+  getSystemPromptSummary(): string {
+    return 'Twelve Data — access real-time financial market data including stocks, forex, and crypto.';
+  }
+
   async getTools(): Promise<MCPToolInfo[]> {
     return [
       {

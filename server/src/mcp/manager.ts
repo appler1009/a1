@@ -725,26 +725,40 @@ export class MCPManager {
   }
 
   /**
-   * Collect system prompt contributions from all active in-process adapters.
-   * Each adapter may optionally implement getSystemPrompt() to inject instructions
-   * relevant to that server into the AI system prompt.
+   * One-liner summaries for all active in-process adapters (always included in initial system prompt).
+   * Pass excludeIds to skip servers whose full prompt is already in the initial prompt.
    */
-  getSystemPrompts(): string[] {
-    const prompts: string[] = [];
+  getSystemPromptSummaries(excludeIds: Set<string> = new Set()): string[] {
+    const summaries: string[] = [];
     const seen = new Set<string>();
 
-    for (const adapter of this.inProcessAdapters.values()) {
-      const getPrompt = (adapter as any).getSystemPrompt;
-      if (typeof getPrompt === 'function') {
-        const prompt: string | undefined = getPrompt.call(adapter);
-        if (prompt && !seen.has(prompt)) {
-          seen.add(prompt);
-          prompts.push(prompt);
+    for (const [id, adapter] of this.inProcessAdapters) {
+      if (excludeIds.has(id)) continue;
+      const getSummary = (adapter as any).getSystemPromptSummary;
+      if (typeof getSummary === 'function') {
+        const summary: string | undefined = getSummary.call(adapter);
+        if (summary && !seen.has(summary)) {
+          seen.add(summary);
+          summaries.push(summary);
         }
       }
     }
 
-    return prompts;
+    return summaries;
+  }
+
+  /**
+   * Full system prompt for a specific server, looked up by server ID.
+   * Used for on-demand injection after search_tool returns results.
+   */
+  getSystemPromptFor(serverId: string): string | undefined {
+    // Try exact match first, then base ID (for multi-account adapters like gmail-mcp-lib~email)
+    const adapter = this.inProcessAdapters.get(serverId)
+      ?? this.inProcessAdapters.get(serverId.split('~')[0]);
+    if (!adapter) return undefined;
+
+    const getPrompt = (adapter as any).getSystemPrompt;
+    return typeof getPrompt === 'function' ? getPrompt.call(adapter) : undefined;
   }
 
   /**

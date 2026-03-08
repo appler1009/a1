@@ -11,6 +11,10 @@ export class SchedulerInProcess implements InProcessMCPModule {
     private readonly roleId: string,
   ) {}
 
+  getSystemPromptSummary(): string {
+    return 'Scheduler — schedule one-time or recurring tasks for future autonomous execution.';
+  }
+
   getSystemPrompt(): string {
     return `## SCHEDULED TASKS
 When the user asks to schedule, automate, or run something in the future (e.g. "every morning", "remind me", "check this daily", "run this at 9am"), you MUST use \`search_tool\` to find the scheduler tools:

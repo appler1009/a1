@@ -53,6 +53,10 @@ export class WeatherInProcess implements InProcessMCPModule {
     console.log('[WeatherInProcess] Initialized with weather-mcp handlers');
   }
 
+  getSystemPromptSummary(): string {
+    return 'Weather — get current conditions and forecasts for any location worldwide.';
+  }
+
   /**
    * List all available tools
    */

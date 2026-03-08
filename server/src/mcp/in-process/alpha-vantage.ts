@@ -46,6 +46,10 @@ export class AlphaVantageInProcess implements InProcessMCPModule {
     return data;
   }
 
+  getSystemPromptSummary(): string {
+    return 'Alpha Vantage — look up real-time and historical stock prices and market data.';
+  }
+
   async getTools(): Promise<MCPToolInfo[]> {
     return [
       {

@@ -568,6 +568,10 @@ async function processResponse(response: Response): Promise<string> {
 export class FetchUrlInProcess implements InProcessMCPModule {
   [key: string]: unknown;
 
+  getSystemPromptSummary(): string {
+    return 'Fetch URL — fetch web pages or local files and convert them to readable markdown.';
+  }
+
   async getTools(): Promise<MCPToolInfo[]> {
     return [
       {

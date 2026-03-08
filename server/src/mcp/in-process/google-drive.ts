@@ -134,9 +134,14 @@ export class GoogleDriveInProcess implements InProcessMCPModule {
     return convertedQuery;
   }
 
+  getSystemPromptSummary(): string {
+    return 'Google Drive — search, browse, and download files and documents from connected Google accounts.';
+  }
+
   getSystemPrompt(): string {
-    return `## GOOGLE DRIVE SEARCH
-Files are always returned ordered by most recently modified first. Mention the modification date when presenting results. When ranking or summarizing multiple results, give higher weight to more recent items.`;
+    return `## GOOGLE DRIVE
+Files are always returned ordered by most recently modified first. Mention the modification date when presenting results. When ranking or summarizing multiple results, give higher weight to more recent items.
+- Format downloaded Drive files as [preview-file:Filename](cache-id) where cache-id is from the downloaded/cached file, not the Google Drive ID.`;
   }
 
   /**
