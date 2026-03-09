@@ -1,5 +1,5 @@
 # Production stage
-FROM oven/bun:latest
+FROM --platform=linux/arm64 oven/bun:latest
 
 WORKDIR /app
 

@@ -41,7 +41,7 @@
     "googleapis": "^144.0.0",
     "lucia": "^3.2.0",
     "marked": "^12.0.0",
-    "meta-mcp-search": "^1.0.0",
+    "meta-mcp-search": "^1.1.1",
     "node-html-parser": "^7.1.0",
     "openai": "^4.28.0",
     "uuid": "^9.0.1",
