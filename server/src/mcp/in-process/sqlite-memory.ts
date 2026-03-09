@@ -54,13 +54,13 @@ You have access to a knowledge graph memory system with the following tools:
 - **memory_read_graph**: Read the entire knowledge graph to get a complete overview of all learned information
 - **memory_open_nodes**: Retrieve specific entities by name to access their detailed observations and relationships
 
-**When to use memory:**
-- You MUST search memory before answering any question about the user, their preferences, past context, or prior decisions. Do not answer from assumption.
-- At the beginning of conversations, search memory for relevant context about the topic
-- Before making recommendations, check if related information exists in memory
-- When the user mentions a previous context or topic, look it up in memory first
-- Use memory to maintain continuity and personalization across conversations
-- For any factual question about the user's data, files, or past context — always use available tools to look it up. Never answer from training knowledge when a tool can retrieve the real answer.`;
+**When to use the memory MCP tools:**
+- You MUST call memory_search_nodes before answering any question about the user, their preferences, past context, or prior decisions. Do not answer from assumption — query the memory MCP tool first.
+- At the beginning of conversations, call memory_search_nodes to retrieve relevant context about the topic from the memory MCP tool
+- Before making recommendations, call memory_search_nodes to check if related information exists in the memory MCP tool
+- When the user mentions a previous context or topic, call memory_search_nodes or memory_open_nodes to look it up — do not rely on your training knowledge or in-context recall
+- Use the memory MCP tools to maintain continuity and personalization across conversations
+- For any factual question about the user's data, files, or past context — always call the memory MCP tools to retrieve the real answer. Never answer from training knowledge when these tools can retrieve it.`;
 
   getSystemPromptSummary(): string {
     return 'Memory — persistent knowledge graph for storing and retrieving facts, preferences, and context across conversations.';

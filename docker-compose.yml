@@ -12,7 +12,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - HOST=0.0.0.0
-      - AWS_PROFILE=a1-prod-local
+      - AWS_PROFILE=a1-task-local
       - COOKIE_SECURE=false
       - STORAGE_TYPE=s3
       - STORAGE_BUCKET=${STORAGE_BUCKET:-appler-a1}
