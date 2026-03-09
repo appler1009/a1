@@ -18,7 +18,6 @@ const AddMCPServerSchema = z.object({
   enabled: z.boolean().default(true),
   auth: z.object({
     provider: z.string().optional(),
-    tokenFilename: z.string().optional(),
     credentialsFilename: z.string().optional(),
   }).optional(),
   roleId: z.string().optional(), // Role to associate this server with

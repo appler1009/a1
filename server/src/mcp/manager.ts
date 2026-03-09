@@ -1,7 +1,6 @@
 import type { MCPServerConfig, MCPToolInfo, MCPResource, MCPServerInfo, McpAdapter } from '@local-agent/shared';
 import { createMCPClient, MCPClientInterface } from './client.js';
 import { getMainDatabase, MainDatabase, type IMainDatabase } from '../storage/main-db.js';
-import { promises as fs } from 'fs';
 import path from 'path';
 import { PREDEFINED_MCP_SERVERS, PredefinedMCPServer } from './predefined-servers.js';
 import { adapterRegistry } from './adapters/registry.js';
@@ -243,7 +242,7 @@ export class MCPManager {
   }
 
   /**
-   * Disconnect a server and delete its token files
+   * Disconnect a server and clean up its resources
    */
   private async disconnectServerAndDeleteTokens(serverId: string, provider: string): Promise<void> {
     const config = this.configs.get(serverId);
@@ -274,34 +273,7 @@ export class MCPManager {
       this.inProcessAdapters.delete(serverId);
     }
 
-    // Step 2: Delete token file
-    if (config?.auth?.tokenFilename) {
-      let tokenPath: string;
-      
-      if (serverId.includes('google-drive') && config.auth.tokenFilename === 'tokens.json') {
-        const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-        const tokenDir = process.env.GOOGLE_DRIVE_MCP_TOKEN_PATH
-          ? path.dirname(process.env.GOOGLE_DRIVE_MCP_TOKEN_PATH)
-          : path.join(homeDir, '.config', 'google-drive-mcp');
-        tokenPath = path.join(tokenDir, config.auth.tokenFilename);
-      } else {
-        tokenPath = path.join(process.cwd(), config.auth.tokenFilename);
-      }
-
-      console.log(`[MCPManager]   [Token Cleanup] Deleting token file: ${tokenPath}`);
-      try {
-        await fs.unlink(tokenPath);
-        console.log(`[MCPManager]   [Token Cleanup] ✓ Token file deleted`);
-      } catch (error: any) {
-        if (error.code === 'ENOENT') {
-          console.log(`[MCPManager]   [Token Cleanup] Token file not found (already deleted)`);
-        } else {
-          console.error(`[MCPManager]   [Token Cleanup] ✗ Error deleting token: ${error}`);
-        }
-      }
-    }
-
-    // Step 3: Remove config from memory
+    // Step 2: Remove config from memory
     this.configs.delete(serverId);
     console.log(`[MCPManager]   [Shutdown] ✓ Server ${serverId} fully shut down`);
   }
@@ -518,87 +490,6 @@ export class MCPManager {
   }
 
   /**
-   * Prepare MCP server directory with auth files
-   */
-  private async prepareMCPDirectory(
-    serverId: string,
-    config: MCPServerConfig,
-    userToken?: { access_token: string; refresh_token?: string; expiry_date?: number; scope?: string; token_type?: string }
-  ): Promise<void> {
-    if (!config.auth) {
-      console.log(`[MCPManager] [Token Setup] No auth config for ${serverId}, skipping token preparation`);
-      return;
-    }
-
-    console.log(`[MCPManager] [Token Setup] Preparing auth files for ${serverId}...`);
-
-    // Create credentials file from environment variables if needed
-    if (config.auth.credentialsFilename && config.auth.provider === 'google') {
-      // Always use gcp-oauth.keys.json for google-drive-mcp
-      const credentialsFilename = 'gcp-oauth.keys.json';
-      const credentialsPath = path.join(process.cwd(), credentialsFilename);
-
-      const credentials = {
-        installed: {
-          client_id: appConfig.google.clientId,
-          client_secret: appConfig.google.clientSecret,
-          redirect_uris: [appConfig.google.redirectUri],
-        },
-      };
-
-      // Create parent directory if needed
-      const dir = path.dirname(credentialsPath);
-      await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(credentialsPath, JSON.stringify(credentials, null, 2));
-      console.log(`[MCPManager] [Token Setup]   - Created credentials file: ${credentialsPath}`);
-    }
-
-    // Create token file if token is provided
-    if (userToken) {
-      const tokenFilename = config.auth.tokenFilename || 'token.json';
-      let tokenPath: string;
-
-      // Handle different token file locations for different MCP servers
-      if (serverId.includes('google-drive') && tokenFilename === 'tokens.json') {
-        // google-drive-mcp uses ~/.config/google-drive-mcp/tokens.json by default
-        const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-        const defaultTokenDir = path.join(homeDir, '.config', 'google-drive-mcp');
-
-        // Allow override via GOOGLE_DRIVE_MCP_TOKEN_PATH environment variable
-        const tokenDir = process.env.GOOGLE_DRIVE_MCP_TOKEN_PATH
-          ? path.dirname(process.env.GOOGLE_DRIVE_MCP_TOKEN_PATH)
-          : defaultTokenDir;
-
-        tokenPath = path.join(tokenDir, tokenFilename);
-      } else {
-        tokenPath = path.join(process.cwd(), tokenFilename);
-      }
-
-      console.log(`[MCPManager] [Token Setup]   - Writing token file: ${tokenPath}`);
-
-      // Create parent directory if needed
-      const dir = path.dirname(tokenPath);
-      await fs.mkdir(dir, { recursive: true });
-
-      // Format token appropriately for the MCP server
-      const tokenData = serverId.includes('google-drive') && tokenFilename === 'tokens.json'
-        ? {
-            access_token: userToken.access_token,
-            refresh_token: userToken.refresh_token,
-            scope: userToken.scope || 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/spreadsheets',
-            token_type: userToken.token_type || 'Bearer',
-            expiry_date: userToken.expiry_date,
-          }
-        : userToken;
-
-      await fs.writeFile(tokenPath, JSON.stringify(tokenData, null, 2));
-      console.log(`[MCPManager] [Token Setup]   - ✓ Token file created successfully`);
-    } else {
-      console.log(`[MCPManager] [Token Setup]   - No user token provided, skipping token file creation`);
-    }
-  }
-
-  /**
    * Add and connect to an MCP server.
    * For multi-account capable in-process servers, adds the account to the
    * shared MultiAccountAdapter instead of spawning a subprocess.
@@ -657,11 +548,6 @@ export class MCPManager {
       this.configs.set(serverId, config);
       await this.persistConfig(serverId, config);
       return;
-    }
-
-    // Prepare auth files if needed
-    if (config.auth) {
-      await this.prepareMCPDirectory(serverId, config, userToken);
     }
 
     const client = createMCPClient(config);

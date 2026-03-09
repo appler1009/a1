@@ -14,7 +14,6 @@ export interface PredefinedMCPServer {
   auth?: {
     provider: 'google' | 'github' | 'none' | 'alphavantage' | 'twelvedata';
     credentialsFilename?: string;
-    tokenFilename?: string;
   };
   icon?: string; // e.g., 'drive', 'book', 'github'
   hidden?: boolean; // If true, won't show in UI feature list but can still be used
@@ -31,7 +30,6 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     auth: {
       provider: 'google',
       credentialsFilename: 'gcp-oauth.keys.json',
-      tokenFilename: 'tokens.json',
     },
     icon: 'drive',
     inProcess: true, // Use InProcessAdapter for direct API calls (better performance)

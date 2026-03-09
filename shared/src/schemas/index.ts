@@ -154,7 +154,6 @@ export const MCPServerConfigSchema = z.object({
   accountEmail: z.string().optional(), // For multi-account OAuth services (Gmail, Google Drive, etc.)
   auth: z.object({
     provider: z.string().optional(),
-    tokenFilename: z.string().optional(),
     credentialsFilename: z.string().optional(),
   }).optional(),
 });

@@ -41,7 +41,7 @@ export abstract class BaseStdioAdapter implements McpAdapter {
 
   /**
    * Hook for subclasses to prepare MCP-specific setup
-   * Called before connecting (e.g., write token files, set env vars)
+   * Called before connecting (e.g., set env vars)
    */
   protected async prepare(): Promise<void> {
     // Override in subclasses
@@ -65,9 +65,6 @@ export abstract class BaseStdioAdapter implements McpAdapter {
       console.log(`[BaseStdioAdapter:connect] Custom env vars (${customEnvKeys.length}):`, customEnvKeys);
 
       // Log specific token-related env vars
-      if (this.env.GOOGLE_DRIVE_MCP_TOKEN_PATH) {
-        console.log(`[BaseStdioAdapter:connect] GOOGLE_DRIVE_MCP_TOKEN_PATH: ${this.env.GOOGLE_DRIVE_MCP_TOKEN_PATH}`);
-      }
       if (this.env.ANTHROPIC_API_KEY) {
         console.log(`[BaseStdioAdapter:connect] ANTHROPIC_API_KEY: ${this.env.ANTHROPIC_API_KEY.substring(0, 10)}...`);
       }
@@ -75,7 +72,6 @@ export abstract class BaseStdioAdapter implements McpAdapter {
       // Create merged environment
       const mergedEnv = { ...process.env, ...this.env };
       console.log(`[BaseStdioAdapter:connect] Merged env vars that will be passed to MCP:`, {
-        'GOOGLE_DRIVE_MCP_TOKEN_PATH': mergedEnv.GOOGLE_DRIVE_MCP_TOKEN_PATH,
         'PATH': mergedEnv.PATH?.substring(0, 50) + '...',
         'NODE_ENV': mergedEnv.NODE_ENV,
         'custom_vars_count': customEnvKeys.length,

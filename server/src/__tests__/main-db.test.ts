@@ -12,6 +12,9 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 
+// Disable KMS for unit tests — these tests cover DB behaviour, not encryption
+process.env.KMS_OAUTH_DISABLED = 'true';
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

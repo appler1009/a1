@@ -1,5 +1,4 @@
 import path from 'path';
-import { promises as fs } from 'fs';
 import type { McpAdapter, MCPServerConfig } from '@local-agent/shared';
 import { adapterRegistry } from './adapters/registry.js';
 import { authService } from '../auth/index.js';
@@ -29,14 +28,6 @@ const activeAdapters = new Map<string, McpAdapter>();
 const inProcessServers = new Set<string>();
 
 /**
- * Result of preparing MCP directory
- */
-interface PrepareResult {
-  cwd: string;
-  credentialsPath?: string;
-}
-
-/**
  * Result of token refresh operation
  */
 interface TokenData {
@@ -44,7 +35,6 @@ interface TokenData {
   refresh_token?: string;
   expiry_date?: number;
   token_type: string;
-  credentialsPath?: string;
 }
 
 /**
@@ -57,11 +47,10 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000;
  * Uses user-level tokens only (no role-specific tokens)
  *
  * @param userId - The user ID
- * @param credentialsPath - Optional credentials path for stdio adapters
  * @returns Token data for Google API calls
  * @throws Error if token not found or cannot be refreshed
  */
-async function getGoogleTokenData(userId: string, credentialsPath?: string): Promise<TokenData> {
+async function getGoogleTokenData(userId: string): Promise<TokenData> {
   // Always use user-level tokens (no role-specific tokens anymore)
   let oauthToken = await authService.getOAuthToken(userId, 'google');
 
@@ -116,38 +105,7 @@ async function getGoogleTokenData(userId: string, credentialsPath?: string): Pro
     refresh_token: oauthToken.refreshToken,
     expiry_date: oauthToken.expiryDate,
     token_type: 'Bearer',
-    credentialsPath,
   };
-}
-
-/**
- * Prepare working directory for MCP server
- * Generic credentials setup (token setup is handled by individual adapters)
- */
-async function prepareUserMcpDir(
-  serverKey: string,
-  userId: string,
-  serverConfig: MCPServerConfig
-): Promise<PrepareResult> {
-  const cwd = serverConfig.cwd || process.cwd();
-
-  if (!serverConfig.auth) return { cwd };
-
-  if (serverConfig.auth.credentialsFilename && serverConfig.auth.provider === 'google') {
-    const credentialsPath = path.join(cwd, 'gcp-oauth.keys.json');
-    const credentials = {
-      installed: {
-        client_id: config.google.clientId,
-        client_secret: config.google.clientSecret,
-        redirect_uris: [config.google.redirectUri],
-      },
-    };
-    await fs.mkdir(path.dirname(credentialsPath), { recursive: true });
-    await fs.writeFile(credentialsPath, JSON.stringify(credentials, null, 2));
-    return { cwd, credentialsPath };
-  }
-
-  return { cwd };
 }
 
 /**
@@ -263,11 +221,11 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
 
   // Stdio adapter path
   const serverConfig = await loadServerConfig(serverKey);
-  const { cwd, credentialsPath } = await prepareUserMcpDir(serverKey, userId, serverConfig);
+  const cwd = serverConfig.cwd || process.cwd();
 
   let tokenData: any;
   if (serverConfig.auth?.provider === 'google') {
-    tokenData = await getGoogleTokenData(userId, credentialsPath);
+    tokenData = await getGoogleTokenData(userId);
   }
 
   const adapter = adapterRegistry.create(serverKey, userId, `mcp-${serverKey}`, serverConfig, cwd, tokenData);
