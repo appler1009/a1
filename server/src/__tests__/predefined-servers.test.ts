@@ -21,7 +21,7 @@ describe('getPredefinedServer', () => {
   it('returns gmail server', () => {
     const server = getPredefinedServer('gmail-mcp-lib');
     expect(server).toBeDefined();
-    expect(server?.auth?.provider).toBe('google');
+    expect(server?.auth?.provider).toBe('google-gmail');
   });
 
   it('returns weather server', () => {

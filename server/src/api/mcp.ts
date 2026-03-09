@@ -104,9 +104,9 @@ export async function registerMCPRoutes(fastify: FastifyInstance): Promise<void>
 
       // If auth config includes Google OAuth, fetch the user-level token
       let userToken: any;
-      if (config.auth?.provider === 'google') {
+      if (config.auth?.provider && config.auth.provider.startsWith('google')) {
         // Always use user-level OAuth token (role-specific tokens have been migrated)
-        const oauthToken = await authService.getOAuthToken(request.user.id, 'google');
+        const oauthToken = await authService.getOAuthToken(request.user.id, config.auth.provider);
         if (!oauthToken) {
           return reply.status(400).send({
             success: false,

@@ -12,7 +12,7 @@ export interface PredefinedMCPServer {
   args: string[];
   env?: Record<string, string>;
   auth?: {
-    provider: 'google' | 'github' | 'none' | 'alphavantage' | 'twelvedata';
+    provider: 'google' | 'google-gmail' | 'google-drive' | 'google-calendar' | 'github' | 'none' | 'alphavantage' | 'twelvedata';
     credentialsFilename?: string;
   };
   icon?: string; // e.g., 'drive', 'book', 'github'
@@ -28,7 +28,7 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     command: 'npx',
     args: ['-y', '@piotr-agier/google-drive-mcp'],
     auth: {
-      provider: 'google',
+      provider: 'google-drive',
       credentialsFilename: 'gcp-oauth.keys.json',
     },
     icon: 'drive',
@@ -130,7 +130,7 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     command: 'npx',
     args: ['-y', 'gmail-mcp-lib'],
     auth: {
-      provider: 'google',
+      provider: 'google-gmail',
     },
     icon: 'mail',
     inProcess: true, // Use InProcessAdapter for direct API calls (better performance)
@@ -143,7 +143,7 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
     command: 'npx',
     args: ['-y', 'google-calendar-mcp-lib'],
     auth: {
-      provider: 'google',
+      provider: 'google-calendar',
     },
     icon: 'calendar',
     inProcess: true, // Use InProcessAdapter for direct API calls (better performance)

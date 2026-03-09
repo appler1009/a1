@@ -299,7 +299,13 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
 
   const startOAuthFlow = async (provider: string): Promise<boolean> => {
     try {
-      const endpoint = `/api/auth/${provider}/start`;
+      // google-gmail/google-drive/google-calendar all use the same /api/auth/google/start
+      // route but with a ?service= param so each gets its own scoped token
+      let endpoint = `/api/auth/${provider}/start`;
+      if (provider.startsWith('google-')) {
+        const service = provider.replace('google-', '');
+        endpoint = `/api/auth/google/start?service=${service}`;
+      }
       const authResponse = await apiFetch(endpoint, { excludeRoleId: true });
 
       if (!authResponse.ok) {
@@ -406,17 +412,18 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
       return;
     }
 
-    if (server.auth?.provider === 'google' && !accountEmail) {
+    if (server.auth?.provider && server.auth.provider.startsWith('google') && !accountEmail) {
       try {
         const response = await apiFetch('/api/mcp/oauth/connections');
         const data = await response.json();
-        if (data.success && data.data?.google && data.data.google.length > 0) {
-          if (data.data.google.length === 1) {
-            accountEmail = data.data.google[0].accountEmail;
-          } else if (data.data.google.length > 1) {
-            const selectedAccount = data.data.google[0].accountEmail;
+        const providerAccounts: { accountEmail: string }[] = data.data?.[server.auth.provider] || [];
+        if (data.success && providerAccounts.length > 0) {
+          if (providerAccounts.length === 1) {
+            accountEmail = providerAccounts[0].accountEmail;
+          } else if (providerAccounts.length > 1) {
+            const selectedAccount = providerAccounts[0].accountEmail;
             const userChoice = prompt(
-              `Select Google account:\n${data.data.google.map((acc: any) => acc.accountEmail).join('\n')}`,
+              `Select Google account:\n${providerAccounts.map((acc: any) => acc.accountEmail).join('\n')}`,
               selectedAccount
             );
             if (!userChoice) {

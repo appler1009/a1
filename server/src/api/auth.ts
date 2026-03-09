@@ -469,8 +469,10 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
 
     const state = uuidv4();
-    const redirectTo = (request.query as any).redirectTo as string | undefined;
-    const authUrl = googleOAuth.getAuthorizationUrl(state, redirectTo);
+    const { redirectTo, service } = request.query as { redirectTo?: string; service?: string };
+    const validServices = ['gmail', 'drive', 'calendar'];
+    const googleService = service && validServices.includes(service) ? service : undefined;
+    const authUrl = googleOAuth.getAuthorizationUrl(state, redirectTo, googleService);
 
     return reply.send({
       success: true,
@@ -530,16 +532,17 @@ export async function authRoutes(fastify: FastifyInstance) {
           console.warn(`[GoogleOAuth] Error fetching userinfo:`, error);
         }
 
-        // Store global token with account email
+        // Store token under service-specific provider key
+        const tokenProvider = stateVerification.service ? `google-${stateVerification.service}` : 'google';
         await authService.storeOAuthToken(request.user.id, {
-          provider: 'google',
+          provider: tokenProvider,
           accessToken: tokenResponse.access_token,
           refreshToken: tokenResponse.refresh_token,
           expiryDate,
           accountEmail,
         });
 
-        console.log(`[GoogleOAuth] Stored global token for user ${request.user.id} (account: ${accountEmail})`);
+        console.log(`[GoogleOAuth] Stored token for user ${request.user.id} (provider: ${tokenProvider}, account: ${accountEmail})`);
       }
 
       // Redirect to the frontend callback page with provider info
@@ -548,7 +551,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       const callbackUrl = new URL('/auth/google/callback', frontendUrl);
       callbackUrl.searchParams.set('code', code);
       callbackUrl.searchParams.set('state', state);
-      callbackUrl.searchParams.set('provider', 'google');
+      callbackUrl.searchParams.set('provider', stateVerification.service ? `google-${stateVerification.service}` : 'google');
       if (accountEmail) {
         callbackUrl.searchParams.set('accountEmail', accountEmail);
       }
@@ -611,7 +614,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     if (token) {
       try {
         // Attempt to revoke with Google
-        if (provider === 'google') {
+        if (provider === 'google' || provider.startsWith('google-')) {
           await googleOAuth.revokeToken(token.accessToken);
         } else if (provider === 'github') {
           await githubOAuth.revokeToken(token.accessToken);

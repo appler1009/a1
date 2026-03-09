@@ -13,22 +13,41 @@ export interface GoogleTokenResponse {
   token_type: string;
 }
 
-// Google OAuth scopes for Drive and Gmail access
-// Note: Drive scope grants access to all Google Workspace files (Docs, Sheets, etc.)
-// Gmail scope grants full read/write access to Gmail (needed for sending, drafts, labels, etc.)
-// OpenID scopes provide user profile information (email, name, etc.)
-const GOOGLE_OAUTH_SCOPES = [
-  'openid',                                         // OpenID Connect: request ID token with user info
-  'profile',                                        // Get user profile (name, picture, etc.)
-  'email',                                          // Get user email address
-  'https://www.googleapis.com/auth/drive',           // Full Drive access (includes Docs, Sheets, etc.)
-  'https://www.googleapis.com/auth/gmail.modify',   // Full read/write access to Gmail
-  'https://www.googleapis.com/auth/calendar',       // Full read/write access to Google Calendar
+// Scopes per Google service — each service only requests what it needs
+export const GOOGLE_SERVICE_SCOPES: Record<string, string[]> = {
+  gmail: [
+    'openid',
+    'profile',
+    'email',
+    'https://www.googleapis.com/auth/gmail.modify',
+  ],
+  drive: [
+    'openid',
+    'profile',
+    'email',
+    'https://www.googleapis.com/auth/drive',
+  ],
+  calendar: [
+    'openid',
+    'profile',
+    'email',
+    'https://www.googleapis.com/auth/calendar',
+  ],
+};
+
+// Fallback when no service is specified
+const ALL_GOOGLE_SCOPES = [
+  'openid',
+  'profile',
+  'email',
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/calendar',
 ];
 
 export class GoogleOAuthHandler {
   private config: GoogleOAuthConfig;
-  private stateTokens: Map<string, { expiresAt: number; redirectTo?: string }> = new Map();
+  private stateTokens: Map<string, { expiresAt: number; redirectTo?: string; service?: string }> = new Map();
 
   constructor(config: GoogleOAuthConfig) {
     this.config = config;
@@ -48,20 +67,25 @@ export class GoogleOAuthHandler {
   /**
    * Generate authorization URL for OAuth flow
    */
-  getAuthorizationUrl(state: string, redirectTo?: string): string {
+  getAuthorizationUrl(state: string, redirectTo?: string, service?: string): string {
     // Store state token with expiry (15 minutes)
     this.stateTokens.set(state, {
       expiresAt: Date.now() + 15 * 60 * 1000,
       redirectTo,
+      service,
     });
+
+    const scopes = service && GOOGLE_SERVICE_SCOPES[service]
+      ? GOOGLE_SERVICE_SCOPES[service]
+      : ALL_GOOGLE_SCOPES;
 
     const params = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     params.searchParams.set('client_id', this.config.clientId);
     params.searchParams.set('redirect_uri', this.config.redirectUri);
     params.searchParams.set('response_type', 'code');
-    params.searchParams.set('scope', GOOGLE_OAUTH_SCOPES.join(' ')); // Space-separated list of scopes
-    params.searchParams.set('access_type', 'offline'); // Request offline access to get refresh token
-    params.searchParams.set('prompt', 'consent'); // Force consent screen to ensure refresh token is returned
+    params.searchParams.set('scope', scopes.join(' '));
+    params.searchParams.set('access_type', 'offline');
+    params.searchParams.set('prompt', 'consent');
     params.searchParams.set('state', state);
 
     return params.toString();
@@ -70,7 +94,7 @@ export class GoogleOAuthHandler {
   /**
    * Verify state token
    */
-  verifyState(state: string): { valid: boolean; redirectTo?: string } {
+  verifyState(state: string): { valid: boolean; redirectTo?: string; service?: string } {
     const storedState = this.stateTokens.get(state);
 
     if (!storedState) {
@@ -83,7 +107,7 @@ export class GoogleOAuthHandler {
     }
 
     this.stateTokens.delete(state);
-    return { valid: true, redirectTo: storedState.redirectTo };
+    return { valid: true, redirectTo: storedState.redirectTo, service: storedState.service };
   }
 
   /**

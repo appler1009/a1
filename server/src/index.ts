@@ -377,11 +377,11 @@ async function downloadGoogleDriveFile(
   console.log(`[GDriveDownload] Downloading file ${fileId} for user ${userId}`);
   
   try {
-    // Get user's Google OAuth token
-    let oauthToken = await authService.getOAuthToken(userId, 'google');
-    
+    // Get user's Google Drive OAuth token
+    let oauthToken = await authService.getOAuthToken(userId, 'google-drive');
+
     if (!oauthToken) {
-      console.log('[GDriveDownload] No Google OAuth token found for user');
+      console.log('[GDriveDownload] No Google Drive OAuth token found for user');
       return null;
     }
     
@@ -402,12 +402,12 @@ async function downloadGoogleDriveFile(
         
         const newTokens = await googleOAuth.refreshAccessToken(oauthToken.refreshToken);
         oauthToken = await authService.storeOAuthToken(userId, {
-          provider: 'google',
+          provider: 'google-drive',
           accessToken: newTokens.access_token,
           refreshToken: newTokens.refresh_token || oauthToken.refreshToken,
           expiryDate: Date.now() + (newTokens.expires_in * 1000),
         } as any);
-        
+
         console.log(`[GDriveDownload] Token refreshed successfully`);
       } catch (refreshError) {
         console.error('[GDriveDownload] Failed to refresh token:', refreshError);
@@ -2160,11 +2160,17 @@ If the user asks about "this document" or "the file" without specifying, they ar
         }
       }
 
-      // Load user's Google accounts
+      // Load user's Google accounts (across all Google services, deduped by email)
       const mainDb = await getMainDatabase();
-      const googleAccounts = await mainDb.getAllUserOAuthTokens(request.user.id, 'google');
+      const [gmailAccounts, driveAccounts, calendarAccounts] = await Promise.all([
+        mainDb.getAllUserOAuthTokens(request.user.id, 'google-gmail'),
+        mainDb.getAllUserOAuthTokens(request.user.id, 'google-drive'),
+        mainDb.getAllUserOAuthTokens(request.user.id, 'google-calendar'),
+      ]);
+      const googleAccountMap = new Map([...gmailAccounts, ...driveAccounts, ...calendarAccounts].map(a => [a.accountEmail, a]));
+      const googleAccounts = [...googleAccountMap.values()];
       if (googleAccounts.length > 0) {
-        const accountList = googleAccounts.map((acc: typeof googleAccounts[0]) => `- ${acc.accountEmail}`).join('\n');
+        const accountList = googleAccounts.map(acc => `- ${acc.accountEmail}`).join('\n');
         accountsSection = `## Available Google Accounts
 ${accountList}
 
@@ -2848,10 +2854,10 @@ fastify.register(async (instance) => {
               // Get all Google OAuth tokens for this user (multi-account support)
               // Try each account until one successfully fetches the email
               const mainDb = await getMainDatabase(config.storage.root);
-              const allTokens = await mainDb.getAllUserOAuthTokens(request.user.id, 'google');
-              
+              const allTokens = await mainDb.getAllUserOAuthTokens(request.user.id, 'google-gmail');
+
               if (allTokens.length === 0) {
-                console.log('[ViewerDownload] No Google OAuth tokens found for Gmail recovery');
+                console.log('[ViewerDownload] No Google Gmail OAuth tokens found for Gmail recovery');
                 return reply.code(403).send({ 
                   success: false, 
                   error: { 
@@ -2967,11 +2973,11 @@ fastify.register(async (instance) => {
       if (gdriveFileId) {
         console.log(`[ViewerDownload] Detected Google Drive file ID: ${gdriveFileId}`);
         
-        // Get user's Google OAuth token
-        let oauthToken = await authService.getOAuthToken(request.user!.id, 'google');
-        
+        // Get user's Google Drive OAuth token
+        let oauthToken = await authService.getOAuthToken(request.user!.id, 'google-drive');
+
         if (!oauthToken) {
-          console.log('[ViewerDownload] ERROR: No Google OAuth token found for user');
+          console.log('[ViewerDownload] ERROR: No Google Drive OAuth token found for user');
           return reply.code(403).send({ 
             success: false, 
             error: { 
@@ -3369,9 +3375,9 @@ fastify.register(async (instance) => {
     try {
       // If auth config includes Google OAuth, fetch the user-level token
       let userToken: any;
-      if (config.auth?.provider === 'google') {
+      if (config.auth?.provider && config.auth.provider.startsWith('google')) {
         // Always use user-level OAuth token (role-specific tokens have been migrated)
-        const oauthToken = await authService.getOAuthToken(request.user.id, 'google');
+        const oauthToken = await authService.getOAuthToken(request.user.id, config.auth.provider);
         if (oauthToken) {
           userToken = {
             access_token: oauthToken.accessToken,
@@ -3491,12 +3497,13 @@ fastify.register(async (instance) => {
       console.log(`[AddPredefinedServer:${requestId}] Checking auth requirements...`);
       // Check if auth is required and available
       if (requiresAuth(serverId)) {
-        if (predefinedServer.auth?.provider === 'google') {
-          console.log(`[AddPredefinedServer:${requestId}] Google auth required, checking token for account: ${accountEmail || 'any'}...`);
+        if (predefinedServer.auth?.provider && predefinedServer.auth.provider.startsWith('google')) {
+          const googleProvider = predefinedServer.auth.provider;
+          console.log(`[AddPredefinedServer:${requestId}] Google auth required (${googleProvider}), checking token for account: ${accountEmail || 'any'}...`);
 
           // Always use user-level OAuth token (role-specific tokens have been migrated)
           // If accountEmail is specified, use that specific account; otherwise get the first one
-          const oauthToken = await authService.getOAuthToken(request.user.id, 'google', accountEmail);
+          const oauthToken = await authService.getOAuthToken(request.user.id, googleProvider, accountEmail);
           if (!oauthToken) {
             console.log(`[AddPredefinedServer:${requestId}] No OAuth token found for account: ${accountEmail || 'any'}`);
             return reply.code(403).send({
@@ -3505,7 +3512,7 @@ fastify.register(async (instance) => {
                 code: 'NO_AUTH',
                 message: `${predefinedServer.name} requires Google authentication. Please authenticate first.`,
                 authRequired: true,
-                authProvider: 'google',
+                authProvider: googleProvider,
               },
             });
           }
@@ -3554,12 +3561,12 @@ fastify.register(async (instance) => {
 
       // Prepare token if needed
       let userToken: any;
-      if (serverConfig.auth?.provider === 'google') {
-        console.log(`[AddPredefinedServer:${requestId}] Preparing Google token for account: ${accountEmail || 'auto'}...`);
+      if (serverConfig.auth?.provider && serverConfig.auth.provider.startsWith('google')) {
+        console.log(`[AddPredefinedServer:${requestId}] Preparing Google token (${serverConfig.auth.provider}) for account: ${accountEmail || 'auto'}...`);
 
         // Always use user-level OAuth token (role-specific tokens have been migrated)
         // If accountEmail is specified, use that specific account; otherwise get the first one
-        const oauthToken = await authService.getOAuthToken(request.user.id, 'google', accountEmail);
+        const oauthToken = await authService.getOAuthToken(request.user.id, serverConfig.auth.provider, accountEmail);
         if (oauthToken) {
           userToken = {
             access_token: oauthToken.accessToken,
@@ -3701,24 +3708,27 @@ fastify.register(async (instance) => {
       const mainDb = await getMainDatabase();
 
       // Get all OAuth tokens for this user
-      const googleAccounts = await mainDb.getAllUserOAuthTokens(request.user.id, 'google');
-      const githubTokens = await mainDb.getAllUserOAuthTokens(request.user.id, 'github');
+      const [gmailTokens, driveTokens, calendarTokens, githubTokens] = await Promise.all([
+        mainDb.getAllUserOAuthTokens(request.user.id, 'google-gmail'),
+        mainDb.getAllUserOAuthTokens(request.user.id, 'google-drive'),
+        mainDb.getAllUserOAuthTokens(request.user.id, 'google-calendar'),
+        mainDb.getAllUserOAuthTokens(request.user.id, 'github'),
+      ]);
+
+      const toAccountList = (tokens: typeof githubTokens) => tokens.map(token => ({
+        accountEmail: token.accountEmail,
+        expiryDate: token.expiryDate,
+        createdAt: token.createdAt,
+        updatedAt: token.updatedAt,
+      }));
 
       return reply.send({
         success: true,
         data: {
-          google: googleAccounts.map(token => ({
-            accountEmail: token.accountEmail,
-            expiryDate: token.expiryDate,
-            createdAt: token.createdAt,
-            updatedAt: token.updatedAt,
-          })),
-          github: githubTokens.map(token => ({
-            accountEmail: token.accountEmail,
-            expiryDate: token.expiryDate,
-            createdAt: token.createdAt,
-            updatedAt: token.updatedAt,
-          })),
+          'google-gmail': toAccountList(gmailTokens),
+          'google-drive': toAccountList(driveTokens),
+          'google-calendar': toAccountList(calendarTokens),
+          github: toAccountList(githubTokens),
         },
       });
     } catch (error) {
@@ -3905,12 +3915,12 @@ fastify.register(async (instance) => {
       const { google } = await import('googleapis');
       const { OAuth2Client } = await import('google-auth-library');
 
-      // With multi-account support a user can have several Google tokens.
+      // With multi-account support a user can have several Google Gmail tokens.
       // Try each one in turn — the right account will return 200; others 403.
       const mainDb = await getMainDatabase(config.storage.root);
-      const allTokens = await mainDb.getAllUserOAuthTokens(request.user.id, 'google');
+      const allTokens = await mainDb.getAllUserOAuthTokens(request.user.id, 'google-gmail');
       if (allTokens.length === 0) {
-        return reply.code(401).send({ success: false, error: { message: 'Google OAuth token not found. Please authenticate first.' } });
+        return reply.code(401).send({ success: false, error: { message: 'Google Gmail OAuth token not found. Please authenticate with Gmail first.' } });
       }
 
       let lastError: unknown;

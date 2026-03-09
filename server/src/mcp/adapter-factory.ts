@@ -50,12 +50,12 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000;
  * @returns Token data for Google API calls
  * @throws Error if token not found or cannot be refreshed
  */
-async function getGoogleTokenData(userId: string): Promise<TokenData> {
+async function getGoogleTokenData(userId: string, provider: string = 'google'): Promise<TokenData> {
   // Always use user-level tokens (no role-specific tokens anymore)
-  let oauthToken = await authService.getOAuthToken(userId, 'google');
+  let oauthToken = await authService.getOAuthToken(userId, provider);
 
   if (!oauthToken) {
-    throw new Error(`Google OAuth token not found for user ${userId}. Please authenticate first.`);
+    throw new Error(`Google OAuth token not found for user ${userId} (provider: ${provider}). Please authenticate first.`);
   }
 
   const now = Date.now();
@@ -79,7 +79,7 @@ async function getGoogleTokenData(userId: string): Promise<TokenData> {
 
       // Store refreshed token at user-level
       oauthToken = await authService.storeOAuthToken(userId, {
-        provider: 'google',
+        provider,
         accessToken: newTokens.access_token,
         refreshToken: newTokens.refresh_token || oauthToken.refreshToken,
         expiryDate: Date.now() + (newTokens.expires_in * 1000),
@@ -198,8 +198,8 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
 
     const { getPredefinedServer } = await import('./predefined-servers.js');
     const predefinedServer = getPredefinedServer(baseServerId);
-    if (predefinedServer?.auth?.provider === 'google') {
-      tokenData = await getGoogleTokenData(userId);
+    if (predefinedServer?.auth?.provider && predefinedServer.auth.provider.startsWith('google')) {
+      tokenData = await getGoogleTokenData(userId, predefinedServer.auth.provider);
     } else if (predefinedServer?.auth?.provider === 'alphavantage' || predefinedServer?.auth?.provider === 'twelvedata') {
       const mainDb = await getMainDatabase();
       const storedConfig = await mainDb.getMCPServerConfig(`${baseServerId}:${userId}`);
@@ -224,8 +224,8 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
   const cwd = serverConfig.cwd || process.cwd();
 
   let tokenData: any;
-  if (serverConfig.auth?.provider === 'google') {
-    tokenData = await getGoogleTokenData(userId);
+  if (serverConfig.auth?.provider && serverConfig.auth.provider.startsWith('google')) {
+    tokenData = await getGoogleTokenData(userId, serverConfig.auth.provider);
   }
 
   const adapter = adapterRegistry.create(serverKey, userId, `mcp-${serverKey}`, serverConfig, cwd, tokenData);

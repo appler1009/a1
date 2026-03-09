@@ -200,9 +200,9 @@ export class MCPManager {
     let adapterTokenData = tokenData;
 
     // If server requires Google OAuth but no token provided, get it from auth
-    if (server.auth?.provider === 'google' && !adapterTokenData && userId) {
+    if (server.auth?.provider && server.auth.provider.startsWith('google') && !adapterTokenData && userId) {
       const { authService } = await import('../auth/index.js');
-      const oauthToken = await authService.getOAuthToken(userId, 'google');
+      const oauthToken = await authService.getOAuthToken(userId, server.auth.provider);
       if (oauthToken) {
         adapterTokenData = {
           access_token: oauthToken.accessToken,
