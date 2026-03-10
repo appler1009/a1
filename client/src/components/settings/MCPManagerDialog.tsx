@@ -19,7 +19,7 @@ interface PredefinedMCPServer {
   command: string;
   args: string[];
   auth?: {
-    provider: 'google' | 'github' | 'none' | 'alphavantage' | 'twelvedata';
+    provider: 'google' | 'github' | 'none' | 'alphavantage' | 'twelvedata' | 'smtp-imap';
   };
   icon?: string;
   hidden?: boolean;
@@ -42,11 +42,48 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   const [activeTab, setActiveTab] = React.useState<'features' | 'region' | 'discord' | 'account' | 'about'>('features');
   const [showLicenses, setShowLicenses] = React.useState(false);
 
+  const [smtpImapForm, setSmtpImapForm] = React.useState<{
+    open: boolean;
+    saving: boolean;
+    testing: boolean;
+    testResult: { smtp: { ok: boolean; message: string }; imap: { ok: boolean; message: string } } | null;
+    accountEmail: string;
+    smtpHost: string;
+    smtpPort: string;
+    smtpSecure: boolean;
+    imapHost: string;
+    imapPort: string;
+    imapSecure: boolean;
+    username: string;
+    password: string;
+  }>({
+    open: false,
+    saving: false,
+    testing: false,
+    testResult: null,
+    accountEmail: '',
+    smtpHost: '',
+    smtpPort: '587',
+    smtpSecure: true,
+    imapHost: '',
+    imapPort: '993',
+    imapSecure: true,
+    username: '',
+    password: '',
+  });
+
+  const containerRef = React.useRef<HTMLDivElement>(null);
   const pendingAddRef = React.useRef<string | null>(null);
   const oauthPopupRef = React.useRef<Window | null>(null);
   const oauthPollIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
   const selectedServerIdRef = React.useRef<string | null>(null);
   const knownAccountEmailsRef = React.useRef<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    if (smtpImapForm.open) {
+      containerRef.current?.scrollTo({ top: 0 });
+    }
+  }, [smtpImapForm.open]);
 
   React.useEffect(() => {
     if (toast) {
@@ -340,10 +377,90 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
     return false;
   };
 
+  const handleSmtpImapTest = async () => {
+    const { smtpHost, smtpPort, smtpSecure, imapHost, imapPort, imapSecure, username, password } = smtpImapForm;
+    if (!smtpHost || !imapHost || !username || !password) {
+      setToast({ message: 'Fill in all connection fields before testing', type: 'error' });
+      return;
+    }
+    setSmtpImapForm(f => ({ ...f, testing: true, testResult: null }));
+    try {
+      const resp = await apiFetch('/api/smtp-imap/test', {
+        method: 'POST',
+        body: JSON.stringify({
+          smtpHost, smtpPort: parseInt(smtpPort, 10), smtpSecure,
+          imapHost, imapPort: parseInt(imapPort, 10), imapSecure,
+          username, password,
+        }),
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        setSmtpImapForm(f => ({ ...f, testResult: data.data }));
+      } else {
+        setToast({ message: `Test failed: ${data.error?.message || 'Unknown error'}`, type: 'error' });
+      }
+    } catch (err) {
+      setToast({ message: `Test error: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' });
+    } finally {
+      setSmtpImapForm(f => ({ ...f, testing: false }));
+    }
+  };
+
+  const handleSmtpImapSubmit = async () => {
+    const { accountEmail, smtpHost, smtpPort, smtpSecure, imapHost, imapPort, imapSecure, username, password } = smtpImapForm;
+    if (!accountEmail || !smtpHost || !imapHost || !username || !password) {
+      setToast({ message: 'All fields are required', type: 'error' });
+      return;
+    }
+    setSmtpImapForm(f => ({ ...f, saving: true }));
+    try {
+      const saveResp = await apiFetch('/api/smtp-imap/accounts', {
+        method: 'POST',
+        body: JSON.stringify({
+          accountEmail,
+          smtpHost,
+          smtpPort: parseInt(smtpPort, 10),
+          smtpSecure,
+          imapHost,
+          imapPort: parseInt(imapPort, 10),
+          imapSecure,
+          username,
+          password,
+        }),
+      });
+      if (!saveResp.ok) {
+        const d = await saveResp.json();
+        setToast({ message: `Failed to save credentials: ${d.error?.message || 'Unknown error'}`, type: 'error' });
+        return;
+      }
+      const addResp = await apiFetch('/api/mcp/servers/add-predefined', {
+        method: 'POST',
+        body: JSON.stringify({ serverId: 'smtp-imap-mcp-lib', accountEmail }),
+      });
+      const addData = await addResp.json();
+      if (addResp.ok) {
+        setToast({ message: `✅ SMTP/IMAP connected (${accountEmail})!`, type: 'success' });
+        setSmtpImapForm(f => ({ ...f, open: false }));
+        fetchServers();
+      } else {
+        setToast({ message: `Failed: ${addData.error?.message || 'Unknown error'}`, type: 'error' });
+      }
+    } catch (err) {
+      setToast({ message: `Error: ${err instanceof Error ? err.message : 'Unknown error'}`, type: 'error' });
+    } finally {
+      setSmtpImapForm(f => ({ ...f, saving: false }));
+    }
+  };
+
   const handleAddServer = async (serverId: string) => {
     const server = predefinedServers.find(s => s.id === serverId);
     if (!server) {
       setToast({ message: 'Server not found', type: 'error' });
+      return;
+    }
+
+    if (server.auth?.provider === 'smtp-imap') {
+      setSmtpImapForm(f => ({ ...f, open: true }));
       return;
     }
 
@@ -518,7 +635,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   }, [servers]);
 
   return (
-    <div className="bg-background border border-border rounded-lg p-6 w-full max-w-2xl max-h-[70vh] overflow-y-auto">
+    <div ref={containerRef} className={`relative bg-background border border-border rounded-lg p-6 w-full max-w-2xl max-h-[70vh] ${smtpImapForm.open ? 'overflow-hidden' : 'overflow-y-auto'}`}>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold">Settings</h2>
         <button
@@ -766,6 +883,146 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
             </div>
           )}
         </>
+      )}
+
+      {/* SMTP/IMAP setup overlay — covers the entire dialog */}
+      {smtpImapForm.open && (
+        <div className="absolute inset-0 z-10 bg-background rounded-lg p-6 overflow-y-auto flex flex-col gap-3">
+          <h3 className="text-sm font-semibold">SMTP / IMAP Account Setup</h3>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="block text-xs text-muted-foreground mb-1">Account email (used as identifier)</label>
+              <input
+                type="email"
+                className="w-full px-2 py-1.5 text-sm border border-border rounded bg-background"
+                placeholder="you@example.com"
+                value={smtpImapForm.accountEmail}
+                onChange={e => setSmtpImapForm(f => ({ ...f, accountEmail: e.target.value }))}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Username</label>
+              <input
+                type="text"
+                className="w-full px-2 py-1.5 text-sm border border-border rounded bg-background"
+                placeholder="you@example.com"
+                value={smtpImapForm.username}
+                onChange={e => setSmtpImapForm(f => ({ ...f, username: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Password</label>
+              <input
+                type="password"
+                className="w-full px-2 py-1.5 text-sm border border-border rounded bg-background"
+                placeholder="App password or SMTP password"
+                value={smtpImapForm.password}
+                onChange={e => setSmtpImapForm(f => ({ ...f, password: e.target.value }))}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">SMTP host</label>
+              <input
+                type="text"
+                className="w-full px-2 py-1.5 text-sm border border-border rounded bg-background"
+                placeholder="smtp.example.com"
+                value={smtpImapForm.smtpHost}
+                onChange={e => setSmtpImapForm(f => ({ ...f, smtpHost: e.target.value }))}
+              />
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <label className="block text-xs text-muted-foreground mb-1">SMTP port</label>
+                <input
+                  type="number"
+                  className="w-full px-2 py-1.5 text-sm border border-border rounded bg-background"
+                  value={smtpImapForm.smtpPort}
+                  onChange={e => setSmtpImapForm(f => ({ ...f, smtpPort: e.target.value }))}
+                />
+              </div>
+              <div className="flex flex-col justify-end pb-1.5">
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={smtpImapForm.smtpSecure}
+                    onChange={e => setSmtpImapForm(f => ({ ...f, smtpSecure: e.target.checked }))}
+                  />
+                  TLS
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">IMAP host</label>
+              <input
+                type="text"
+                className="w-full px-2 py-1.5 text-sm border border-border rounded bg-background"
+                placeholder="imap.example.com"
+                value={smtpImapForm.imapHost}
+                onChange={e => setSmtpImapForm(f => ({ ...f, imapHost: e.target.value }))}
+              />
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <label className="block text-xs text-muted-foreground mb-1">IMAP port</label>
+                <input
+                  type="number"
+                  className="w-full px-2 py-1.5 text-sm border border-border rounded bg-background"
+                  value={smtpImapForm.imapPort}
+                  onChange={e => setSmtpImapForm(f => ({ ...f, imapPort: e.target.value }))}
+                />
+              </div>
+              <div className="flex flex-col justify-end pb-1.5">
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={smtpImapForm.imapSecure}
+                    onChange={e => setSmtpImapForm(f => ({ ...f, imapSecure: e.target.checked }))}
+                  />
+                  TLS
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {smtpImapForm.testResult && (
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className={`px-2 py-1.5 rounded ${smtpImapForm.testResult.smtp.ok ? 'bg-green-500/15 text-green-700' : 'bg-red-500/15 text-red-700'}`}>
+                <span className="font-medium">SMTP: </span>{smtpImapForm.testResult.smtp.ok ? '✓ Connected' : `✗ ${smtpImapForm.testResult.smtp.message}`}
+              </div>
+              <div className={`px-2 py-1.5 rounded ${smtpImapForm.testResult.imap.ok ? 'bg-green-500/15 text-green-700' : 'bg-red-500/15 text-red-700'}`}>
+                <span className="font-medium">IMAP: </span>{smtpImapForm.testResult.imap.ok ? '✓ Connected' : `✗ ${smtpImapForm.testResult.imap.message}`}
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-1 mt-auto">
+            <button
+              onClick={() => setSmtpImapForm(f => ({ ...f, open: false, testResult: null }))}
+              disabled={smtpImapForm.saving || smtpImapForm.testing}
+              className="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted/50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSmtpImapTest}
+              disabled={smtpImapForm.saving || smtpImapForm.testing}
+              className="px-3 py-1.5 text-sm border border-border rounded hover:bg-muted/50 disabled:opacity-50"
+            >
+              {smtpImapForm.testing ? 'Testing…' : 'Test Connection'}
+            </button>
+            <button
+              onClick={handleSmtpImapSubmit}
+              disabled={smtpImapForm.saving || smtpImapForm.testing}
+              className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
+            >
+              {smtpImapForm.saving ? 'Saving…' : 'Save & Connect'}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

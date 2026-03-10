@@ -30,6 +30,7 @@ import type { TempStorage } from './storage/temp-storage.js';
 import { createLLMRouter } from './ai/router.js';
 import { mcpManager, getMcpAdapter, closeUserAdapters, listPredefinedServers, getPredefinedServer, requiresAuth, PREDEFINED_MCP_SERVERS } from './mcp/index.js';
 import { authRoutes } from './api/auth.js';
+import { smtpImapRoutes } from './api/smtp-imap.js';
 import { authService } from './auth/index.js';
 import { GoogleOAuthHandler } from './auth/google-oauth.js';
 import { startDiscordBot } from './discord/bot.js';
@@ -1062,6 +1063,7 @@ async function handleToolResult(
 
 // Register API routes
 fastify.register(authRoutes, { prefix: '/api/auth' });
+fastify.register(smtpImapRoutes, { prefix: '/api/smtp-imap' });
 
 // Group routes (renamed from orgs)
 fastify.register(async (instance) => {
@@ -3535,6 +3537,22 @@ fastify.register(async (instance) => {
           const mainDb = await getMainDatabase(config.storage.root);
           await mainDb.saveMCPServerConfig(`${serverId}:${request.user.id}`, { apiKey });
           console.log(`[AddPredefinedServer:${requestId}] Stored API key for ${serverId}:${request.user.id}`);
+        }
+        if (predefinedServer.auth?.provider === 'smtp-imap') {
+          const mainDb = await getMainDatabase(config.storage.root);
+          const accounts = await mainDb.listServiceCredentials(request.user.id, 'smtp-imap');
+          if (!accounts.length) {
+            return reply.code(400).send({
+              success: false,
+              error: {
+                code: 'NO_CREDENTIALS',
+                message: 'SMTP/IMAP credentials not configured. Please save your account details first.',
+                authRequired: true,
+                authProvider: 'smtp-imap',
+              },
+            });
+          }
+          console.log(`[AddPredefinedServer:${requestId}] SMTP/IMAP credentials found (${accounts.length} account(s))`);
         }
       }
 

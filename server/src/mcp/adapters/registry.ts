@@ -15,6 +15,7 @@ import { AlphaVantageInProcess } from '../in-process/alpha-vantage.js';
 import { TwelveDataInProcess } from '../in-process/twelve-data.js';
 import { SchedulerInProcess } from '../in-process/scheduler.js';
 import { FetchUrlInProcess } from '../in-process/fetch-url.js';
+import { SmtpImapInProcess, type SmtpImapCredentials } from '../in-process/smtp-imap.js';
 import { getMainDatabaseSync } from '../../storage/index.js';
 
 /**
@@ -191,6 +192,17 @@ class AdapterRegistry {
     // Fetch URL - in-process web fetching with HTML→markdown conversion
     this.registerInProcess('fetch-url', () => new FetchUrlInProcess());
     this.registerInProcess('Fetch URL', () => new FetchUrlInProcess());
+
+    // SMTP/IMAP - in-process email via standard protocols
+    // tokenData contains decrypted SmtpImapCredentials from the service_credentials table
+    this.registerInProcess('smtp-imap-mcp-lib', (_userId: string, tokenData?: any) => {
+      if (!tokenData) throw new Error('SMTP/IMAP credentials not configured. Please connect in Settings.');
+      return new SmtpImapInProcess(tokenData as SmtpImapCredentials);
+    });
+    this.registerInProcess('SMTP / IMAP Email', (_userId: string, tokenData?: any) => {
+      if (!tokenData) throw new Error('SMTP/IMAP credentials not configured. Please connect in Settings.');
+      return new SmtpImapInProcess(tokenData as SmtpImapCredentials);
+    });
 
     // Future: this.register('github', GithubAdapter);
     // Future: this.register('brave-search', BraveSearchAdapter);

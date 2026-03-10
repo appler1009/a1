@@ -12,7 +12,7 @@ export interface PredefinedMCPServer {
   args: string[];
   env?: Record<string, string>;
   auth?: {
-    provider: 'google' | 'google-gmail' | 'google-drive' | 'google-calendar' | 'github' | 'none' | 'alphavantage' | 'twelvedata';
+    provider: 'google' | 'google-gmail' | 'google-drive' | 'google-calendar' | 'github' | 'none' | 'alphavantage' | 'twelvedata' | 'smtp-imap';
     credentialsFilename?: string;
   };
   icon?: string; // e.g., 'drive', 'book', 'github'
@@ -198,6 +198,19 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
       provider: 'twelvedata',
     },
     icon: 'trending-up',
+    inProcess: true,
+  },
+
+  {
+    id: 'smtp-imap-mcp-lib',
+    name: 'SMTP / IMAP Email',
+    description: 'Send and receive email via standard SMTP/IMAP protocols. Works with any email provider (Gmail, Outlook, custom mail servers). Requires server host, port, username, and password.',
+    command: 'smtp-imap-mcp',
+    args: [],
+    auth: {
+      provider: 'smtp-imap',
+    },
+    icon: 'mail',
     inProcess: true,
   },
 

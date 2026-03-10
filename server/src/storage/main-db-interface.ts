@@ -106,6 +106,12 @@ export interface IMainDatabase {
   getOAuthTokenByAccountEmail(provider: string, accountEmail: string): Promise<OAuthTokenEntry | null>;
   revokeOAuthToken(userId: string, provider: string, accountEmail?: string): Promise<boolean>;
 
+  // ---- Generic Service Credentials ----
+  storeServiceCredentials(userId: string, service: string, accountEmail: string, credentials: Record<string, unknown>): Promise<void>;
+  getServiceCredentials(userId: string, service: string, accountEmail: string): Promise<Record<string, unknown> | null>;
+  listServiceCredentials(userId: string, service: string): Promise<Array<{ accountEmail: string; credentials: Record<string, unknown> }>>;
+  deleteServiceCredentials(userId: string, service: string, accountEmail: string): Promise<boolean>;
+
   // ---- MCP Servers ----
   saveMCPServerConfig(serverId: string, config: Record<string, unknown>): Promise<void>;
   getMCPServerConfigs(): Promise<Array<{ id: string; config: Record<string, unknown> }>>;

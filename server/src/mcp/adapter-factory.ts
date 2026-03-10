@@ -207,6 +207,14 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
         throw new Error(`API key not configured for ${baseServerId}. Please connect in Settings.`);
       }
       tokenData = { apiKey: storedConfig.apiKey as string };
+    } else if (predefinedServer?.auth?.provider === 'smtp-imap') {
+      const mainDb = await getMainDatabase();
+      const accounts = await mainDb.listServiceCredentials(userId, 'smtp-imap');
+      if (!accounts.length) {
+        throw new Error('SMTP/IMAP credentials not configured. Please add an account in Settings.');
+      }
+      // Use first account; multi-account support can be added later via MultiAccountAdapter
+      tokenData = accounts[0].credentials;
     }
 
     const adapter = await adapterRegistry.createInProcess(baseServerId, userId, `mcp-${serverKey}`, tokenData);

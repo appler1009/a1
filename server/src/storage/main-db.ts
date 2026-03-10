@@ -208,6 +208,25 @@ export class MainDatabase implements IMainDatabase {
       CREATE INDEX IF NOT EXISTS idx_oauth_user ON oauth_tokens(userId);
       CREATE INDEX IF NOT EXISTS idx_oauth_provider ON oauth_tokens(provider);
 
+      -- Generic service credentials table
+      -- Stores credentials for any service (SMTP/IMAP, API keys with server config, etc.)
+      -- credentialsJson is a JSON object; sensitive string fields (password, secret, token, key)
+      -- are individually KMS-encrypted with the kms:v1: prefix so non-sensitive fields remain readable.
+      CREATE TABLE IF NOT EXISTS service_credentials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId TEXT NOT NULL,
+        service TEXT NOT NULL,
+        accountEmail TEXT NOT NULL,
+        credentialsJson TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(userId, service, accountEmail)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_svcred_user ON service_credentials(userId);
+      CREATE INDEX IF NOT EXISTS idx_svcred_service ON service_credentials(service);
+
       -- MCP Servers table (persisted server configs)
       CREATE TABLE IF NOT EXISTS mcp_servers (
         id TEXT PRIMARY KEY,
@@ -1279,6 +1298,101 @@ export class MainDatabase implements IMainDatabase {
     }
 
     const result = this.db.prepare(query).run(...params);
+    return result.changes > 0;
+  }
+
+  // ============================================
+  // Generic Service Credentials Operations
+  // ============================================
+
+  /**
+   * Encrypt sensitive fields within a credentials object.
+   * Fields whose keys are 'password', 'secret', 'token', or 'key' have their
+   * string values KMS-encrypted so they are stored safely at rest.
+   */
+  private async encryptCredentials(credentials: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const sensitiveKeys = new Set(['password', 'secret', 'token', 'key', 'apikey', 'api_key']);
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(credentials)) {
+      if (typeof v === 'string' && sensitiveKeys.has(k.toLowerCase())) {
+        result[k] = await encryptToken(v);
+      } else {
+        result[k] = v;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Decrypt sensitive fields within a stored credentials object.
+   * Values prefixed with kms:v1: are decrypted; all others are returned as-is.
+   */
+  private async decryptCredentials(credentials: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(credentials)) {
+      if (typeof v === 'string') {
+        result[k] = await decryptToken(v);
+      } else {
+        result[k] = v;
+      }
+    }
+    return result;
+  }
+
+  async storeServiceCredentials(
+    userId: string,
+    service: string,
+    accountEmail: string,
+    credentials: Record<string, unknown>
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const encrypted = await this.encryptCredentials(credentials);
+    const credentialsJson = JSON.stringify(encrypted);
+
+    this.db.prepare(`
+      INSERT INTO service_credentials (userId, service, accountEmail, credentialsJson, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(userId, service, accountEmail) DO UPDATE SET credentialsJson = ?, updatedAt = ?
+    `).run(userId, service, accountEmail, credentialsJson, now, now, credentialsJson, now);
+  }
+
+  async getServiceCredentials(
+    userId: string,
+    service: string,
+    accountEmail: string
+  ): Promise<Record<string, unknown> | null> {
+    const row = this.db.prepare(`
+      SELECT credentialsJson FROM service_credentials
+      WHERE userId = ? AND service = ? AND accountEmail = ?
+    `).get(userId, service, accountEmail) as { credentialsJson: string } | undefined;
+
+    if (!row) return null;
+    return this.decryptCredentials(JSON.parse(row.credentialsJson) as Record<string, unknown>);
+  }
+
+  async listServiceCredentials(
+    userId: string,
+    service: string
+  ): Promise<Array<{ accountEmail: string; credentials: Record<string, unknown> }>> {
+    const rows = this.db.prepare(`
+      SELECT accountEmail, credentialsJson FROM service_credentials
+      WHERE userId = ? AND service = ? ORDER BY accountEmail
+    `).all(userId, service) as Array<{ accountEmail: string; credentialsJson: string }>;
+
+    return Promise.all(rows.map(async row => ({
+      accountEmail: row.accountEmail,
+      credentials: await this.decryptCredentials(JSON.parse(row.credentialsJson) as Record<string, unknown>),
+    })));
+  }
+
+  async deleteServiceCredentials(
+    userId: string,
+    service: string,
+    accountEmail: string
+  ): Promise<boolean> {
+    const result = this.db.prepare(`
+      DELETE FROM service_credentials WHERE userId = ? AND service = ? AND accountEmail = ?
+    `).run(userId, service, accountEmail);
     return result.changes > 0;
   }
 

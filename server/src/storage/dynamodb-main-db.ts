@@ -41,6 +41,7 @@ function tableNames(prefix: string) {
     memoryEntities: `${prefix}memory_entities`,
     memoryRelations: `${prefix}memory_relations`,
     tokenUsage: `${prefix}token_usage`,
+    serviceCredentials: `${prefix}service_credentials`,
   };
 }
 
@@ -804,6 +805,82 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       }))
     ));
     return tokens.length > 0;
+  }
+
+  // ============================================================
+  // Generic Service Credentials
+  // ============================================================
+
+  async storeServiceCredentials(userId: string, service: string, accountEmail: string, credentials: Record<string, unknown>): Promise<void> {
+    const serviceKey = `${service}#${accountEmail}`;
+    const now = new Date().toISOString();
+
+    // Encrypt sensitive string fields inline (same pattern as SQLite implementation)
+    const sensitiveKeys = new Set(['password', 'secret', 'token', 'key', 'apikey', 'api_key']);
+    const encrypted: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(credentials)) {
+      if (typeof v === 'string' && sensitiveKeys.has(k.toLowerCase())) {
+        encrypted[k] = await encryptToken(v);
+      } else {
+        encrypted[k] = v;
+      }
+    }
+
+    // Preserve createdAt if item already exists
+    const existing = await this.client.send(new GetCommand({
+      TableName: this.tables.serviceCredentials,
+      Key: { userId, serviceKey },
+    }));
+    const createdAt = (existing.Item?.createdAt as string) ?? now;
+
+    await this.client.send(new PutCommand({
+      TableName: this.tables.serviceCredentials,
+      Item: { userId, serviceKey, service, accountEmail, credentialsJson: JSON.stringify(encrypted), createdAt, updatedAt: now },
+    }));
+  }
+
+  async getServiceCredentials(userId: string, service: string, accountEmail: string): Promise<Record<string, unknown> | null> {
+    const serviceKey = `${service}#${accountEmail}`;
+    const { Item } = await this.client.send(new GetCommand({
+      TableName: this.tables.serviceCredentials,
+      Key: { userId, serviceKey },
+    }));
+    if (!Item) return null;
+    return this._decryptServiceCredentials(JSON.parse(Item.credentialsJson as string) as Record<string, unknown>);
+  }
+
+  async listServiceCredentials(userId: string, service: string): Promise<Array<{ accountEmail: string; credentials: Record<string, unknown> }>> {
+    const { Items } = await this.client.send(new QueryCommand({
+      TableName: this.tables.serviceCredentials,
+      KeyConditionExpression: 'userId = :userId AND begins_with(serviceKey, :prefix)',
+      ExpressionAttributeValues: { ':userId': userId, ':prefix': `${service}#` },
+    }));
+    return Promise.all((Items ?? []).map(async item => ({
+      accountEmail: item.accountEmail as string,
+      credentials: await this._decryptServiceCredentials(JSON.parse(item.credentialsJson as string) as Record<string, unknown>),
+    })));
+  }
+
+  async deleteServiceCredentials(userId: string, service: string, accountEmail: string): Promise<boolean> {
+    const serviceKey = `${service}#${accountEmail}`;
+    const existing = await this.client.send(new GetCommand({
+      TableName: this.tables.serviceCredentials,
+      Key: { userId, serviceKey },
+    }));
+    if (!existing.Item) return false;
+    await this.client.send(new DeleteCommand({
+      TableName: this.tables.serviceCredentials,
+      Key: { userId, serviceKey },
+    }));
+    return true;
+  }
+
+  private async _decryptServiceCredentials(credentials: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(credentials)) {
+      result[k] = typeof v === 'string' ? await decryptToken(v) : v;
+    }
+    return result;
   }
 
   // ============================================================
