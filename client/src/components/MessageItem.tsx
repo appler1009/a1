@@ -148,8 +148,18 @@ export const MessageItem = memo(function MessageItem({ message, highlightKeyword
           </ReactMarkdown>
         </div>
         {!isToolCall && (
-          <p className="text-xs opacity-70 mt-1 mb-0">
-            {new Date(message.createdAt).toLocaleTimeString()}
+          <p className="text-xs opacity-70 mt-1 mb-0 pt-1">
+            {(() => {
+              const d = new Date(message.createdAt);
+              const today = new Date();
+              const isToday =
+                d.getFullYear() === today.getFullYear() &&
+                d.getMonth() === today.getMonth() &&
+                d.getDate() === today.getDate();
+              return isToday
+                ? d.toLocaleTimeString()
+                : d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+            })()}
           </p>
         )}
       </div>
