@@ -7,6 +7,7 @@ A self-hosted, multi-user AI agent platform with first-class MCP (Model Context 
 - **Multi-user**: Magic link login via email (AWS SES); invite-code-based registration
 - **Agent Roles**: Per-role system prompts, model selection, and MCP server sets; switch roles mid-conversation
 - **Multi-LLM**: Grok (default), OpenAI, and Anthropic/Claude; optional keyword-based model router
+- **Bring Your Own Key (BYOK)**: Users can supply their own xAI, OpenAI, or Anthropic API key and model name via Settings; keys are KMS-encrypted at rest and override the app default for that user's sessions
 - **Built-in MCP Servers**: Weather, Gmail, Google Drive, Google Calendar, Memory, Scheduler, Fetch URL, MarkItDown, SMTP/IMAP, Alpha Vantage, Twelve Data, and more — all running in-process for low latency
 - **External MCP Servers**: Add any stdio-compatible MCP server (GitHub, Brave Search, custom tools)
 - **Connected Accounts**: Link Google (Gmail, Drive, Calendar) and GitHub accounts after login; multiple Google accounts supported with automatic fan-out across Gmail and Drive
@@ -80,6 +81,8 @@ All config is loaded from `.env.<NODE_ENV>` in the `server/` directory.
 | `ANTHROPIC_API_KEY` | Anthropic API key | |
 | `DEFAULT_MODEL` | Override the provider's default model | |
 | `ROUTER_ENABLED` | Enable keyword-based model routing | `false` |
+
+> **BYOK:** Individual users can override the app-level LLM with their own API key via **Settings → Models**. Supported providers: xAI, OpenAI, Anthropic. Keys are encrypted with KMS (or stored as-is when `KMS_OAUTH_DISABLED=true`) and take precedence over the server defaults for all of that user's chat sessions.
 
 ### Storage
 

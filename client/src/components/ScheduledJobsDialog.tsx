@@ -40,6 +40,7 @@ function formatDate(iso: string | null): string {
 
 export function ScheduledJobsDialog({ open, onClose }: ScheduledJobsDialogProps) {
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
+  const [roleNames, setRoleNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [cancelling, setCancelling] = useState<string | null>(null);
@@ -47,13 +48,20 @@ export function ScheduledJobsDialog({ open, onClose }: ScheduledJobsDialogProps)
   const fetchJobs = () => {
     setLoading(true);
     setError('');
-    apiFetch('/api/scheduled-jobs')
-      .then(async (res) => {
-        const data = await res.json();
-        if (!data.success) {
-          setError(data.error?.message || 'Failed to load scheduled jobs');
+    Promise.all([
+      apiFetch('/api/scheduled-jobs').then(r => r.json()),
+      apiFetch('/api/roles').then(r => r.json()),
+    ])
+      .then(([jobsData, rolesData]) => {
+        if (!jobsData.success) {
+          setError(jobsData.error?.message || 'Failed to load scheduled jobs');
         } else {
-          setJobs(data.data);
+          setJobs(jobsData.data);
+        }
+        if (rolesData.success) {
+          const map: Record<string, string> = {};
+          for (const role of rolesData.data.roles) map[role.id] = role.name;
+          setRoleNames(map);
         }
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load scheduled jobs'))
@@ -148,7 +156,7 @@ export function ScheduledJobsDialog({ open, onClose }: ScheduledJobsDialogProps)
                     <p className="text-foreground mb-1 leading-snug">{job.description}</p>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                       <span className={`font-medium ${statusColor(job.status)}`}>{job.status}</span>
-                      <span className="capitalize">{job.scheduleType}</span>
+                      <span>{job.scheduleType.charAt(0).toUpperCase() + job.scheduleType.slice(1)}{roleNames[job.roleId] && <> for <span className="text-white font-medium italic">{roleNames[job.roleId]}</span></>}</span>
                       {job.runAt && <span>Scheduled: {formatDate(job.runAt)}</span>}
                       {job.lastRunAt && <span>Last run: {formatDate(job.lastRunAt)}</span>}
                       {job.holdUntil && <span className="text-yellow-500">Held until: {formatDate(job.holdUntil)}</span>}

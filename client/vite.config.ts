@@ -14,7 +14,7 @@ function getCommitHash(): string {
 export default defineConfig({
   plugins: [react()],
   define: {
-    __COMMIT_HASH__: JSON.stringify(getCommitHash()),
+    'import.meta.env.COMMIT_HASH': JSON.stringify(getCommitHash()),
   },
   resolve: {
     alias: {

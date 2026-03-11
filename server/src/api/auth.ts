@@ -742,6 +742,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     }), zero());
 
     const byModel: Record<string, ReturnType<typeof zero>> = {};
+    const byProvider: Record<string, ReturnType<typeof zero>> = {};
     for (const r of records) {
       if (!byModel[r.model]) byModel[r.model] = zero();
       byModel[r.model].promptTokens += r.promptTokens;
@@ -749,6 +750,13 @@ export async function authRoutes(fastify: FastifyInstance) {
       byModel[r.model].totalTokens += r.totalTokens;
       byModel[r.model].cachedInputTokens += r.cachedInputTokens;
       byModel[r.model].cacheCreationTokens += r.cacheCreationTokens;
+
+      if (!byProvider[r.provider]) byProvider[r.provider] = zero();
+      byProvider[r.provider].promptTokens += r.promptTokens;
+      byProvider[r.provider].completionTokens += r.completionTokens;
+      byProvider[r.provider].totalTokens += r.totalTokens;
+      byProvider[r.provider].cachedInputTokens += r.cachedInputTokens;
+      byProvider[r.provider].cacheCreationTokens += r.cacheCreationTokens;
     }
 
     return reply.send({
@@ -757,6 +765,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
         ...totals,
         byModel,
+        byProvider,
         recordCount: records.length,
       },
     });

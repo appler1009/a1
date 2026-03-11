@@ -6,7 +6,7 @@
  * touching the production ./data directory.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { MainDatabase } from '../storage/main-db.js';
 import os from 'os';
 import path from 'path';

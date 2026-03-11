@@ -1,6 +1,8 @@
 import React from 'react';
 import { apiFetch } from '../../lib/api';
 import { AccountSettings } from './AccountSettings';
+import { BYOKSettings } from './BYOKSettings';
+import { TokenUsageSettings } from './TokenUsageSettings';
 import { DiscordSettings } from './DiscordSettings';
 import { LocaleTimezoneSettings } from './LocaleTimezoneSettings';
 
@@ -39,7 +41,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
   const [authProvider, setAuthProvider] = React.useState<string | null>(null);
   const [connecting, setConnecting] = React.useState(false);
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [activeTab, setActiveTab] = React.useState<'features' | 'region' | 'discord' | 'account' | 'about'>('features');
+  const [activeTab, setActiveTab] = React.useState<'features' | 'region' | 'discord' | 'account' | 'models' | 'about'>('features');
   const [showLicenses, setShowLicenses] = React.useState(false);
 
   const [smtpImapForm, setSmtpImapForm] = React.useState<{
@@ -655,7 +657,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
 
       {/* Tab bar */}
       <div className="flex gap-1 mb-5 border-b border-border">
-        {(['account', 'features', 'region', 'discord', 'about'] as const).map((tab) => (
+        {(['account', 'models', 'features', 'region', 'discord', 'about'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -665,7 +667,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            {tab === 'region' ? 'Region' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'region' ? 'Region' : tab === 'models' ? 'Models' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -724,6 +726,20 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
             <div className="mb-6">
               <h3 className="text-sm font-semibold mb-3">Account</h3>
               <AccountSettings />
+            </div>
+          )}
+
+          {/* Models tab */}
+          {activeTab === 'models' && (
+            <div className="mb-6 space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold mb-3">Token Usage</h3>
+                <TokenUsageSettings />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold mb-3">Bring Your Own Key</h3>
+                <BYOKSettings />
+              </div>
             </div>
           )}
 
@@ -837,7 +853,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
               <div>
                 <h3 className="text-sm font-semibold mb-3">Version</h3>
                 <div className="flex items-center gap-3">
-                  <span className="font-mono text-sm bg-muted px-2 py-1 rounded select-all">{__COMMIT_HASH__}</span>
+                  <span className="font-mono text-sm bg-muted px-2 py-1 rounded select-all">{import.meta.env.COMMIT_HASH || 'unknown'}</span>
                   <span className="text-xs text-muted-foreground">build commit</span>
                 </div>
               </div>

@@ -31,6 +31,7 @@ import { createLLMRouter } from './ai/router.js';
 import { mcpManager, getMcpAdapter, closeUserAdapters, listPredefinedServers, getPredefinedServer, requiresAuth, PREDEFINED_MCP_SERVERS } from './mcp/index.js';
 import { authRoutes } from './api/auth.js';
 import { smtpImapRoutes } from './api/smtp-imap.js';
+import { byokRoutes } from './api/byok.js';
 import { authService } from './auth/index.js';
 import { GoogleOAuthHandler } from './auth/google-oauth.js';
 import { startDiscordBot } from './discord/bot.js';
@@ -107,6 +108,51 @@ const fastify = Fastify({
 
 // Global LLM router instance
 let llmRouter: ReturnType<typeof createLLMRouter>;
+
+/**
+ * Returns a per-user LLM router using the user's BYOK credentials if configured and active,
+ * or null if no active BYOK config exists (caller should fall back to the global llmRouter).
+ */
+async function getByokRouter(userId: string): Promise<ReturnType<typeof createLLMRouter> | null> {
+  const mainDb = await getMainDatabase();
+  const entries = await mainDb.listServiceCredentials(userId, 'byok');
+  const active = entries.find(e => e.credentials.enabled === true);
+  if (!active) return null;
+
+  const providerMap: Record<string, 'grok' | 'openai' | 'anthropic'> = {
+    xai: 'grok',
+    openai: 'openai',
+    anthropic: 'anthropic',
+  };
+  const provider = providerMap[active.accountEmail];
+  if (!provider) return null;
+
+  const apiKey = active.credentials.apiKey as string;
+  const model = active.credentials.model as string;
+
+  return createLLMRouter({
+    provider,
+    grokKey: provider === 'grok' ? apiKey : undefined,
+    openaiKey: provider === 'openai' ? apiKey : undefined,
+    anthropicKey: provider === 'anthropic' ? apiKey : undefined,
+    defaultModel: model,
+    onTokensUsed: (event) => {
+      if (!event.userId) return;
+      mainDb.recordTokenUsage({
+        userId: event.userId,
+        model: event.model,
+        // Prefix with 'byok:' so usage can be split from app-default in reports
+        provider: `byok:${active.accountEmail}`,
+        promptTokens: event.promptTokens,
+        completionTokens: event.completionTokens,
+        totalTokens: event.totalTokens,
+        cachedInputTokens: event.cachedInputTokens,
+        cacheCreationTokens: event.cacheCreationTokens,
+        source: event.source,
+      }).catch(err => console.error('[BYOK TokenUsage] Failed:', err));
+    },
+  });
+}
 
 // Global job runner instance (used by the Lambda dispatch endpoint)
 let jobRunner: JobRunner | null = null;
@@ -992,6 +1038,7 @@ async function handleToolResult(
 // Register API routes
 fastify.register(authRoutes, { prefix: '/api/auth' });
 fastify.register(smtpImapRoutes, { prefix: '/api/smtp-imap' });
+fastify.register(byokRoutes, { prefix: '/api/byok' });
 
 // Group routes (renamed from orgs)
 fastify.register(async (instance) => {
@@ -1335,7 +1382,8 @@ fastify.register(async (instance) => {
       ];
 
       let overview = '';
-      const stream = llmRouter.stream({ messages, userId: request.user.id, source: 'memory_overview' });
+      const activeRouter = (await getByokRouter(request.user.id)) ?? llmRouter;
+      const stream = activeRouter.stream({ messages, userId: request.user.id, source: 'memory_overview' });
       for await (const chunk of stream) {
         if (chunk.type === 'text') {
           overview += chunk.content;
@@ -1381,7 +1429,8 @@ fastify.register(async (instance) => {
       ];
 
       let responseText = '';
-      const stream = llmRouter.stream({ messages, userId: request.user.id, source: 'memory_removal' });
+      const activeRouter = (await getByokRouter(request.user.id)) ?? llmRouter;
+      const stream = activeRouter.stream({ messages, userId: request.user.id, source: 'memory_removal' });
       for await (const chunk of stream) {
         if (chunk.type === 'text') {
           responseText += chunk.content;
@@ -1443,7 +1492,8 @@ fastify.register(async (instance) => {
       ];
 
       let responseText = '';
-      const stream = llmRouter.stream({ messages, userId: request.user.id, source: 'memory_update' });
+      const activeRouter = (await getByokRouter(request.user.id)) ?? llmRouter;
+      const stream = activeRouter.stream({ messages, userId: request.user.id, source: 'memory_update' });
       for await (const chunk of stream) {
         if (chunk.type === 'text') {
           responseText += chunk.content;
@@ -2009,8 +2059,11 @@ After calling this tool, you'll receive tool names and their server information.
         }
       );
 
+      // Use BYOK router if user has one configured, otherwise fall back to global router
+      const chatRouter = (await getByokRouter(request.user.id)) ?? llmRouter;
+
       // Convert tools to provider format
-      const providerTools = llmRouter.convertMCPToolsToOpenAI(phase1Tools);
+      const providerTools = chatRouter.convertMCPToolsToOpenAI(phase1Tools);
       const toolList = enableMetaMcpSearch ? 'search_tool + memory retrieval tools' : 'memory retrieval tools (search_tool disabled)';
       console.log(`[ChatStream] Phase 1: Providing ${toolList} (${providerTools.length} tools)`);
       
@@ -2194,7 +2247,7 @@ ${accountList}
       console.log('='.repeat(80) + '\n');
 
       const processStream = async (messages: typeof body.messages, allowTools: boolean = true) => {
-        const stream = llmRouter.stream({
+        const stream = chatRouter.stream({
           messages,
           model: body.roleId ? undefined : config.llm.defaultModel,
           tools: allowTools && providerTools.length > 0 ? providerTools : undefined,
@@ -2350,7 +2403,7 @@ ${accountList}
               if (phase2Tools.length > 0) {
                 hasLoadedPhase2Tools = true;
                 // Update providerTools with the new tools
-                const newProviderTools = llmRouter.convertMCPToolsToOpenAI(phase2Tools);
+                const newProviderTools = chatRouter.convertMCPToolsToOpenAI(phase2Tools);
                 providerTools.length = 0; // Clear existing
                 providerTools.push(...newProviderTools);
                 
@@ -2472,7 +2525,7 @@ ${accountList}
           },
         ];
 
-        const extractionProviderTools = llmRouter.convertMCPToolsToOpenAI(memWriteTools);
+        const extractionProviderTools = chatRouter.convertMCPToolsToOpenAI(memWriteTools);
         const extractionToolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
 
         const MEMORY_EXTRACTION_TIMEOUT_MS = 12000;
@@ -2481,7 +2534,7 @@ ${accountList}
           await Promise.race([
             (async () => {
               console.log(`[ChatStream] Creating extraction stream...`);
-              const extractionStream = llmRouter.stream({ messages: extractionMessages, tools: extractionProviderTools, userId: request.user?.id, source: 'memory_extraction' });
+              const extractionStream = chatRouter.stream({ messages: extractionMessages, tools: extractionProviderTools, userId: request.user?.id, source: 'memory_extraction' });
               console.log(`[ChatStream] Streaming extraction response...`);
               for await (const chunk of extractionStream) {
                 if (chunk.type === 'tool_call' && chunk.toolCall) {
