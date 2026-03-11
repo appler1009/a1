@@ -1,203 +1,180 @@
-# Local Agent UI with MCP Support
+# A1 — Self-Hosted AI Agent Platform
 
-Self-hosted Docker solution for local AI agents with MCP (Model Context Protocol) support. Multi-user, multi-organization platform with role-based agent configurations.
+A self-hosted, multi-user AI agent platform with first-class MCP (Model Context Protocol) support. Run agents backed by Grok, OpenAI, or Anthropic, connect them to tools like Gmail, Google Drive, Calendar, and custom MCP servers, and schedule autonomous jobs.
 
 ## Features
 
-- **Multi-user & Multi-organization**: Create organizations, invite users, manage roles
-- **Agent Roles**: Per-user agent configurations with custom system prompts and models
-- **Streaming Chat**: Real-time streaming responses with auto model routing
-- **MCP Integration**: Connect to MCP servers for tool calling capabilities
-- **Split Pane UI**: Left side for chat, right side for viewer (Gmail, Docs, Files, MCP)
-- **Memory System**: Per-role markdown memory with search capabilities
-- **Storage Abstraction**: FS (default), SQLite, or S3/MinIO storage backends
-- **Dark Theme**: Modern dark UI with resizable panels
+- **Multi-user**: Magic link login via email (AWS SES); invite-code-based registration
+- **Agent Roles**: Per-role system prompts, model selection, and MCP server sets; switch roles mid-conversation
+- **Multi-LLM**: Grok (default), OpenAI, and Anthropic/Claude; optional keyword-based model router
+- **Built-in MCP Servers**: Weather, Gmail, Google Drive, Google Calendar, Memory, Scheduler, Fetch URL, MarkItDown, SMTP/IMAP, Alpha Vantage, Twelve Data, and more — all running in-process for low latency
+- **External MCP Servers**: Add any stdio-compatible MCP server (GitHub, Brave Search, custom tools)
+- **Connected Accounts**: Link Google (Gmail, Drive, Calendar) and GitHub accounts after login; multiple Google accounts supported with automatic fan-out across Gmail and Drive
+- **Memory System**: Per-role knowledge graph (entities + relations) backed by SQLite locally or DynamoDB in production
+- **Scheduled Jobs**: Lambda-based job runner for autonomous background tasks with two-phase tool discovery
+- **Discord Bot**: Expose any agent role to Discord; responds to @mentions or auto-replies in configured channels
+- **Split-pane UI**: Chat on the left, file/email/document viewer on the right; responsive mobile layout with cross-device message sync
+- **Token Usage Tracking**: Per-user cost accounting across all LLM providers
+- **OAuth Token Security**: AES-256 encryption via AWS KMS; can be disabled for local dev without AWS
 
 ## Tech Stack
 
-### Backend
-- Bun, TypeScript
-- Fastify (web framework)
-- Lucia (authentication)
-- OpenAI SDK
-- Zod (validation)
+**Backend:** Bun, TypeScript, Fastify, SQLite (dev) / DynamoDB (prod)
 
-### Frontend
-- React 18, Vite
-- Tailwind CSS, shadcn/ui components
-- TanStack Query, Zustand
-- react-resizable-panels
+**Frontend:** React 18, Vite, Tailwind CSS, shadcn/ui, TanStack Query, Zustand
 
-### Storage
-- Abstracted storage interface
-- FS (filesystem) adapter - default
-- SQLite adapter - for metadata
-- S3/MinIO adapter - for scalable storage
+**LLM Providers:** xAI Grok (`grok-4-1-fast-reasoning` default), OpenAI, Anthropic Claude
+
+**AWS (optional/production):** S3, DynamoDB, KMS, SES, Lambda
 
 ## Quick Start
 
-### Using Docker
+### Docker
 
 ```bash
-# Build and run
-docker-compose up -d
+cp .env.example server/.env.production
+# Edit server/.env.production — set AUTH_SECRET and at least one LLM API key
 
-# Or with MinIO for S3 storage
-docker-compose --profile s3 up -d
+docker compose up -d
 ```
+
+The app is available at `http://localhost:3000`.
+
+> **Note:** The default `docker-compose.yml` is tuned for production (S3 + DynamoDB + KMS). For a purely local setup, set `STORAGE_TYPE=fs`, `MAIN_DB_TYPE=sqlite`, and `KMS_OAUTH_DISABLED=true` in your env file.
 
 ### Development
 
 ```bash
-# Install dependencies
 bun install
 
-# Copy environment file
-cp .env.example .env
+cp .env.example server/.env.development
+# Edit server/.env.development
 
-# Edit .env with your configuration
-# Required: OPENAI_API_KEY
-
-# Start development servers
 bun run dev
 ```
 
-The application will be available at:
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:3000
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:3000`
 
 ## Configuration
 
-### Environment Variables
+All config is loaded from `.env.<NODE_ENV>` in the `server/` directory.
+
+### Core
 
 | Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | Server port | 3000 |
-| `HOST` | Server host | 0.0.0.0 |
-| `AUTH_SECRET` | Session secret | (random UUID) |
-| `STORAGE_TYPE` | Storage backend | fs |
-| `STORAGE_ROOT` | Storage root path | /app/data |
-| `OPENAI_API_KEY` | OpenAI API key | (required) |
-| `DEFAULT_MODEL` | Default LLM model | gpt-4 |
-| `ROUTER_ENABLED` | Enable model routing | false |
+|---|---|---|
+| `PORT` | Server port | `3000` |
+| `HOST` | Bind address | `0.0.0.0` |
+| `LOG_LEVEL` | Pino log level | `info` |
+| `FRONTEND_URL` | Public frontend URL (used in OAuth redirects) | `http://localhost:5173` |
+| `AUTH_SECRET` | Session signing secret | random UUID — always set in production |
 
-### Storage Configuration
+### LLM
 
-#### Filesystem (default)
-```env
-STORAGE_TYPE=fs
-STORAGE_ROOT=/app/data
-```
+| Variable | Description | Default |
+|---|---|---|
+| `LLM_PROVIDER` | `grok` \| `openai` \| `anthropic` | `grok` |
+| `GROK_API_KEY` | xAI API key | |
+| `OPENAI_API_KEY` | OpenAI API key | |
+| `ANTHROPIC_API_KEY` | Anthropic API key | |
+| `DEFAULT_MODEL` | Override the provider's default model | |
+| `ROUTER_ENABLED` | Enable keyword-based model routing | `false` |
 
-#### SQLite
-```env
-STORAGE_TYPE=sqlite
-STORAGE_ROOT=/app/data
-DATABASE_PATH=/app/data/metadata.db
-```
+### Storage
 
-#### S3/MinIO
-```env
-STORAGE_TYPE=s3
-STORAGE_BUCKET=agent
-```
+| Variable | Description | Default |
+|---|---|---|
+| `STORAGE_TYPE` | `fs` \| `sqlite` \| `s3` | `fs` |
+| `STORAGE_ROOT` | Local data directory | `./data` |
+| `STORAGE_BUCKET` | S3 bucket (when `STORAGE_TYPE=s3`) | |
+| `DATABASE_PATH` | SQLite main DB path | `./data/metadata.db` |
+| `MAIN_DB_TYPE` | `sqlite` \| `dynamodb` | `sqlite` |
+| `DYNAMODB_TABLE_PREFIX` | Prefix for DynamoDB table names | |
+| `DYNAMODB_REGION` | DynamoDB region | `us-west-2` |
 
-## API Endpoints
+### Connected Accounts (OAuth)
 
-### Authentication
-- `POST /api/auth/register` - Register new user
-- `POST /api/auth/login` - Login
-- `POST /api/auth/logout` - Logout
-- `GET /api/auth/me` - Get current user
+These enable users to link external services after logging in — they are not login providers.
 
-### Organizations
-- `POST /api/orgs` - Create organization
-- `GET /api/orgs/:orgId` - Get organization
-- `GET /api/orgs/:orgId/members` - List members
-- `POST /api/orgs/:orgId/members` - Add member
-- `DELETE /api/orgs/:orgId/members/:userId` - Remove member
+| Variable | Description |
+|---|---|
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth app (enables Gmail, Drive, Calendar MCP tools) |
+| `GOOGLE_REDIRECT_URI` | Google OAuth callback URL |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth app (enables GitHub MCP server) |
+| `GITHUB_REDIRECT_URI` | GitHub OAuth callback URL |
 
-### Roles
-- `GET /api/orgs/:orgId/roles` - List roles
-- `GET /api/orgs/:orgId/roles/:roleId` - Get role
-- `POST /api/orgs/:orgId/roles` - Create role
-- `PATCH /api/orgs/:orgId/roles/:roleId` - Update role
-- `DELETE /api/orgs/:orgId/roles/:roleId` - Delete role
+### AWS
 
-### Chat
-- `POST /api/chat/stream` - Stream chat (SSE)
-- `GET /api/chat/:conversationId` - Get conversation
+| Variable | Description | Default |
+|---|---|---|
+| `AWS_REGION` | AWS region | `us-west-2` |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Credentials (or use instance role / `~/.aws`) | |
+| `KMS_OAUTH_KEY_ID` | KMS key alias or ARN for OAuth token encryption | `alias/a1-oauth-tokens` |
+| `KMS_OAUTH_DISABLED` | Set `true` to skip KMS (local dev) | |
+| `KMS_ENDPOINT` | Custom KMS endpoint (e.g. LocalStack) | |
+| `SES_SENDER_EMAIL` | From address for magic link emails | |
 
-### Memory
-- `GET /api/memory/:roleId` - Get role memory
-- `GET /api/memory/:roleId/search` - Search memory
+### Discord Bot
+
+| Variable | Description |
+|---|---|
+| `DISCORD_BOT_TOKEN` | Bot token — bot is disabled when unset |
+| `DISCORD_CLIENT_ID` | Discord application client ID |
+| `DISCORD_CHANNEL_IDS` | Comma-separated channel IDs for auto-respond (optional) |
 
 ### MCP
-- `GET /api/mcp/servers` - List MCP servers
-- `POST /api/mcp/servers` - Add MCP server
-- `DELETE /api/mcp/servers/:serverId` - Remove server
-- `GET /api/mcp/servers/:serverId/tools` - List tools
-- `GET /api/mcp/tools` - List all tools
-- `POST /api/mcp/tools/call` - Call a tool
 
-### Viewer
-- `GET /api/viewer/files` - List files
-- `GET /api/viewer/files/:filename` - Read file
-- `POST /api/viewer/files/:filename` - Write file
-- `GET /api/viewer/gmail` - List Gmail messages
-- `POST /api/viewer/docs/render` - Render markdown
+| Variable | Description | Default |
+|---|---|---|
+| `ENABLE_META_MCP_SEARCH` | Enable semantic tool discovery | `true` |
+
+## Built-in MCP Servers
+
+These run in-process (no subprocess overhead):
+
+| Server | Auth | Notes |
+|---|---|---|
+| Weather | None | NOAA + Open-Meteo; forecasts, alerts, air quality, marine |
+| Memory | None | Per-role knowledge graph; SQLite locally, DynamoDB in production |
+| Fetch URL | None | Fetches pages/APIs, converts HTML to markdown |
+| MarkItDown | None | Converts PDF, DOCX, XLSX, PPTX, images to markdown |
+| Process Each | None | Runs a focused AI call per item to avoid context overflow |
+| Role Manager | None | Lets the AI switch the active role |
+| Scheduler | None | Schedule autonomous background jobs |
+| Gmail | Google OAuth | Read, search, send email; supports multiple Google accounts |
+| Google Drive | Google OAuth | Browse and read Drive files; supports multiple accounts |
+| Google Calendar | Google OAuth | List events, create meetings |
+| SMTP / IMAP Email | Credentials | Any mail provider via standard protocols |
+| Alpha Vantage | API key | Stocks, forex, crypto, economic indicators |
+| Twelve Data | API key | Real-time and historical market data |
+| Meta MCP Search | None | Semantic tool discovery — the AI's entry point to all tools |
+
+External servers (stdio subprocess) can be added per-role through the MCP settings panel: GitHub, Brave Search, or any custom server.
 
 ## Project Structure
 
 ```
-app/
-├── shared/              # Shared types and schemas
+├── client/                   # React frontend
 │   └── src/
-│       ├── schemas/     # Zod schemas
-│       └── types/       # TypeScript types
-├── server/              # Backend server
+│       ├── components/       # UI components (chat pane, viewer pane, dialogs)
+│       ├── hooks/            # Custom React hooks
+│       ├── lib/              # API client, preview adapters (PDF, image, email)
+│       └── pages/            # Login, OAuth callback, Join
+├── server/                   # Fastify backend
 │   └── src/
-│       ├── api/         # API routes
-│       ├── ai/          # LLM router
-│       ├── auth/        # Authentication
-│       ├── mcp/         # MCP client
-│       ├── storage/     # Storage adapters
-│       └── index.ts     # Entry point
-├── client/              # Frontend client
-│   └── src/
-│       ├── components/  # React components
-│       ├── store/       # Zustand stores
-│       └── lib/         # Utilities
-├── Dockerfile
-├── docker-compose.yml
-└── package.json
-```
-
-## MCP Integration
-
-Connect to MCP servers for tool calling:
-
-```typescript
-// Add MCP server
-await fetch('/api/mcp/servers', {
-  method: 'POST',
-  body: JSON.stringify({
-    name: 'filesystem',
-    transport: 'stdio',
-    command: 'mcp-filesystem',
-    enabled: true,
-  }),
-});
-
-// Call tool
-await fetch('/api/mcp/tools/call', {
-  method: 'POST',
-  body: JSON.stringify({
-    serverId: 'server-uuid',
-    toolName: 'read_file',
-    arguments: { path: '/path/to/file' },
-  }),
-});
+│       ├── ai/               # LLM providers (Grok, OpenAI, Anthropic) + router
+│       ├── api/              # REST route handlers
+│       ├── auth/             # Session auth, magic link, Google/GitHub OAuth (connected accounts)
+│       ├── config/           # App config
+│       ├── discord/          # Discord bot
+│       ├── mcp/
+│       │   ├── adapters/     # BaseStdioAdapter, InProcessAdapter, MultiAccountAdapter, registry
+│       │   └── in-process/   # Built-in MCP server implementations
+│       ├── scheduler/        # Lambda-based autonomous job runner
+│       ├── storage/          # FS, SQLite, S3, DynamoDB adapters
+│       └── utils/            # Shared utilities
+└── shared/                   # TypeScript types and Zod schemas shared by client + server
 ```
 
 ## License
