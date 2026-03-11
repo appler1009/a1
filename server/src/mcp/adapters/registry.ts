@@ -19,6 +19,28 @@ import { SmtpImapInProcess, type SmtpImapCredentials } from '../in-process/smtp-
 import { getMainDatabaseSync } from '../../storage/index.js';
 
 /**
+ * Token data shapes passed to adapter factories.
+ * Using a union rather than `any` so factory implementations can narrow safely.
+ */
+export interface GoogleTokenData {
+  access_token: string;
+  refresh_token?: string;
+  expiry_date?: number;
+  token_type: string;
+}
+
+export interface RoleScopedTokenData {
+  roleId: string;
+  dbPath?: string;
+}
+
+export interface ApiKeyTokenData {
+  apiKey: string;
+}
+
+export type AdapterTokenData = GoogleTokenData | RoleScopedTokenData | ApiKeyTokenData | SmtpImapCredentials;
+
+/**
  * Simple concrete implementation of BaseStdioAdapter for generic MCP servers
  */
 class StdioAdapter extends BaseStdioAdapter {
@@ -28,19 +50,13 @@ class StdioAdapter extends BaseStdioAdapter {
 /**
  * Factory function type for creating in-process modules
  */
-export type InProcessModuleFactory = (userId: string, tokenData?: any) => InProcessMCPModule | Promise<InProcessMCPModule>;
+export type InProcessModuleFactory = (userId: string, tokenData?: AdapterTokenData) => InProcessMCPModule | Promise<InProcessMCPModule>;
 
-/**
- * Registry entry for in-process adapters
- */
 interface InProcessRegistryEntry {
   type: 'in-process';
   factory: InProcessModuleFactory;
 }
 
-/**
- * Registry entry for stdio adapters
- */
 interface StdioRegistryEntry {
   type: 'stdio';
   adapterClass: typeof StdioAdapter;
@@ -49,204 +65,118 @@ interface StdioRegistryEntry {
 type RegistryEntry = InProcessRegistryEntry | StdioRegistryEntry;
 
 /**
- * Registry pattern for MCP adapters
- * Maps serverKey to adapter class and handles instantiation
- * Supports both stdio-based and in-process adapters
+ * Registry for MCP adapters.
+ * Maps a primary server key to an adapter class or in-process factory.
+ * Alternate display names (e.g. "Google Drive" vs "google-drive-mcp-lib") are
+ * registered as aliases that resolve to the same primary entry.
  */
 class AdapterRegistry {
-  private adapters = new Map<string, RegistryEntry>();
+  private entries = new Map<string, RegistryEntry>();
+  private aliases = new Map<string, string>(); // alias key -> primary key
+
+  private resolve(key: string): string {
+    return this.aliases.get(key) ?? key;
+  }
 
   constructor() {
-    // Google Drive - in-process for better performance
-    // Uses google-drive-mcp-lib for direct API calls
-    this.registerInProcess('google-drive-mcp-lib', (userId: string, tokenData?: any) => {
-      if (!tokenData) {
-        throw new Error('Token data required for Google Drive in-process adapter');
-      }
-      return new GoogleDriveInProcess(tokenData);
-    });
-    this.registerInProcess('Google Drive', (userId: string, tokenData?: any) => {
-      if (!tokenData) {
-        throw new Error('Token data required for Google Drive in-process adapter');
-      }
-      return new GoogleDriveInProcess(tokenData);
-    });
-    
-    // markitdown uses StdioAdapter (no special auth required)
-    this.registerStdio('markitdown', StdioAdapter);
-    this.registerStdio('MarkItDown', StdioAdapter); // Also register by display name
-    
-    // Memory server uses in-process adapter
-    // Use DynamoDB when storage type is S3 (production AWS), SQLite otherwise (local)
     const useDynamoDBMemory = process.env.STORAGE_TYPE === 's3';
     const tablePrefix = process.env.DYNAMODB_TABLE_PREFIX ?? '';
-    
-    this.registerInProcess('memory', (userId: string, tokenData?: any) => {
-      const roleId = tokenData?.roleId;
+
+    this.registerInProcess('google-drive-mcp-lib', (_userId, tokenData) => {
+      if (!tokenData) throw new Error('Token data required for Google Drive in-process adapter');
+      return new GoogleDriveInProcess(tokenData as GoogleTokenData);
+    }, ['Google Drive']);
+
+    this.registerStdio('markitdown', StdioAdapter, ['MarkItDown']);
+
+    this.registerInProcess('memory', (userId, tokenData) => {
+      const roleData = tokenData as RoleScopedTokenData | undefined;
+      const roleId = roleData?.roleId;
       if (useDynamoDBMemory && roleId) {
         return new DynamoDBMemoryInProcess(roleId, { tablePrefix });
       }
-      const dbPath = tokenData?.dbPath || `data/memory-${userId}.db`;
+      const dbPath = roleData?.dbPath || `data/memory-${userId}.db`;
       return new SQLiteMemoryInProcess(dbPath);
-    });
-    this.registerInProcess('Memory', (userId: string, tokenData?: any) => {
-      const roleId = tokenData?.roleId;
-      if (useDynamoDBMemory && roleId) {
-        return new DynamoDBMemoryInProcess(roleId, { tablePrefix });
-      }
-      const dbPath = tokenData?.dbPath || `data/memory-${userId}.db`;
-      return new SQLiteMemoryInProcess(dbPath);
-    });
-    
-    // Weather server uses in-process adapter for direct API calls
-    this.registerInProcess('weather', () => new WeatherInProcess());
-    this.registerInProcess('Weather', () => new WeatherInProcess());
-    
-    // Meta MCP Search - semantic search over all available MCP tools
-    // This is the initial tool exposed to the LLM for tool discovery
-    this.registerInProcess('meta-mcp-search', (userId: string) => new MetaMcpSearchInProcess(userId));
-    this.registerInProcess('Meta MCP Search', (userId: string) => new MetaMcpSearchInProcess(userId));
+    }, ['Memory']);
 
-    // Gmail - in-process for better performance
-    // Uses gmail-mcp-lib for direct API calls
-    this.registerInProcess('gmail-mcp-lib', (userId: string, tokenData?: any) => {
-      if (!tokenData) {
-        throw new Error('Token data required for Gmail in-process adapter');
-      }
+    this.registerInProcess('weather', () => new WeatherInProcess(), ['Weather']);
+
+    this.registerInProcess('meta-mcp-search', (userId) => new MetaMcpSearchInProcess(userId), ['Meta MCP Search']);
+
+    this.registerInProcess('gmail-mcp-lib', (_userId, tokenData) => {
+      if (!tokenData) throw new Error('Token data required for Gmail in-process adapter');
       const storageRoot = process.env.STORAGE_ROOT || './data';
-      return new GmailInProcess(tokenData, storageRoot);
-    });
-    this.registerInProcess('Gmail', (userId: string, tokenData?: any) => {
-      if (!tokenData) {
-        throw new Error('Token data required for Gmail in-process adapter');
-      }
-      const storageRoot = process.env.STORAGE_ROOT || './data';
-      return new GmailInProcess(tokenData, storageRoot);
-    });
+      return new GmailInProcess(tokenData as GoogleTokenData, storageRoot);
+    }, ['Gmail']);
 
-    // Google Calendar - in-process for better performance
-    // Uses google-calendar-mcp-lib for direct API calls
-    this.registerInProcess('google-calendar-mcp-lib', (userId: string, tokenData?: any) => {
-      if (!tokenData) {
-        throw new Error('Token data required for Google Calendar in-process adapter');
-      }
-      return new GoogleCalendarInProcess(tokenData);
-    });
-    this.registerInProcess('Google Calendar', (userId: string, tokenData?: any) => {
-      if (!tokenData) {
-        throw new Error('Token data required for Google Calendar in-process adapter');
-      }
-      return new GoogleCalendarInProcess(tokenData);
-    });
+    this.registerInProcess('google-calendar-mcp-lib', (_userId, tokenData) => {
+      if (!tokenData) throw new Error('Token data required for Google Calendar in-process adapter');
+      return new GoogleCalendarInProcess(tokenData as GoogleTokenData);
+    }, ['Google Calendar']);
 
-    // Display Email - allows AI to show emails in preview pane
-    this.registerInProcess('display-email', () => new DisplayEmailInProcess());
-    this.registerInProcess('Display Email', () => new DisplayEmailInProcess());
+    this.registerInProcess('display-email', () => new DisplayEmailInProcess(), ['Display Email']);
 
-    // Process Each - processes a list of items one at a time using a focused LLM call per item
-    // Avoids context overflow when handling many emails/files
-    this.registerInProcess('process-each', () => new ProcessEachInProcess());
-    this.registerInProcess('Process Each', () => new ProcessEachInProcess());
+    this.registerInProcess('process-each', () => new ProcessEachInProcess(), ['Process Each']);
 
-    // Role Manager - allows LLM to switch between user's roles dynamically
-    // Used by Discord bot and other clients to manage active role
-    this.registerInProcess('role-manager', (userId: string) => {
+    this.registerInProcess('role-manager', (userId) => {
       const mainDb = getMainDatabaseSync();
       return new RoleManagerInProcess(userId, mainDb);
-    });
-    this.registerInProcess('Role Manager', (userId: string) => {
-      const mainDb = getMainDatabaseSync();
-      return new RoleManagerInProcess(userId, mainDb);
-    });
+    }, ['Role Manager']);
 
-    // Alpha Vantage - in-process financial data (requires API key)
-    this.registerInProcess('alpha-vantage', (_userId: string, tokenData?: any) => {
-      const apiKey = tokenData?.apiKey;
+    this.registerInProcess('alpha-vantage', (_userId, tokenData) => {
+      const apiKey = (tokenData as ApiKeyTokenData | undefined)?.apiKey;
       if (!apiKey) throw new Error('Alpha Vantage API key not configured');
       return new AlphaVantageInProcess(apiKey);
-    });
-    this.registerInProcess('Alpha Vantage', (_userId: string, tokenData?: any) => {
-      const apiKey = tokenData?.apiKey;
-      if (!apiKey) throw new Error('Alpha Vantage API key not configured');
-      return new AlphaVantageInProcess(apiKey);
-    });
+    }, ['Alpha Vantage']);
 
-    // Twelve Data - in-process financial data (requires API key)
-    this.registerInProcess('twelve-data', (_userId: string, tokenData?: any) => {
-      const apiKey = tokenData?.apiKey;
+    this.registerInProcess('twelve-data', (_userId, tokenData) => {
+      const apiKey = (tokenData as ApiKeyTokenData | undefined)?.apiKey;
       if (!apiKey) throw new Error('Twelve Data API key not configured');
       return new TwelveDataInProcess(apiKey);
-    });
-    this.registerInProcess('Twelve Data', (_userId: string, tokenData?: any) => {
-      const apiKey = tokenData?.apiKey;
-      if (!apiKey) throw new Error('Twelve Data API key not configured');
-      return new TwelveDataInProcess(apiKey);
-    });
+    }, ['Twelve Data']);
 
-    // Scheduler - role-scoped in-process task scheduler
-    this.registerInProcess('scheduler', (userId: string, tokenData?: any) => {
+    this.registerInProcess('scheduler', (userId, tokenData) => {
       const mainDb = getMainDatabaseSync();
-      return new SchedulerInProcess(mainDb, userId, tokenData?.roleId || '');
+      return new SchedulerInProcess(mainDb, userId, (tokenData as RoleScopedTokenData | undefined)?.roleId || '');
     });
 
-    // Fetch URL - in-process web fetching with HTML→markdown conversion
-    this.registerInProcess('fetch-url', () => new FetchUrlInProcess());
-    this.registerInProcess('Fetch URL', () => new FetchUrlInProcess());
+    this.registerInProcess('fetch-url', () => new FetchUrlInProcess(), ['Fetch URL']);
 
-    // SMTP/IMAP - in-process email via standard protocols
-    // tokenData contains decrypted SmtpImapCredentials from the service_credentials table
-    this.registerInProcess('smtp-imap-mcp-lib', (_userId: string, tokenData?: any) => {
+    this.registerInProcess('smtp-imap-mcp-lib', (_userId, tokenData) => {
       if (!tokenData) throw new Error('SMTP/IMAP credentials not configured. Please connect in Settings.');
       return new SmtpImapInProcess(tokenData as SmtpImapCredentials);
-    });
-    this.registerInProcess('SMTP / IMAP Email', (_userId: string, tokenData?: any) => {
-      if (!tokenData) throw new Error('SMTP/IMAP credentials not configured. Please connect in Settings.');
-      return new SmtpImapInProcess(tokenData as SmtpImapCredentials);
-    });
-
-    // Future: this.register('github', GithubAdapter);
-    // Future: this.register('brave-search', BraveSearchAdapter);
+    }, ['SMTP / IMAP Email']);
   }
 
-  /**
-   * Register a stdio-based adapter class for a specific server key
-   */
   registerStdio(
-    serverKey: string,
-    adapterClass: typeof StdioAdapter
+    primaryKey: string,
+    adapterClass: typeof StdioAdapter,
+    aliases: string[] = []
   ): void {
-    this.adapters.set(serverKey, { type: 'stdio', adapterClass });
+    this.entries.set(primaryKey, { type: 'stdio', adapterClass });
+    for (const alias of aliases) this.aliases.set(alias, primaryKey);
   }
 
-  /**
-   * Register an in-process adapter factory for a specific server key
-   * The factory receives userId and optional tokenData and returns an InProcessMCPModule
-   */
   registerInProcess(
-    serverKey: string,
-    factory: InProcessModuleFactory
+    primaryKey: string,
+    factory: InProcessModuleFactory,
+    aliases: string[] = []
   ): void {
-    this.adapters.set(serverKey, { type: 'in-process', factory });
+    this.entries.set(primaryKey, { type: 'in-process', factory });
+    for (const alias of aliases) this.aliases.set(alias, primaryKey);
   }
 
-  /**
-   * Check if a server key has an in-process adapter registered
-   */
   isInProcess(serverKey: string): boolean {
-    const entry = this.adapters.get(serverKey);
+    const entry = this.entries.get(this.resolve(serverKey));
     return entry?.type === 'in-process';
   }
 
-  /**
-   * Create a raw in-process module (without wrapping in InProcessAdapter).
-   * Used by MultiAccountAdapter to create per-account modules.
-   */
   async createRawModule(
     serverKey: string,
     userId: string,
-    tokenData?: any
+    tokenData?: AdapterTokenData
   ): Promise<InProcessMCPModule> {
-    const entry = this.adapters.get(serverKey);
+    const entry = this.entries.get(this.resolve(serverKey));
 
     if (!entry || entry.type !== 'in-process') {
       throw new Error(`No in-process adapter registered for ${serverKey}`);
@@ -255,17 +185,14 @@ class AdapterRegistry {
     return entry.factory(userId, tokenData);
   }
 
-  /**
-   * Create an in-process adapter instance
-   */
   async createInProcess(
     serverKey: string,
     userId: string,
     id: string,
-    tokenData?: any
+    tokenData?: AdapterTokenData
   ): Promise<InProcessAdapter> {
-    const entry = this.adapters.get(serverKey);
-    
+    const entry = this.entries.get(this.resolve(serverKey));
+
     if (!entry || entry.type !== 'in-process') {
       throw new Error(`No in-process adapter registered for ${serverKey}`);
     }
@@ -274,19 +201,15 @@ class AdapterRegistry {
     return new InProcessAdapter(id, userId, serverKey, module);
   }
 
-  /**
-   * Create an adapter instance based on server key
-   * Uses registered adapter if available, otherwise defaults to StdioAdapter
-   */
   create(
     serverKey: string,
     userId: string,
     id: string,
     config: MCPServerConfig,
     cwd: string,
-    tokenData?: any
+    tokenData?: AdapterTokenData
   ): BaseStdioAdapter {
-    const entry = this.adapters.get(serverKey);
+    const entry = this.entries.get(this.resolve(serverKey));
 
     if (!entry || entry.type === 'in-process') {
       return new StdioAdapter(
@@ -301,9 +224,7 @@ class AdapterRegistry {
     }
 
     const AdapterClass = entry.adapterClass;
-
-    // Default instantiation for StdioAdapter
-    return new (AdapterClass as any)(
+    return new AdapterClass(
       id,
       userId,
       serverKey,
@@ -315,5 +236,4 @@ class AdapterRegistry {
   }
 }
 
-// Global registry instance
 export const adapterRegistry = new AdapterRegistry();

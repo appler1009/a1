@@ -5,11 +5,11 @@ import type { MCPToolInfo, MCPResource } from '@local-agent/shared';
 
 /**
  * Base adapter for all stdio-based MCP servers
- * Subclasses can override prepare() to customize token/env setup
+ * Subclasses can override prepare() to customize token/env setup before connect
  */
 export abstract class BaseStdioAdapter implements McpAdapter {
   protected client: Client;
-  protected transport: StdioClientTransport;
+  protected transport!: StdioClientTransport; // initialized in connect()
   protected _isConnected = false;
 
   readonly id: string;
@@ -28,20 +28,12 @@ export abstract class BaseStdioAdapter implements McpAdapter {
     this.id = id;
     this.userId = userId;
     this.serverKey = serverKey;
-
-    this.transport = new StdioClientTransport({
-      command,
-      args,
-      cwd,
-      env: { ...process.env, ...env } as Record<string, string>,
-    });
-
     this.client = new Client({ name: 'agent-ui', version: '1.0.0' });
   }
 
   /**
-   * Hook for subclasses to prepare MCP-specific setup
-   * Called before connecting (e.g., set env vars)
+   * Hook for subclasses to prepare MCP-specific setup (e.g. write token env vars)
+   * Called once before the transport is created.
    */
   protected async prepare(): Promise<void> {
     // Override in subclasses
@@ -49,64 +41,34 @@ export abstract class BaseStdioAdapter implements McpAdapter {
 
   async connect(): Promise<void> {
     try {
-      console.log(`[BaseStdioAdapter:connect] Connecting adapter: ${this.id}`);
-      console.log(`[BaseStdioAdapter:connect] Server key: ${this.serverKey}`);
-      console.log(`[BaseStdioAdapter:connect] Command: ${this.command}`);
-      console.log(`[BaseStdioAdapter:connect] Args: ${JSON.stringify(this.args)}`);
-      console.log(`[BaseStdioAdapter:connect] CWD: ${this.cwd}`);
-      console.log(`[BaseStdioAdapter:connect] Calling prepare()...`);
-
       await this.prepare();
 
-      console.log(`[BaseStdioAdapter:connect] prepare() completed`);
-
-      // Log custom environment variables (excluding npm vars)
-      const customEnvKeys = Object.keys(this.env).filter(k => !k.startsWith('npm'));
-      console.log(`[BaseStdioAdapter:connect] Custom env vars (${customEnvKeys.length}):`, customEnvKeys);
-
-      // Log specific token-related env vars
-      if (this.env.ANTHROPIC_API_KEY) {
-        console.log(`[BaseStdioAdapter:connect] ANTHROPIC_API_KEY: ${this.env.ANTHROPIC_API_KEY.substring(0, 10)}...`);
-      }
-
-      // Create merged environment
-      const mergedEnv = { ...process.env, ...this.env };
-      console.log(`[BaseStdioAdapter:connect] Merged env vars that will be passed to MCP:`, {
-        'PATH': mergedEnv.PATH?.substring(0, 50) + '...',
-        'NODE_ENV': mergedEnv.NODE_ENV,
-        'custom_vars_count': customEnvKeys.length,
-      });
-
-      // Update transport env in case prepare() modified this.env
       this.transport = new StdioClientTransport({
         command: this.command,
         args: this.args,
         cwd: this.cwd,
-        env: mergedEnv as Record<string, string>,
+        env: { ...process.env, ...this.env } as Record<string, string>,
       });
 
-      console.log(`[BaseStdioAdapter:connect] Transport created, connecting to client...`);
       await this.client.connect(this.transport);
       this._isConnected = true;
-      console.log(`[BaseStdioAdapter:connect] Connected successfully!`);
     } catch (error) {
       this._isConnected = false;
-      console.error(`[BaseStdioAdapter:connect] Connection failed:`, error instanceof Error ? error.message : String(error));
+      console.error(`[MCP] Failed to connect ${this.serverKey}:`, error instanceof Error ? error.message : String(error));
       throw error;
     }
   }
 
-  async listTools(): Promise<any> {
+  async listTools(): Promise<MCPToolInfo[]> {
     if (!this._isConnected) {
       throw new Error(`Adapter ${this.id} is not connected`);
     }
     const res = await (this.client.listTools() as any);
-    // Ensure inputSchema is always present (default to empty object)
     return (res.tools as any[]).map((tool: any) => ({
       name: tool.name,
       description: tool.description || '',
       inputSchema: (tool.inputSchema || {}) as Record<string, unknown>,
-    })) as MCPToolInfo[];
+    }));
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
@@ -117,7 +79,6 @@ export abstract class BaseStdioAdapter implements McpAdapter {
     try {
       const result = await this.client.callTool({ name, arguments: args });
 
-      // Normalize result
       if (typeof result === 'string') {
         return { type: 'text', text: result };
       }

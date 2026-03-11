@@ -1,6 +1,7 @@
 import path from 'path';
 import type { McpAdapter, MCPServerConfig } from '@local-agent/shared';
-import { adapterRegistry } from './adapters/registry.js';
+import { adapterRegistry, type GoogleTokenData, type AdapterTokenData } from './adapters/registry.js';
+import type { SmtpImapCredentials } from './in-process/smtp-imap.js';
 import { authService } from '../auth/index.js';
 import { getMainDatabase } from '../storage/main-db.js';
 import { mcpManager } from './manager.js';
@@ -27,15 +28,6 @@ const activeAdapters = new Map<string, McpAdapter>();
  */
 const inProcessServers = new Set<string>();
 
-/**
- * Result of token refresh operation
- */
-interface TokenData {
-  access_token: string;
-  refresh_token?: string;
-  expiry_date?: number;
-  token_type: string;
-}
 
 /**
  * Refresh buffer in milliseconds - refresh if expiring within 5 minutes
@@ -50,7 +42,7 @@ const REFRESH_BUFFER_MS = 5 * 60 * 1000;
  * @returns Token data for Google API calls
  * @throws Error if token not found or cannot be refreshed
  */
-async function getGoogleTokenData(userId: string, provider: string = 'google'): Promise<TokenData> {
+async function getGoogleTokenData(userId: string, provider: string = 'google'): Promise<GoogleTokenData> {
   // Always use user-level tokens (no role-specific tokens anymore)
   let oauthToken = await authService.getOAuthToken(userId, provider);
 
@@ -84,7 +76,7 @@ async function getGoogleTokenData(userId: string, provider: string = 'google'): 
         refreshToken: newTokens.refresh_token || oauthToken.refreshToken,
         expiryDate: Date.now() + (newTokens.expires_in * 1000),
         accountEmail: oauthToken.accountEmail,
-      } as any);
+      });
       console.log(`[OAuth] Token refreshed, new expiry: ${new Date(oauthToken.expiryDate!).toISOString()}`);
     } catch (refreshError) {
       console.error(`[OAuth] Failed to refresh token:`, refreshError);
@@ -181,7 +173,7 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
     }
 
     // Role-scoped (memory/scheduler) or no manager adapter yet — create a fresh in-process instance
-    let tokenData: any;
+    let tokenData: AdapterTokenData | undefined;
     if (isRoleScoped && roleId) {
       const useDynamoDBMemory = process.env.STORAGE_TYPE === 's3';
       if (baseServerId === 'memory' || baseServerId === 'Memory') {
@@ -214,7 +206,7 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
         throw new Error('SMTP/IMAP credentials not configured. Please add an account in Settings.');
       }
       // Use first account; multi-account support can be added later via MultiAccountAdapter
-      tokenData = accounts[0].credentials;
+      tokenData = accounts[0].credentials as unknown as SmtpImapCredentials;
     }
 
     const adapter = await adapterRegistry.createInProcess(baseServerId, userId, `mcp-${serverKey}`, tokenData);
@@ -231,7 +223,7 @@ export async function getMcpAdapter(userId: string, serverKey: string, roleId?: 
   const serverConfig = await loadServerConfig(serverKey);
   const cwd = serverConfig.cwd || process.cwd();
 
-  let tokenData: any;
+  let tokenData: AdapterTokenData | undefined;
   if (serverConfig.auth?.provider && serverConfig.auth.provider.startsWith('google')) {
     tokenData = await getGoogleTokenData(userId, serverConfig.auth.provider);
   }
