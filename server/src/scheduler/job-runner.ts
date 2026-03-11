@@ -64,7 +64,7 @@ export class JobRunner {
     ) => Promise<{ text: string }>,
   ) {}
 
-  async run(job: ScheduledJob, saveToChat: boolean = false): Promise<void> {
+  async run(job: ScheduledJob): Promise<void> {
     const role = await this.db.getRole(job.roleId);
     const systemPrompt = [
       'You are an autonomous AI agent executing a scheduled background task.',
@@ -95,6 +95,7 @@ export class JobRunner {
 
     let lastToolName: string | null = null;
     let consecutiveToolCount = 0;
+    const toolCallLog: Array<{ name: string; createdAt: string }> = [];
 
     for (let i = 0; i < JobRunner.MAX_ITERATIONS; i++) {
       console.log(`[JobRunner] Job ${job.id} — iteration ${i + 1}/${JobRunner.MAX_ITERATIONS}`);
@@ -135,6 +136,7 @@ export class JobRunner {
           : tc.arguments as Record<string, unknown>;
 
         try {
+          toolCallLog.push({ name: tc.name, createdAt: new Date().toISOString() });
           const r = await this.executeTool(job.userId, tc.name, args, job.roleId);
           console.log(`[JobRunner] Job ${job.id} — tool ${tc.name} result: ${r.text.slice(0, 100)}...`);
 
@@ -167,27 +169,31 @@ export class JobRunner {
       messages.push({ role: 'user', content: results.join('\n\n') });
     }
 
-    // Save job output to role's chat history so user sees it when they open chat
-    // Only save if saveToChat is true (job was actually triggered to run by evaluator)
-    // or if it's a one-time job
-    if (saveToChat || job.scheduleType === 'once') {
-      const now = new Date().toISOString();
-      const shortDesc = job.description.length > 60
-        ? job.description.slice(0, 60) + '…'
-        : job.description;
+    // Save tool calls and final response to role's chat history
+    for (const tc of toolCallLog) {
+      const label = tc.name.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').replace(/\s+/g, ' ').toLowerCase().trim();
+      await this.db.saveMessage({
+        id: uuidv4(),
+        userId: job.userId,
+        roleId: job.roleId,
+        groupId: null,
+        from: 'tool' as const,
+        content: `*${label}*`,
+        createdAt: tc.createdAt,
+      });
+    }
 
-      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
-      if (lastAssistant?.content) {
-        await this.db.saveMessage({
-          id: uuidv4(),
-          userId: job.userId,
-          roleId: job.roleId,
-          groupId: null,
-          from: 'system' as const,
-          content: lastAssistant.content,
-          createdAt: new Date().toISOString(),
-        });
-      }
+    const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+    if (lastAssistant?.content) {
+      await this.db.saveMessage({
+        id: uuidv4(),
+        userId: job.userId,
+        roleId: job.roleId,
+        groupId: null,
+        from: 'system' as const,
+        content: lastAssistant.content,
+        createdAt: new Date().toISOString(),
+      });
     }
 
     // Send Discord notification if bot is configured
@@ -203,11 +209,11 @@ export class JobRunner {
    * Run a job and manage its DB lifecycle (status, lastRunAt, error messages).
    * Called by the dispatch endpoint after the Lambda sends its decisions.
    */
-  async execute(job: ScheduledJob, saveToChat = true): Promise<void> {
+  async execute(job: ScheduledJob): Promise<void> {
     console.log(`[JobRunner] Running job ${job.id}: ${job.description.slice(0, 60)}`);
     await this.db.updateScheduledJobStatus(job.id, { status: 'running', holdUntil: null });
     try {
-      await this.run(job, saveToChat);
+      await this.run(job);
       const status = job.scheduleType === 'once' ? 'completed' : 'pending';
       await this.db.updateScheduledJobStatus(job.id, {
         status,
