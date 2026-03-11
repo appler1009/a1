@@ -30,6 +30,7 @@ interface DispatchRequest {
 interface EvaluatorResult {
   run: string[];
   hold: Array<{ id: string; until: string }>;
+  reasoning: Record<string, string>;
 }
 
 interface TokenUsage {
@@ -253,23 +254,26 @@ ${jobLines}
 Reply with ONLY a valid JSON object like:
 {
   "run": ["id-of-job-to-run"],
-  "hold": [{"id": "id-of-job-to-hold", "until": "2026-02-27T09:00:00Z"}]
+  "hold": [{"id": "id-of-job-to-hold", "until": "2026-02-27T09:00:00Z"}],
+  "reasoning": {"id-of-job": "Brief explanation of why this job was run/held/skipped"}
 }
-Both arrays may be empty. Jobs in "run" should also appear in "hold" with their next scheduled run time. Do not include any other text.`;
+Both arrays may be empty. Jobs in "run" should also appear in "hold" with their next scheduled run time. Include a reasoning entry for every evaluated job. Do not include any other text.`;
 }
 
 export function parseEvaluatorResponse(text: string): EvaluatorResult {
   const match = text.trim().match(/\{[\s\S]*\}/);
-  if (!match) return { run: [], hold: [] };
+  if (!match) return { run: [], hold: [], reasoning: {} };
 
   const parsed = JSON.parse(match[0]) as {
     run?: string[];
     hold?: Array<{ id: string; until: string }>;
+    reasoning?: Record<string, string>;
   };
 
   return {
     run: Array.isArray(parsed.run) ? parsed.run : [],
     hold: Array.isArray(parsed.hold) ? parsed.hold : [],
+    reasoning: parsed.reasoning && typeof parsed.reasoning === 'object' ? parsed.reasoning : {},
   };
 }
 
@@ -309,12 +313,20 @@ async function evaluateRecurringJobsForUser(
   console.log(
     `[Evaluator] user=${userId} → hold: [${result.hold.map(h => `${h.id} until ${h.until}`).join(', ')}]`,
   );
+  if (Object.keys(result.reasoning).length > 0) {
+    console.log(`[Evaluator] Reasoning for user ${userId}:`);
+    for (const [jobId, reason] of Object.entries(result.reasoning)) {
+      const job = jobs.find(j => j.id === jobId);
+      const desc = job ? `"${job.description}"` : jobId;
+      console.log(`[Evaluator]   ${desc}: ${reason}`);
+    }
+  }
 
   return result;
 }
 
 async function evaluateRecurringJobs(jobs: ScheduledJob[]): Promise<EvaluatorResult> {
-  if (jobs.length === 0) return { run: [], hold: [] };
+  if (jobs.length === 0) return { run: [], hold: [], reasoning: {} };
 
   // Group by userId so token usage can be recorded per user
   const jobsByUser = new Map<string, ScheduledJob[]>();
@@ -326,14 +338,16 @@ async function evaluateRecurringJobs(jobs: ScheduledJob[]): Promise<EvaluatorRes
 
   const run: string[] = [];
   const hold: Array<{ id: string; until: string }> = [];
+  const reasoning: Record<string, string> = {};
 
   for (const [userId, userJobs] of jobsByUser) {
     const result = await evaluateRecurringJobsForUser(userId, userJobs);
     run.push(...result.run);
     hold.push(...result.hold);
+    Object.assign(reasoning, result.reasoning);
   }
 
-  return { run, hold };
+  return { run, hold, reasoning };
 }
 
 // ---------------------------------------------------------------------------

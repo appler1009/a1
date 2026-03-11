@@ -176,16 +176,6 @@ export class JobRunner {
         ? job.description.slice(0, 60) + '…'
         : job.description;
 
-      await this.db.saveMessage({
-        id: uuidv4(),
-        userId: job.userId,
-        roleId: job.roleId,
-        groupId: null,
-        from: 'system' as const,
-        content: `*Scheduled job: ${shortDesc}*`,
-        createdAt: now,
-      });
-
       const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
       if (lastAssistant?.content) {
         await this.db.saveMessage({
@@ -236,19 +226,6 @@ export class JobRunner {
       });
       console.error(`[JobRunner] Job ${job.id} failed:`, err);
 
-      const shortDesc = job.description.length > 60
-        ? job.description.slice(0, 60) + '…'
-        : job.description;
-      const now = new Date().toISOString();
-      await this.db.saveMessage({
-        id: uuidv4(),
-        userId: job.userId,
-        roleId: job.roleId,
-        groupId: null,
-        from: 'system' as const,
-        content: `*Scheduled job failed: ${shortDesc}*`,
-        createdAt: now,
-      });
       await this.db.saveMessage({
         id: uuidv4(),
         userId: job.userId,
