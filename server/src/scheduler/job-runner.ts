@@ -5,6 +5,7 @@ import type { LLMMessage } from '@local-agent/shared';
 import { mcpManager } from '../mcp/index.js';
 import { updateToolManifest } from '../mcp/in-process/meta-mcp-search.js';
 import { notifyScheduledJobCompletion } from '../discord/bot.js';
+import { estimateCostUsd, DEFAULT_MONTHLY_SPEND_LIMIT_USD } from '../ai/cost.js';
 
 // Tools never surfaced to a scheduled job runner via search_tool
 const JOB_RUNNER_EXCLUDED_TOOLS = ['schedule_task', 'list_scheduled_jobs', 'list_roles', 'switch_role'];
@@ -211,6 +212,31 @@ export class JobRunner {
    */
   async execute(job: ScheduledJob): Promise<void> {
     console.log(`[JobRunner] Running job ${job.id}: ${job.description.slice(0, 60)}`);
+
+    // Check monthly spend limit — BYOK users are exempt (they use their own API key)
+    const [user, byokCredentials] = await Promise.all([
+      this.db.getUser(job.userId),
+      this.db.listServiceCredentials(job.userId, 'byok'),
+    ]);
+    const hasByok = byokCredentials.length > 0;
+    const limitUsd = user?.monthlySpendLimitUsd ?? DEFAULT_MONTHLY_SPEND_LIMIT_USD;
+    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const monthlyUsage = await this.db.getTokenUsageByUser(job.userId, { from: monthStart });
+    const spentUsd = estimateCostUsd(monthlyUsage);
+    if (!hasByok && spentUsd >= limitUsd) {
+      console.warn(`[JobRunner] Job ${job.id} skipped — spend limit reached ($${spentUsd.toFixed(4)} / $${limitUsd.toFixed(2)})`);
+      await this.db.saveMessage({
+        id: uuidv4(),
+        userId: job.userId,
+        roleId: job.roleId,
+        groupId: null,
+        from: 'system' as const,
+        content: `**Scheduled task skipped:** You've reached your monthly AI usage limit of $${limitUsd.toFixed(2)}. Your estimated spend this month is $${spentUsd.toFixed(4)}. The limit resets on the 1st of next month. Tip: you can bring your own API key under Settings → Models to bypass this limit.`,
+        createdAt: new Date().toISOString(),
+      });
+      return;
+    }
+
     await this.db.updateScheduledJobStatus(job.id, { status: 'running', holdUntil: null });
     try {
       await this.run(job);

@@ -26,6 +26,7 @@ import type { User, Session } from '@local-agent/shared';
 import { createStorage, autoMigrate, getMainDatabase, createTempStorage } from './storage/index.js';
 import type { IMainDatabase } from './storage/index.js';
 import { createLLMRouter } from './ai/router.js';
+import { estimateCostUsd, DEFAULT_MONTHLY_SPEND_LIMIT_USD } from './ai/cost.js';
 import { mcpManager } from './mcp/index.js';
 import { authRoutes } from './api/auth.js';
 import { smtpImapRoutes } from './api/smtp-imap.js';
@@ -94,97 +95,7 @@ function initializeTempStorage(): void {
   initializeDisplayEmail(tempStorage);
 }
 
-const ALPHA_VANTAGE_API_REFERENCE = `# Alpha Vantage Financial Data API Reference
-
-Alpha Vantage provides real-time and historical financial data via REST API.
-Base URL: https://www.alphavantage.co/query
-Free API key required: https://www.alphavantage.co/support/#api-key
-
-## Core Stock Data
-
-### GLOBAL_QUOTE
-Latest price, volume, and change for a stock.
-Parameters: symbol (required)
-Returns: open, high, low, price, volume, previous close, change, change percent
-
-### TIME_SERIES_DAILY
-Daily OHLCV time series for a stock.
-Parameters: symbol (required), outputsize (compact=100 points, full=20+ years)
-Returns: daily open, high, low, close, volume
-
-### TIME_SERIES_INTRADAY
-Intraday OHLCV time series.
-Parameters: symbol (required), interval (1min/5min/15min/30min/60min), outputsize
-Returns: intraday bars at specified interval
-
-## Search & Discovery
-
-### SYMBOL_SEARCH
-Search for stock symbols and company names.
-Parameters: keywords (required)
-Returns: matching symbols, names, regions, and types
-
-## Market Intelligence
-
-### NEWS_SENTIMENT
-News articles with sentiment scores for stocks or topics.
-Parameters: tickers (optional), topics (optional), time_from, time_to, limit
-Topics: earnings, ipo, mergers_and_acquisitions, financial_markets, economy_fiscal,
-        economy_monetary, economy_macro, energy_transportation, finance, life_sciences,
-        manufacturing, real_estate, retail_wholesale, technology
-Returns: articles with title, url, source, summary, sentiment scores per ticker
-
-### TOP_GAINERS_LOSERS
-Top gaining, losing, and most active US stocks for the current trading day.
-Parameters: none
-Returns: top_gainers, top_losers, most_actively_traded arrays with price/volume data
-
-## Fundamentals
-
-### COMPANY_OVERVIEW
-Complete fundamental data for a company.
-Parameters: symbol (required)
-Returns: description, sector, industry, market cap, P/E ratio, EPS, dividend yield,
-         52-week high/low, 50-day and 200-day moving averages, book value, beta, and 50+ more
-
-### EARNINGS
-Quarterly and annual EPS history.
-Parameters: symbol (required)
-Returns: annualEarnings and quarterlyEarnings arrays with reported/estimated EPS and surprise
-
-## Foreign Exchange (Forex)
-
-### CURRENCY_EXCHANGE_RATE
-Real-time exchange rate between any two currencies or crypto.
-Parameters: from_currency (e.g. USD, EUR, BTC), to_currency (e.g. JPY, GBP, ETH)
-Returns: exchange rate, bid/ask prices, last refreshed timestamp
-
-## Economic Indicators
-
-### REAL_GDP
-US real gross domestic product.
-Parameters: interval (annual or quarterly)
-Returns: time series of real GDP values in billions of USD
-
-### CPI
-US Consumer Price Index (inflation measure).
-Parameters: interval (monthly or semiannual)
-Returns: time series of CPI values (base year 1982-1984 = 100)
-
-### WTI
-West Texas Intermediate crude oil prices.
-Parameters: interval (daily, weekly, or monthly)
-Returns: time series of WTI crude oil prices in USD per barrel
-
-## Rate Limits
-Free tier: 25 API calls per day, 5 per minute.
-For higher limits, see https://www.alphavantage.co/premium/
-
-## Common Error Responses
-- "Error Message": Invalid API call (bad function name or parameters)
-- "Information": API rate limit exceeded
-- "Note": Occasional API rate limit note (data may still be returned)
-`;
+import { ALPHA_VANTAGE_API_REFERENCE } from './mcp/in-process/alpha-vantage.js';
 
 /**
  * Seed skills into the database on startup
@@ -269,7 +180,7 @@ fastify.get('/health', async () => {
   return { status: 'ok', timestamp: new Date().toISOString() };
 });
 
-// Returns jobs that the Lambda evaluator needs to assess.
+// Returns jobs that the Lambda evaluator needs to assess, plus per-user spend metadata.
 fastify.get('/internal/scheduler/pending', async (request, reply) => {
   if (!assertInternalApiKey(request, reply)) return;
   const mainDb = await getMainDatabase(config.storage.root);
@@ -277,23 +188,36 @@ fastify.get('/internal/scheduler/pending', async (request, reply) => {
     mainDb.getDueOnceJobs(),
     mainDb.getPendingRecurringJobs(),
   ]);
+
+  // Build per-user spend metadata so the lambda can skip over-limit users
+  const allUserIds = [...new Set([...onceJobs, ...recurringJobs].map(j => j.userId))];
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const userMeta: Record<string, { overSpendLimit: boolean }> = {};
+  await Promise.all(allUserIds.map(async (userId) => {
+    const [user, byokCredentials, monthlyUsage] = await Promise.all([
+      mainDb.getUser(userId),
+      mainDb.listServiceCredentials(userId, 'byok'),
+      mainDb.getTokenUsageByUser(userId, { from: monthStart }),
+    ]);
+    const hasByok = byokCredentials.length > 0;
+    const limitUsd = user?.monthlySpendLimitUsd ?? DEFAULT_MONTHLY_SPEND_LIMIT_USD;
+    const spentUsd = estimateCostUsd(monthlyUsage);
+    userMeta[userId] = { overSpendLimit: !hasByok && spentUsd >= limitUsd };
+  }));
+
+  const mapJob = (j: typeof onceJobs[number]) => ({
+    id: j.id,
+    userId: j.userId,
+    roleId: j.roleId,
+    description: j.description,
+    scheduleType: j.scheduleType,
+    lastRunAt: j.lastRunAt?.toISOString() ?? null,
+  });
+
   return {
-    onceJobs: onceJobs.map(j => ({
-      id: j.id,
-      userId: j.userId,
-      roleId: j.roleId,
-      description: j.description,
-      scheduleType: j.scheduleType,
-      lastRunAt: j.lastRunAt?.toISOString() ?? null,
-    })),
-    recurringJobs: recurringJobs.map(j => ({
-      id: j.id,
-      userId: j.userId,
-      roleId: j.roleId,
-      description: j.description,
-      scheduleType: j.scheduleType,
-      lastRunAt: j.lastRunAt?.toISOString() ?? null,
-    })),
+    onceJobs: onceJobs.map(mapJob),
+    recurringJobs: recurringJobs.map(mapJob),
+    userMeta,
   };
 });
 

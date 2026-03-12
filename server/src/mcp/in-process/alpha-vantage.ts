@@ -10,6 +10,98 @@ import type { InProcessMCPModule } from '../adapters/InProcessAdapter.js';
 
 const BASE_URL = 'https://www.alphavantage.co/query';
 
+export const ALPHA_VANTAGE_API_REFERENCE = `# Alpha Vantage Financial Data API Reference
+
+Alpha Vantage provides real-time and historical financial data via REST API.
+Base URL: https://www.alphavantage.co/query
+Free API key required: https://www.alphavantage.co/support/#api-key
+
+## Core Stock Data
+
+### GLOBAL_QUOTE
+Latest price, volume, and change for a stock.
+Parameters: symbol (required)
+Returns: open, high, low, price, volume, previous close, change, change percent
+
+### TIME_SERIES_DAILY
+Daily OHLCV time series for a stock.
+Parameters: symbol (required), outputsize (compact=100 points, full=20+ years)
+Returns: daily open, high, low, close, volume
+
+### TIME_SERIES_INTRADAY
+Intraday OHLCV time series.
+Parameters: symbol (required), interval (1min/5min/15min/30min/60min), outputsize
+Returns: intraday bars at specified interval
+
+## Search & Discovery
+
+### SYMBOL_SEARCH
+Search for stock symbols and company names.
+Parameters: keywords (required)
+Returns: matching symbols, names, regions, and types
+
+## Market Intelligence
+
+### NEWS_SENTIMENT
+News articles with sentiment scores for stocks or topics.
+Parameters: tickers (optional), topics (optional), time_from, time_to, limit
+Topics: earnings, ipo, mergers_and_acquisitions, financial_markets, economy_fiscal,
+        economy_monetary, economy_macro, energy_transportation, finance, life_sciences,
+        manufacturing, real_estate, retail_wholesale, technology
+Returns: articles with title, url, source, summary, sentiment scores per ticker
+
+### TOP_GAINERS_LOSERS
+Top gaining, losing, and most active US stocks for the current trading day.
+Parameters: none
+Returns: top_gainers, top_losers, most_actively_traded arrays with price/volume data
+
+## Fundamentals
+
+### COMPANY_OVERVIEW
+Complete fundamental data for a company.
+Parameters: symbol (required)
+Returns: description, sector, industry, market cap, P/E ratio, EPS, dividend yield,
+         52-week high/low, 50-day and 200-day moving averages, book value, beta, and 50+ more
+
+### EARNINGS
+Quarterly and annual EPS history.
+Parameters: symbol (required)
+Returns: annualEarnings and quarterlyEarnings arrays with reported/estimated EPS and surprise
+
+## Foreign Exchange (Forex)
+
+### CURRENCY_EXCHANGE_RATE
+Real-time exchange rate between any two currencies or crypto.
+Parameters: from_currency (e.g. USD, EUR, BTC), to_currency (e.g. JPY, GBP, ETH)
+Returns: exchange rate, bid/ask prices, last refreshed timestamp
+
+## Economic Indicators
+
+### REAL_GDP
+US real gross domestic product.
+Parameters: interval (annual or quarterly)
+Returns: time series of real GDP values in billions of USD
+
+### CPI
+US Consumer Price Index (inflation measure).
+Parameters: interval (monthly or semiannual)
+Returns: time series of CPI values (base year 1982-1984 = 100)
+
+### WTI
+West Texas Intermediate crude oil prices.
+Parameters: interval (daily, weekly, or monthly)
+Returns: time series of WTI crude oil prices in USD per barrel
+
+## Rate Limits
+Free tier: 25 API calls per day, 5 per minute.
+For higher limits, see https://www.alphavantage.co/premium/
+
+## Common Error Responses
+- "Error Message": Invalid API call (bad function name or parameters)
+- "Information": API rate limit exceeded
+- "Note": Occasional API rate limit note (data may still be returned)
+`;
+
 export class AlphaVantageInProcess implements InProcessMCPModule {
   // Index signature for dynamic tool access
   [key: string]: unknown;

@@ -17,9 +17,14 @@ interface ScheduledJob {
   lastRunAt: string | null; // ISO 8601
 }
 
+interface UserMeta {
+  overSpendLimit: boolean;
+}
+
 interface PendingJobsResponse {
   onceJobs: ScheduledJob[];
   recurringJobs: ScheduledJob[];
+  userMeta: Record<string, UserMeta>;
 }
 
 interface DispatchRequest {
@@ -325,12 +330,16 @@ async function evaluateRecurringJobsForUser(
   return result;
 }
 
-async function evaluateRecurringJobs(jobs: ScheduledJob[]): Promise<EvaluatorResult> {
+async function evaluateRecurringJobs(jobs: ScheduledJob[], userMeta: Record<string, UserMeta> = {}): Promise<EvaluatorResult> {
   if (jobs.length === 0) return { run: [], hold: [], reasoning: {} };
 
   // Group by userId so token usage can be recorded per user
   const jobsByUser = new Map<string, ScheduledJob[]>();
   for (const job of jobs) {
+    if (userMeta[job.userId]?.overSpendLimit) {
+      console.log(`[Evaluator] Skipping job ${job.id} for user ${job.userId} — spend limit reached`);
+      continue;
+    }
     const list = jobsByUser.get(job.userId) ?? [];
     list.push(job);
     jobsByUser.set(job.userId, list);
@@ -358,7 +367,7 @@ export const handler = async (): Promise<void> => {
   console.log('[SchedulerLambda] Invoked');
 
   // 1. Fetch jobs that are ready to be considered
-  const { onceJobs, recurringJobs } = await fetchPendingJobs();
+  const { onceJobs, recurringJobs, userMeta = {} } = await fetchPendingJobs();
   console.log(
     `[SchedulerLambda] ${onceJobs.length} once-job(s), ${recurringJobs.length} recurring job(s)`,
   );
@@ -371,14 +380,18 @@ export const handler = async (): Promise<void> => {
   const run: string[] = [];
   const hold: Array<{ id: string; until: string }> = [];
 
-  // 2. Once-jobs: due time already checked by the backend — run them all
+  // 2. Once-jobs: due time already checked by the backend — run them all (skip over-limit users)
   for (const job of onceJobs) {
+    if (userMeta[job.userId]?.overSpendLimit) {
+      console.log(`[SchedulerLambda] Skipping once-job ${job.id} for user ${job.userId} — spend limit reached`);
+      continue;
+    }
     run.push(job.id);
   }
 
   // 3. Recurring jobs: ask the LLM (one call per user for per-user token accounting)
   if (recurringJobs.length > 0) {
-    const result = await evaluateRecurringJobs(recurringJobs);
+    const result = await evaluateRecurringJobs(recurringJobs, userMeta);
     run.push(...result.run);
     hold.push(...result.hold);
   }
