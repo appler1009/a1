@@ -15,6 +15,7 @@ import {
 } from '../shared-state.js';
 import { getByokRouter } from '../utils/byok.js';
 import { executeToolWithAdapters } from '../utils/tool-execution.js';
+import { estimateCostUsd, DEFAULT_MONTHLY_SPEND_LIMIT_USD } from '../ai/cost.js';
 
 // ---------------------------------------------------------------------------
 // enrichToolDefinition helper (kept local to this module, used in chat/stream)
@@ -381,6 +382,27 @@ export async function messageRoutes(fastify: FastifyInstance): Promise<void> {
 
     if (!llmRouter) {
       return reply.code(500).send({ success: false, error: { message: 'LLM router not initialized' } });
+    }
+
+    // Check monthly spend limit (only for platform API keys, not BYOK)
+    const byokRouter = await getByokRouter(request.user.id);
+    if (!byokRouter) {
+      const mainDb = await getMainDatabase(config.storage.root);
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthlyUsage = await mainDb.getTokenUsageByUser(request.user.id, { from: monthStart });
+      const spentUsd = estimateCostUsd(monthlyUsage);
+      const limitUsd = request.user.monthlySpendLimitUsd ?? DEFAULT_MONTHLY_SPEND_LIMIT_USD;
+      if (spentUsd >= limitUsd) {
+        return reply.code(429).send({
+          success: false,
+          error: {
+            message: `You've reached your monthly AI usage limit of $${limitUsd.toFixed(2)}. Your estimated spend this month is $${spentUsd.toFixed(4)}. The limit resets on the 1st of next month.`,
+            code: 'SPEND_LIMIT_EXCEEDED',
+            details: { limitUsd, spentUsd },
+          },
+        });
+      }
     }
 
     reply.raw.setHeader('Content-Type', 'text/event-stream');

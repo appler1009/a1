@@ -9,6 +9,7 @@ export const UserSchema = z.object({
   discordUserId: z.string().optional(),
   locale: z.string().optional(),
   timezone: z.string().optional(),
+  monthlySpendLimitUsd: z.number().optional(),
   createdAt: z.string().or(z.date()),
   updatedAt: z.string().or(z.date()).optional(),
 });

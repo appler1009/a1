@@ -491,7 +491,15 @@ export function ChatPane() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to send message');
+        let errorMessage = 'Something went wrong. Please try again.';
+        try {
+          const errBody = await response.json() as { error?: { message?: string; code?: string } };
+          if (errBody?.error?.message) errorMessage = errBody.error.message;
+        } catch { /* ignore parse errors */ }
+        fullContent = errorMessage;
+        setCurrentContent(errorMessage);
+        saveAssistantMessage();
+        return;
       }
 
       const reader = response.body?.getReader();

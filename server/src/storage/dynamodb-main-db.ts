@@ -58,6 +58,7 @@ function toUser(item: Record<string, unknown>): User {
     discordUserId: (item.discordUserId as string) || undefined,
     locale: (item.locale as string) || undefined,
     timezone: (item.timezone as string) || undefined,
+    monthlySpendLimitUsd: item.monthlySpendLimitUsd !== undefined ? (item.monthlySpendLimitUsd as number) : undefined,
     createdAt: new Date(item.createdAt as string),
     updatedAt: new Date(item.updatedAt as string),
   };
@@ -285,6 +286,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     if (updates.discordUserId !== undefined) { sets.push('discordUserId = :discordUserId'); values[':discordUserId'] = updates.discordUserId ?? null; }
     if (updates.locale !== undefined) { sets.push('locale = :locale'); values[':locale'] = updates.locale ?? null; }
     if (updates.timezone !== undefined) { sets.push('timezone = :timezone'); values[':timezone'] = updates.timezone ?? null; }
+    if (updates.monthlySpendLimitUsd !== undefined) { sets.push('monthlySpendLimitUsd = :monthlySpendLimitUsd'); values[':monthlySpendLimitUsd'] = updates.monthlySpendLimitUsd ?? null; }
 
     const { Attributes } = await this.client.send(new UpdateCommand({
       TableName: this.tables.users,

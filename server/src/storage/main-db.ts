@@ -335,6 +335,9 @@ export class MainDatabase implements IMainDatabase {
     // Migrate users table to add locale and timezone columns if needed
     this.migrateLocaleTimezoneSchema();
 
+    // Migrate users table to add monthlySpendLimitUsd column if needed
+    this.migrateMonthlySpendLimitSchema();
+
     // Migrate scheduled_jobs table to add holdUntil column if needed
     this.migrateScheduledJobsHoldUntil();
   }
@@ -457,6 +460,20 @@ export class MainDatabase implements IMainDatabase {
     }
   }
 
+  private migrateMonthlySpendLimitSchema(): void {
+    try {
+      const tableInfo = this.db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+      const hasCol = tableInfo.some(col => col.name === 'monthlySpendLimitUsd');
+      if (!hasCol) {
+        console.log('[MainDatabase] Adding monthlySpendLimitUsd column to users table...');
+        this.db.exec(`ALTER TABLE users ADD COLUMN monthlySpendLimitUsd REAL;`);
+        console.log('[MainDatabase] monthlySpendLimitUsd column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during monthlySpendLimitUsd schema migration:', error);
+    }
+  }
+
   private migrateScheduledJobsHoldUntil(): void {
     try {
       const tableInfo = this.db.prepare(`PRAGMA table_info(scheduled_jobs)`).all() as Array<{ name: string }>;
@@ -507,6 +524,7 @@ export class MainDatabase implements IMainDatabase {
       discordUserId: string | null;
       locale: string | null;
       timezone: string | null;
+      monthlySpendLimitUsd: number | null;
       createdAt: string;
       updatedAt: string;
     } | undefined;
@@ -521,6 +539,7 @@ export class MainDatabase implements IMainDatabase {
       discordUserId: row.discordUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
+      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -535,6 +554,7 @@ export class MainDatabase implements IMainDatabase {
       discordUserId: string | null;
       locale: string | null;
       timezone: string | null;
+      monthlySpendLimitUsd: number | null;
       createdAt: string;
       updatedAt: string;
     } | undefined;
@@ -549,6 +569,7 @@ export class MainDatabase implements IMainDatabase {
       discordUserId: row.discordUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
+      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -563,6 +584,7 @@ export class MainDatabase implements IMainDatabase {
       discordUserId: string | null;
       locale: string | null;
       timezone: string | null;
+      monthlySpendLimitUsd: number | null;
       createdAt: string;
       updatedAt: string;
     } | undefined;
@@ -577,6 +599,7 @@ export class MainDatabase implements IMainDatabase {
       discordUserId: row.discordUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
+      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -588,7 +611,7 @@ export class MainDatabase implements IMainDatabase {
 
     const now = new Date().toISOString();
     const fields: string[] = ['updatedAt = ?'];
-    const values: (string | null)[] = [now];
+    const values: (string | number | null)[] = [now];
 
     if (updates.email !== undefined) {
       fields.push('email = ?');
@@ -614,6 +637,10 @@ export class MainDatabase implements IMainDatabase {
       fields.push('timezone = ?');
       values.push(updates.timezone || null);
     }
+    if (updates.monthlySpendLimitUsd !== undefined) {
+      fields.push('monthlySpendLimitUsd = ?');
+      values.push(updates.monthlySpendLimitUsd ?? null);
+    }
 
     values.push(id);
 
@@ -633,6 +660,7 @@ export class MainDatabase implements IMainDatabase {
       discordUserId: string | null;
       locale: string | null;
       timezone: string | null;
+      monthlySpendLimitUsd: number | null;
       createdAt: string;
       updatedAt: string;
     }>;
@@ -645,6 +673,7 @@ export class MainDatabase implements IMainDatabase {
       discordUserId: row.discordUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
+      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     }));

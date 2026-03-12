@@ -15,7 +15,7 @@ A self-hosted, multi-user AI agent platform with first-class MCP (Model Context 
 - **Scheduled Jobs**: Lambda-based job runner for autonomous background tasks with two-phase tool discovery
 - **Discord Bot**: Expose any agent role to Discord; responds to @mentions or auto-replies in configured channels
 - **Split-pane UI**: Chat on the left, file/email/document viewer on the right; responsive mobile layout with cross-device message sync
-- **Token Usage Tracking**: Per-user cost accounting across all LLM providers
+- **Token Usage Tracking**: Per-user cost accounting across all LLM providers, with configurable monthly spend limits
 - **OAuth Token Security**: AES-256 encryption via AWS KMS; can be disabled for local dev without AWS
 
 ## Tech Stack
@@ -81,8 +81,11 @@ All config is loaded from `.env.<NODE_ENV>` in the `server/` directory.
 | `ANTHROPIC_API_KEY` | Anthropic API key | |
 | `DEFAULT_MODEL` | Override the provider's default model | |
 | `ROUTER_ENABLED` | Enable keyword-based model routing | `false` |
+| `DEFAULT_MONTHLY_SPEND_LIMIT_USD` | Default monthly AI spend cap per user (USD) | |
 
 > **BYOK:** Individual users can override the app-level LLM with their own API key via **Settings → Models**. Supported providers: xAI, OpenAI, Anthropic. Keys are encrypted with KMS (or stored as-is when `KMS_OAUTH_DISABLED=true`) and take precedence over the server defaults for all of that user's chat sessions.
+
+> **Spend limits:** Each user has a monthly spend cap. When the estimated cost of their token usage this month reaches the limit, new chat requests are rejected with a clear message in the UI. The limit resets on the 1st of each month. BYOK users are exempt (they're spending their own key). Per-user overrides can be set directly on the user record (`monthlySpendLimitUsd` field).
 
 ### Storage
 
