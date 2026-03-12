@@ -58,7 +58,7 @@ export function LoginPage() {
               </div>
               <h2 className="text-xl font-semibold mb-2">Check your email</h2>
               <p className="text-muted-foreground mb-4">
-                We sent a magic link to <strong>{email}</strong>
+                We sent a login link to <strong>{email}</strong>
               </p>
               <p className="text-sm text-muted-foreground">
                 Click the link in the email to sign in.<br />
@@ -139,7 +139,7 @@ export function LoginPage() {
                 ) : (
                   <>
                     <LogIn className="w-4 h-4" />
-                    Send magic link
+                    Send login link
                   </>
                 )}
               </button>
@@ -186,7 +186,7 @@ export function LoginPage() {
               </div>
               <h3 className="font-semibold text-lg mb-2">Configurable AI agents</h3>
               <p className="text-muted-foreground text-sm">
-                Define agents with custom roles, personalities, and system prompts. Switch between them instantly to match your current task.
+                Define agents with custom roles. Switch between them instantly to match your current task.
               </p>
             </div>
 

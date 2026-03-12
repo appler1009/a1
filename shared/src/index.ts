@@ -3,6 +3,9 @@ export * from './schemas/index.js';
 
 // Token pricing
 export { getPricing, calculateCost } from './token-pricing.js';
+
+// Text utilities
+export { countWords } from './text-utils.js';
 export type { ModelPricing, TokenCounts } from './token-pricing.js';
 
 // Types (excluding duplicates)

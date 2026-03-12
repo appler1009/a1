@@ -7,10 +7,12 @@ import {
   ChevronDown,
   ChevronRight,
   Brain,
-  Clock
+  Clock,
+  FileText
 } from 'lucide-react';
 import { useAuthStore, useRolesStore, useUIStore, useEnvironmentStore } from '../store';
 import { CreateRoleDialog } from './CreateRoleDialog';
+import { RoleDescriptionDialog } from './RoleDescriptionDialog';
 import { MemoryOverviewDialog } from './MemoryOverviewDialog';
 import { ScheduledJobsDialog } from './ScheduledJobsDialog';
 import { LoadingOverlay } from './LoadingOverlay';
@@ -22,6 +24,7 @@ export function Sidebar() {
   const [flashRoleId, setFlashRoleId] = useState<string | null>(null);
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
   const [memoryDialogRole, setMemoryDialogRole] = useState<{ id: string; name: string } | null>(null);
+  const [descriptionDialogRole, setDescriptionDialogRole] = useState<{ id: string; name: string; jobDesc?: string } | null>(null);
 
   const isMobile = useIsMobile();
   const { user, currentGroup, groups, setCurrentGroup, logout } = useAuthStore();
@@ -77,6 +80,23 @@ export function Sidebar() {
       const message = error instanceof Error ? error.message : 'Failed to create role';
       console.error('[Sidebar] Failed to create role:', message);
       throw error;
+    }
+  };
+
+  const handleSaveDescription = async (roleId: string, text: string) => {
+    try {
+      const response = await apiFetch(`/api/roles/${roleId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ jobDesc: text.trim() || null }),
+      });
+      if (!response.ok) throw new Error('Failed to save description');
+      const data = await response.json();
+      if (data.success) {
+        const { updateRole } = useRolesStore.getState();
+        updateRole(roleId, { jobDesc: text.trim() || undefined });
+      }
+    } catch (error) {
+      console.error('[Sidebar] Failed to save description:', error);
     }
   };
 
@@ -201,6 +221,13 @@ export function Sidebar() {
                       <Brain className="w-3 h-3" />
                       View Memory
                     </button>
+                    <button
+                      onClick={() => setDescriptionDialogRole(role)}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left text-xs text-muted-foreground hover:bg-muted transition-colors"
+                    >
+                      <FileText className="w-3 h-3" />
+                      Role Description
+                    </button>
                   </div>
                 )}
               </div>
@@ -276,6 +303,11 @@ export function Sidebar() {
       <MemoryOverviewDialog
         role={memoryDialogRole}
         onClose={() => setMemoryDialogRole(null)}
+      />
+      <RoleDescriptionDialog
+        role={descriptionDialogRole}
+        onClose={() => setDescriptionDialogRole(null)}
+        onSave={handleSaveDescription}
       />
       <ScheduledJobsDialog
         open={showScheduledJobs}

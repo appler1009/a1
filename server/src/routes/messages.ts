@@ -18,6 +18,14 @@ import { executeToolWithAdapters } from '../utils/tool-execution.js';
 import { estimateCostUsd, DEFAULT_MONTHLY_SPEND_LIMIT_USD } from '../ai/cost.js';
 
 // ---------------------------------------------------------------------------
+// Exported helpers (pure functions, testable without spinning up the server)
+// ---------------------------------------------------------------------------
+
+export function buildRoleDescription(roleName: string, jobDesc: string): string {
+  return `You are an AI assistant for the role "${roleName}" with this description:\n\`\`\`\n${jobDesc}\n\`\`\`\n\n`;
+}
+
+// ---------------------------------------------------------------------------
 // enrichToolDefinition helper (kept local to this module, used in chat/stream)
 // ---------------------------------------------------------------------------
 
@@ -616,6 +624,7 @@ If the user asks about "this document" or "the file" without specifying, they ar
       // Load role and available Google accounts for dynamic system prompt injection
       let roleSection = '';
       let accountsSection = '';
+      let roleDescription = '';
 
       if (body.roleId) {
         const mainDb = await getMainDatabase();
@@ -623,13 +632,14 @@ If the user asks about "this document" or "the file" without specifying, they ar
         if (role) {
           // Build role context section
           roleSection = `## Current Role: ${role.name}`;
-          if (role.jobDesc) {
-            roleSection += `\n${role.jobDesc}`;
-          }
           if (role.systemPrompt) {
             roleSection += `\n${role.systemPrompt}`;
           }
           roleSection += '\n';
+          // Role description goes at the very top of the system prompt
+          if (role.jobDesc) {
+            roleDescription = buildRoleDescription(role.name, role.jobDesc);
+          }
         }
       }
 
@@ -682,7 +692,7 @@ ${accountList}
       const systemMessage = {
         role: 'system' as const,
         content: [
-          `You are a helpful assistant, talking to a non-software engineer general public.
+          `${roleDescription}You are a helpful assistant, talking to a non-software engineer general public.
 
 **Current date and time**: ${currentDateTimeStr} (${currentDateStr})
 **User's timezone**: ${userTimezone} — always use this timezone when displaying or interpreting dates and times.

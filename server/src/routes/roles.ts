@@ -5,6 +5,9 @@ import { config } from '../config/index.js';
 import { getMcpAdapter } from '../mcp/index.js';
 import { serverCurrentRoleId, setServerCurrentRoleId, llmRouter } from '../shared-state.js';
 import { getByokRouter } from '../utils/byok.js';
+import { countWords } from '@local-agent/shared';
+
+const JOB_DESC_WORD_LIMIT = 102;
 
 export async function roleRoutes(fastify: FastifyInstance): Promise<void> {
   // Get roles for user or group
@@ -159,6 +162,10 @@ export async function roleRoutes(fastify: FastifyInstance): Promise<void> {
 
     if (existingRole.userId !== request.user.id) {
       return reply.code(403).send({ success: false, error: { message: 'Access denied' } });
+    }
+
+    if (body.jobDesc && countWords(body.jobDesc) > JOB_DESC_WORD_LIMIT) {
+      return reply.code(400).send({ success: false, error: { message: `Role description must be ${JOB_DESC_WORD_LIMIT} words or fewer` } });
     }
 
     const role = await mainDb.updateRole(params.id, body);

@@ -7,8 +7,11 @@ import { getMainDatabase, type OAuthTokenEntry } from '../storage/main-db.js';
  * Handles user registration, sessions, groups, and OAuth tokens.
  * All data is stored in the main SQLite database (main.db).
  */
+const USER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export class AuthService {
   private dataDir: string;
+  private userCache = new Map<string, { user: User; cachedAt: number }>();
 
   constructor(dataDir: string = './data') {
     this.dataDir = dataDir;
@@ -30,8 +33,14 @@ export class AuthService {
   }
 
   async getUser(id: string): Promise<User | null> {
+    const cached = this.userCache.get(id);
+    if (cached && Date.now() - cached.cachedAt < USER_CACHE_TTL_MS) {
+      return cached.user;
+    }
     const mainDb = await getMainDatabase(this.dataDir);
-    return await mainDb.getUser(id);
+    const user = await mainDb.getUser(id);
+    if (user) this.userCache.set(id, { user, cachedAt: Date.now() });
+    return user;
   }
 
   async getUserByEmail(email: string): Promise<User | null> {
@@ -41,7 +50,10 @@ export class AuthService {
 
   async updateUser(id: string, updates: Partial<User>): Promise<User | null> {
     const mainDb = await getMainDatabase(this.dataDir);
-    return await mainDb.updateUser(id, updates);
+    const user = await mainDb.updateUser(id, updates);
+    if (user) this.userCache.set(id, { user, cachedAt: Date.now() });
+    else this.userCache.delete(id);
+    return user;
   }
 
   // ============================================
