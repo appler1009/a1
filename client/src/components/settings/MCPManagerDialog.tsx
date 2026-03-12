@@ -199,7 +199,7 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
         console.log(`[addServerAfterAuth] Server added successfully: ${serverId}`);
         const serverInfo = predefinedServers.find(s => s.id === serverId);
         const displayName = accountEmail ? `${serverInfo?.name} (${accountEmail})` : serverInfo?.name;
-        setToast({ message: `✅ Successfully added ${displayName || 'MCP server'}!`, type: 'success' });
+        setToast({ message: `✅ Successfully added ${displayName || 'feature'}!`, type: 'success' });
         setSelectedServerId(null);
         selectedServerIdRef.current = null;
         clearOAuthState();

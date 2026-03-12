@@ -397,7 +397,7 @@ export async function messageRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.code(429).send({
           success: false,
           error: {
-            message: `You've reached your monthly AI usage limit of $${limitUsd.toFixed(2)}. Your estimated spend this month is $${spentUsd.toFixed(4)}. The limit resets on the 1st of next month.`,
+            message: `You've reached your monthly AI usage limit of $${limitUsd.toFixed(2)}. Your estimated spend this month is $${spentUsd.toFixed(4)}. The limit resets on the 1st of next month. Tip: you can bring your own API key under Settings → Models to bypass this limit.`,
             code: 'SPEND_LIMIT_EXCEEDED',
             details: { limitUsd, spentUsd },
           },

@@ -4,26 +4,51 @@ import { getPricing, calculateCost, type TokenCounts } from '../../lib/token-pri
 
 type ModelTokens = TokenCounts;
 
+type UsageData = {
+  month: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number;
+  byModel: Record<string, ModelTokens>;
+  byProvider: Record<string, ModelTokens & { totalTokens: number }>;
+};
+
+function toMonthParam(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function lastMonthParam(): string {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() - 1);
+  return toMonthParam(d);
+}
+
 export function TokenUsageSettings() {
-  const [tokenUsage, setTokenUsage] = React.useState<{
-    month: string;
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-    cachedInputTokens: number;
-    cacheCreationTokens: number;
-    byModel: Record<string, ModelTokens>;
-    byProvider: Record<string, ModelTokens & { totalTokens: number }>;
-  } | null>(null);
-  const [loading, setLoading] = React.useState(true);
+  const now = new Date();
+  const thisMonth = toMonthParam(now);
+  const lastMonth = lastMonthParam();
+
+  const [activeTab, setActiveTab] = React.useState<'this' | 'last'>('this');
+  const [cache, setCache] = React.useState<Partial<Record<string, UsageData>>>({});
+  const [loading, setLoading] = React.useState(false);
+
+  const currentMonth = activeTab === 'this' ? thisMonth : lastMonth;
+  const tokenUsage = cache[currentMonth] ?? null;
 
   React.useEffect(() => {
-    apiFetch('/api/auth/me/token-usage')
+    if (cache[currentMonth] !== undefined) return;
+    setLoading(true);
+    apiFetch(`/api/auth/me/token-usage?month=${currentMonth}`)
       .then(r => r.json())
-      .then(data => { if (data.success) setTokenUsage(data.data); })
+      .then(data => {
+        if (data.success) setCache(prev => ({ ...prev, [currentMonth]: data.data }));
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [currentMonth]);
 
   const providerLabel = (p: string) => {
     if (p.startsWith('byok:')) {
@@ -33,11 +58,32 @@ export function TokenUsageSettings() {
     return p === 'grok' ? 'xAI' : p.charAt(0).toUpperCase() + p.slice(1);
   };
 
+  const tabLabel = (tab: 'this' | 'last') => {
+    const month = tab === 'this' ? thisMonth : lastMonth;
+    return new Date(month + '-02').toLocaleString('default', { month: 'long', year: 'numeric' });
+  };
+
   return (
     <div className="p-4 border border-border rounded-lg bg-muted/20">
-      <label className="text-xs font-medium text-muted-foreground block mb-2">
-        Token Usage — {tokenUsage ? new Date(tokenUsage.month + '-01').toLocaleString('default', { month: 'long', year: 'numeric' }) : 'This Month'}
-      </label>
+      {/* Tabs */}
+      <div className="flex gap-1 mb-3 bg-muted/40 rounded-md p-0.5 w-fit">
+        {(['this', 'last'] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`text-xs px-3 py-1 rounded transition-colors ${
+              activeTab === tab
+                ? 'bg-background text-foreground shadow-sm font-medium'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {tab === 'this' ? 'This Month' : 'Last Month'}
+          </button>
+        ))}
+      </div>
+
+      <p className="text-xs text-muted-foreground mb-3">{tabLabel(activeTab)}</p>
+
       {loading ? (
         <p className="text-xs text-muted-foreground">Loading...</p>
       ) : tokenUsage ? (() => {
@@ -96,8 +142,7 @@ export function TokenUsageSettings() {
                 <p className="text-xs font-medium text-muted-foreground">By key source</p>
                 {[...defaultProviders, ...byokProviders].map(([provider, t]) => {
                   const isByok = provider.startsWith('byok:');
-                  // Compute cost for this provider by summing matching models
-                  const providerPrefix = isByok ? provider.slice(5) : provider; // e.g. 'anthropic', 'grok'
+                  const providerPrefix = isByok ? provider.slice(5) : provider;
                   const providerCost = Object.entries(tokenUsage.byModel).reduce((sum, [model, mt]) => {
                     const modelProvider = model.startsWith('claude-') ? 'anthropic'
                       : model.startsWith('gpt-') || model.startsWith('o1') || model.startsWith('o3') ? 'openai'

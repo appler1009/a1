@@ -6,7 +6,7 @@ function makeRecord(overrides: Partial<TokenUsageRecord> = {}): TokenUsageRecord
   return {
     id: 'test-id',
     userId: 'user-1',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5',
     provider: 'anthropic',
     promptTokens: 0,
     completionTokens: 0,
@@ -28,84 +28,101 @@ describe('estimateCostUsd', () => {
     expect(estimateCostUsd([makeRecord()])).toBe(0);
   });
 
-  it('calculates cost for known model (claude-sonnet-4-6)', () => {
-    // $3/M input, $15/M output
-    const cost = estimateCostUsd([makeRecord({
-      model: 'claude-sonnet-4-6',
-      promptTokens: 1_000_000,
-      completionTokens: 1_000_000,
-    })]);
-    expect(cost).toBeCloseTo(18, 5); // $3 + $15
+  it('returns 0 for unknown model (no pricing available)', () => {
+    expect(estimateCostUsd([makeRecord({ model: 'totally-unknown-model-v9', promptTokens: 1_000_000 })])).toBe(0);
   });
 
-  it('calculates cost for known model (gpt-4o-mini)', () => {
-    // $0.15/M input, $0.60/M output
-    const cost = estimateCostUsd([makeRecord({
-      model: 'gpt-4o-mini',
-      promptTokens: 1_000_000,
-      completionTokens: 1_000_000,
-    })]);
-    expect(cost).toBeCloseTo(0.75, 5); // $0.15 + $0.60
+  describe('Anthropic (claude-haiku-4-5) — $1.00/M input, $5.00/M output', () => {
+    it('calculates plain input cost', () => {
+      // 1M prompt tokens at $1.00/M = $1.00
+      const cost = estimateCostUsd([makeRecord({ promptTokens: 1_000_000 })]);
+      expect(cost).toBeCloseTo(1.0, 6);
+    });
+
+    it('calculates plain output cost', () => {
+      // 1M completion tokens at $5.00/M = $5.00
+      const cost = estimateCostUsd([makeRecord({ completionTokens: 1_000_000 })]);
+      expect(cost).toBeCloseTo(5.0, 6);
+    });
+
+    it('does NOT subtract cachedInputTokens from promptTokens (Anthropic semantics)', () => {
+      // promptTokens is already non-cached for Anthropic
+      // 1M prompt + 1M cached read — cost = $1.00 + $0.10 = $1.10
+      const cost = estimateCostUsd([makeRecord({
+        promptTokens: 1_000_000,
+        cachedInputTokens: 1_000_000,
+      })]);
+      expect(cost).toBeCloseTo(1.10, 6);
+    });
+
+    it('applies cache creation cost', () => {
+      // 1M cache creation tokens at $1.25/M = $1.25
+      const cost = estimateCostUsd([makeRecord({ cacheCreationTokens: 1_000_000 })]);
+      expect(cost).toBeCloseTo(1.25, 6);
+    });
+
+    it('calculates combined input + output + cache', () => {
+      // 500k prompt ($0.50) + 500k output ($2.50) + 200k cached ($0.02) + 100k creation ($0.125) = $3.145
+      const cost = estimateCostUsd([makeRecord({
+        promptTokens: 500_000,
+        completionTokens: 500_000,
+        cachedInputTokens: 200_000,
+        cacheCreationTokens: 100_000,
+      })]);
+      expect(cost).toBeCloseTo(3.145, 6);
+    });
   });
 
-  it('applies 10% rate for cached input tokens', () => {
-    // claude-sonnet-4-6: $3/M input. 1M cached = $0.30
-    const cost = estimateCostUsd([makeRecord({
-      model: 'claude-sonnet-4-6',
-      promptTokens: 1_000_000,
-      completionTokens: 0,
-      cachedInputTokens: 1_000_000,
-    })]);
-    expect(cost).toBeCloseTo(0.30, 5);
+  describe('Grok (grok-4-1-fast-non-reasoning) — $0.20/M input, $0.50/M output', () => {
+    it('calculates plain output cost', () => {
+      // 1M completion at $0.50/M = $0.50
+      const cost = estimateCostUsd([makeRecord({
+        model: 'grok-4-1-fast-non-reasoning',
+        completionTokens: 1_000_000,
+      })]);
+      expect(cost).toBeCloseTo(0.50, 6);
+    });
+
+    it('subtracts cachedInputTokens from promptTokens (Grok semantics)', () => {
+      // promptTokens=1M includes 400k cached. non-cached=600k at $0.20/M = $0.12
+      // cached 400k at $0.05/M = $0.02. total = $0.14
+      const cost = estimateCostUsd([makeRecord({
+        model: 'grok-4-1-fast-non-reasoning',
+        promptTokens: 1_000_000,
+        cachedInputTokens: 400_000,
+      })]);
+      expect(cost).toBeCloseTo(0.14, 6);
+    });
   });
 
-  it('applies 125% rate for cache creation tokens', () => {
-    // claude-sonnet-4-6: $3/M input. 1M cache creation = $3.75
-    const cost = estimateCostUsd([makeRecord({
-      model: 'claude-sonnet-4-6',
-      promptTokens: 1_000_000,
-      completionTokens: 0,
-      cacheCreationTokens: 1_000_000,
-    })]);
-    expect(cost).toBeCloseTo(3.75, 5);
+  describe('prefix matching', () => {
+    it('matches versioned claude model name', () => {
+      // claude-haiku-4-5-20251001 should match claude-haiku-4-5
+      const cost = estimateCostUsd([makeRecord({
+        model: 'claude-haiku-4-5-20251001',
+        promptTokens: 1_000_000,
+      })]);
+      expect(cost).toBeCloseTo(1.0, 6);
+    });
   });
 
-  it('uses prefix matching for versioned model names', () => {
-    // 'claude-sonnet-4-6-20250601' should match 'claude-sonnet-4-6'
-    const cost = estimateCostUsd([makeRecord({
-      model: 'claude-sonnet-4-6-20250601',
-      promptTokens: 1_000_000,
-      completionTokens: 0,
-    })]);
-    expect(cost).toBeCloseTo(3, 5);
-  });
+  describe('multi-record summation', () => {
+    it('sums cost across multiple records', () => {
+      // claude-haiku: 1M prompt = $1.00
+      // grok: 1M output = $0.50
+      const cost = estimateCostUsd([
+        makeRecord({ model: 'claude-haiku-4-5', promptTokens: 1_000_000 }),
+        makeRecord({ model: 'grok-4-1-fast-non-reasoning', completionTokens: 1_000_000 }),
+      ]);
+      expect(cost).toBeCloseTo(1.50, 6);
+    });
 
-  it('falls back to default pricing for unknown model', () => {
-    // Default: $5/M input, $15/M output
-    const cost = estimateCostUsd([makeRecord({
-      model: 'totally-unknown-model-v9',
-      promptTokens: 1_000_000,
-      completionTokens: 1_000_000,
-    })]);
-    expect(cost).toBeCloseTo(20, 5); // $5 + $15
-  });
-
-  it('sums cost across multiple records', () => {
-    const records = [
-      makeRecord({ model: 'claude-sonnet-4-6', promptTokens: 1_000_000, completionTokens: 0 }),
-      makeRecord({ model: 'gpt-4o-mini', promptTokens: 1_000_000, completionTokens: 0 }),
-    ];
-    const cost = estimateCostUsd(records);
-    expect(cost).toBeCloseTo(3.15, 5); // $3 + $0.15
-  });
-
-  it('does not go negative when cached tokens exceed prompt tokens (clamped to 0)', () => {
-    const cost = estimateCostUsd([makeRecord({
-      model: 'claude-sonnet-4-6',
-      promptTokens: 100,
-      completionTokens: 0,
-      cachedInputTokens: 200, // more than promptTokens — regularInput clamped to 0
-    })]);
-    expect(cost).toBeGreaterThanOrEqual(0);
+    it('skips unknown models without affecting total', () => {
+      const cost = estimateCostUsd([
+        makeRecord({ model: 'claude-haiku-4-5', promptTokens: 1_000_000 }),
+        makeRecord({ model: 'unknown-model', promptTokens: 999_000_000 }),
+      ]);
+      expect(cost).toBeCloseTo(1.0, 6);
+    });
   });
 });

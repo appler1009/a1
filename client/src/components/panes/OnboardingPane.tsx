@@ -48,7 +48,7 @@ export function OnboardingPane() {
 
           {/* Heading */}
           <div className="space-y-3">
-            <h1 className="text-4xl font-bold">Welcome to a1</h1>
+            <h1 className="text-4xl font-bold">Welcome to assist1</h1>
             <p className="text-xl text-muted-foreground">
               Create a role to get started. A role is like a persona or context for your conversations.
             </p>

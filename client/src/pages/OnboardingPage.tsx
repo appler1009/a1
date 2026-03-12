@@ -124,7 +124,7 @@ export function OnboardingPage() {
 
   const renderChooseStep = () => (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold mb-4">How will you use a1?</h2>
+      <h2 className="text-xl font-semibold mb-4">How will you use assist1?</h2>
       
       <div className="grid gap-3">
         <button
@@ -303,7 +303,7 @@ export function OnboardingPage() {
               Group URL (optional)
             </label>
             <div className="flex items-center gap-2">
-              <span className="text-muted-foreground text-sm">a1.io/</span>
+              <span className="text-muted-foreground text-sm">assist1.io/</span>
               <input
                 id="groupUrl"
                 type="text"
@@ -450,7 +450,7 @@ export function OnboardingPage() {
         onClick={() => navigate('/')}
         className="w-full py-2 px-4 bg-primary text-primary-foreground rounded-lg hover:opacity-90"
       >
-        Continue to a1
+        Continue to assist1
       </button>
     </div>
   );
@@ -459,7 +459,7 @@ export function OnboardingPage() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">a1</h1>
+          <h1 className="text-3xl font-bold mb-2">assist1</h1>
           <p className="text-muted-foreground">
             Your own assistant
           </p>

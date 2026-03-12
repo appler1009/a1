@@ -718,16 +718,27 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Get token usage for the current calendar month
+  // Get token usage for a given calendar month (defaults to current month)
+  // Query param: ?month=YYYY-MM
   fastify.get('/me/token-usage', async (request, reply) => {
     if (!request.user) {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
-    const mainDb = await getMainDatabase(config.storage.root);
+    const query = request.query as { month?: string };
     const now = new Date();
-    const from = new Date(now.getFullYear(), now.getMonth(), 1);
-    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    let year = now.getFullYear();
+    let month = now.getMonth(); // 0-indexed
+
+    if (query.month && /^\d{4}-\d{2}$/.test(query.month)) {
+      const [y, m] = query.month.split('-').map(Number);
+      year = y;
+      month = m - 1; // convert to 0-indexed
+    }
+
+    const mainDb = await getMainDatabase(config.storage.root);
+    const from = new Date(year, month, 1);
+    const to = new Date(year, month + 1, 0, 23, 59, 59, 999);
 
     const records = await mainDb.getTokenUsageByUser(request.user.id, { from, to });
 
@@ -762,7 +773,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     return reply.send({
       success: true,
       data: {
-        month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+        month: `${year}-${String(month + 1).padStart(2, '0')}`,
         ...totals,
         byModel,
         byProvider,
