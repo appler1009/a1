@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X, Brain, Loader2, Trash2, Pencil } from 'lucide-react';
+import { DialogOverlay } from './DialogOverlay';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { apiFetch } from '../lib/api';
@@ -120,7 +121,7 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
   if (!role) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <DialogOverlay onClose={onClose}>
       <div className="bg-card rounded-lg shadow-lg w-[600px] max-w-[90vw] h-[80vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-border shrink-0">
@@ -200,6 +201,6 @@ export function MemoryOverviewDialog({ role, onClose }: MemoryOverviewDialogProp
           {editError && <p className="text-xs text-destructive">{editError}</p>}
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 }

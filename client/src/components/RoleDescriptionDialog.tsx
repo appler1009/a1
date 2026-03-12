@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { countWords } from '@local-agent/shared';
+import { DialogOverlay } from './DialogOverlay';
 
 const WORD_LIMIT = 100;
 const WORD_WARN_THRESHOLD = 80;
@@ -54,7 +55,7 @@ export function RoleDescriptionDialog({ role, onClose, onSave }: RoleDescription
   if (!role) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <DialogOverlay onClose={onClose}>
       <div className="bg-card rounded-lg shadow-lg w-[480px] max-w-[90vw]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="text-lg font-semibold">Role Description</h2>
@@ -78,9 +79,6 @@ export function RoleDescriptionDialog({ role, onClose, onSave }: RoleDescription
               rows={5}
               disabled={saving}
               autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') onClose();
-              }}
             />
             {showCount && (
               <p className={`text-xs mt-1.5 text-right ${overLimit ? 'text-destructive' : 'text-muted-foreground'}`}>
@@ -108,6 +106,6 @@ export function RoleDescriptionDialog({ role, onClose, onSave }: RoleDescription
           </div>
         </form>
       </div>
-    </div>
+    </DialogOverlay>
   );
 }

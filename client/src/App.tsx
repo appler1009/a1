@@ -8,6 +8,7 @@ import { ChatPane } from './components/panes/ChatPane';
 import { ViewerPane, MCPManagerDialog } from './components/panes/ViewerPane';
 import { OnboardingPane } from './components/panes/OnboardingPane';
 import { useIsMobile } from './hooks/useIsMobile';
+import { DialogOverlay } from './components/DialogOverlay';
 
 // Lazy-load route-only pages to keep the main bundle lean
 const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
@@ -26,19 +27,19 @@ function MainApp() {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
       const isSettingsShortcut = (isMac ? e.metaKey : e.ctrlKey) && e.shiftKey && e.key === ',';
-
       if (isSettingsShortcut) {
         e.preventDefault();
         setShowMcpManager(true);
-      } else if (e.key === 'Escape' && showMcpManager) {
-        e.preventDefault();
-        setShowMcpManager(false);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setShowMcpManager, showMcpManager]);
+  }, [setShowMcpManager]);
+
+  useEffect(() => {
+    document.title = currentRole ? `${currentRole.name} - assist1` : 'assist1';
+  }, [currentRole?.name]);
 
   if (!user) {
     return <Navigate to="/login" replace />;
@@ -87,11 +88,11 @@ function MainApp() {
       )}
 
       {showMcpManager && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <DialogOverlay onClose={() => setShowMcpManager(false)}>
           <MCPManagerDialog
             onClose={() => setShowMcpManager(false)}
           />
-        </div>
+        </DialogOverlay>
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X, Clock, RefreshCw, Trash2, Loader2 } from 'lucide-react';
+import { DialogOverlay } from './DialogOverlay';
 import { apiFetch } from '../lib/api';
 
 interface ScheduledJob {
@@ -89,25 +90,10 @@ export function ScheduledJobsDialog({ open, onClose }: ScheduledJobsDialogProps)
     }
   };
 
-  useEffect(() => {
-    if (!open) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        onClose();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown, true);
-    return () => document.removeEventListener('keydown', handleKeyDown, true);
-  }, [open, onClose]);
-
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <DialogOverlay onClose={onClose}>
       <div className="bg-card border border-border rounded-lg shadow-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
@@ -187,6 +173,6 @@ export function ScheduledJobsDialog({ open, onClose }: ScheduledJobsDialogProps)
           </div>
         </div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 }
