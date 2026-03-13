@@ -302,12 +302,17 @@ export async function authRoutes(fastify: FastifyInstance) {
 
       // Build magic link URL using the request's hostname and port
       const hostname = request.hostname;
-      // Extract port from hostname if present (e.g., "localhost:3000"), otherwise use default
+      // Extract port from hostname if present (e.g., "localhost:3000")
       const portMatch = hostname.match(/:(\d+)$/);
-      const port = portMatch ? portMatch[1] : (request.protocol === 'https' ? '443' : '80');
       const cleanHostname = portMatch ? hostname.replace(/:\d+$/, '') : hostname;
-      const protocol = request.protocol === 'https' ? 'https' : 'http';
-      const magicLink = `${protocol}://${cleanHostname}:${port}/login/verify?token=${magicLinkToken.token}`;
+      // In production use https (server may be behind a TLS-terminating proxy);
+      // in dev fall back to the request protocol.
+      const protocol = config.env.isProduction ? 'https' : (request.protocol === 'https' ? 'https' : 'http');
+      // Omit port for standard ports (80/443); keep non-standard ports (e.g. localhost:3000)
+      const explicitPort = portMatch ? portMatch[1] : null;
+      const standardPort = (protocol === 'https' && explicitPort === '443') || (protocol === 'http' && explicitPort === '80');
+      const hostWithPort = explicitPort && !standardPort ? `${cleanHostname}:${explicitPort}` : cleanHostname;
+      const magicLink = `${protocol}://${hostWithPort}/login/verify?token=${magicLinkToken.token}`;
 
       let emailSent = false;
       try {
