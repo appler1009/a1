@@ -10,6 +10,7 @@ export const UserSchema = z.object({
   locale: z.string().optional(),
   timezone: z.string().optional(),
   monthlySpendLimitUsd: z.number().optional(),
+  creditBalanceUsd: z.number().optional(),
   createdAt: z.string().or(z.date()),
   updatedAt: z.string().or(z.date()).optional(),
 });

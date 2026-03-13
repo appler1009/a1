@@ -9,6 +9,7 @@ export interface User {
   discordUserId?: string;
   locale?: string;
   timezone?: string;
+  creditBalanceUsd?: number;
   createdAt: string;
 }
 

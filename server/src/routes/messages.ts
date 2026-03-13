@@ -15,7 +15,7 @@ import {
 } from '../shared-state.js';
 import { getByokRouter } from '../utils/byok.js';
 import { executeToolWithAdapters } from '../utils/tool-execution.js';
-import { estimateCostUsd, DEFAULT_MONTHLY_SPEND_LIMIT_USD } from '../ai/cost.js';
+// estimateCostUsd / DEFAULT_MONTHLY_SPEND_LIMIT_USD removed — replaced by credit balance check
 
 // ---------------------------------------------------------------------------
 // Exported helpers (pure functions, testable without spinning up the server)
@@ -392,22 +392,19 @@ export async function messageRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.code(500).send({ success: false, error: { message: 'LLM router not initialized' } });
     }
 
-    // Check monthly spend limit (only for platform API keys, not BYOK)
+    // Check credit balance (only for platform API keys, not BYOK)
     const byokRouter = await getByokRouter(request.user.id);
     if (!byokRouter) {
       const mainDb = await getMainDatabase(config.storage.root);
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const monthlyUsage = await mainDb.getTokenUsageByUser(request.user.id, { from: monthStart });
-      const spentUsd = estimateCostUsd(monthlyUsage);
-      const limitUsd = request.user.monthlySpendLimitUsd ?? DEFAULT_MONTHLY_SPEND_LIMIT_USD;
-      if (spentUsd >= limitUsd) {
-        return reply.code(429).send({
+      const balance = await mainDb.getUserCreditBalance(request.user.id);
+      // Require at least $0.001 (0.1 cent) to prevent free-riding on the last fraction
+      if (balance < 0.001) {
+        return reply.code(402).send({
           success: false,
           error: {
-            message: `You've reached your monthly AI usage limit of $${limitUsd.toFixed(2)}. Your estimated spend this month is $${spentUsd.toFixed(4)}. The limit resets on the 1st of next month. Tip: you can bring your own API key under Settings → Models to bypass this limit.`,
-            code: 'SPEND_LIMIT_EXCEEDED',
-            details: { limitUsd, spentUsd },
+            message: `Your credit balance is empty ($${balance.toFixed(4)} remaining). Please top up your account under Settings → Billing to continue.`,
+            code: 'INSUFFICIENT_CREDITS',
+            details: { creditBalanceUsd: balance },
           },
         });
       }

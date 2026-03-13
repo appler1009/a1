@@ -1650,6 +1650,48 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     ));
   }
 
+  // ================================================================
+  // Credit Balance & Stripe Payments — stub implementations
+  // DynamoDB backend: add proper table-based implementations when needed.
+  // ================================================================
+
+  async getUserCreditBalance(_userId: string): Promise<number> {
+    return 0;
+  }
+
+  async addUserCredits(_userId: string, _amountUsd: number): Promise<void> {
+    // TODO: implement DynamoDB credit balance
+  }
+
+  async deductUserCredits(_userId: string, _amountUsd: number): Promise<boolean> {
+    // TODO: implement DynamoDB credit balance
+    return true;
+  }
+
+  async createStripePayment(_params: {
+    userId: string;
+    stripePaymentIntentId: string;
+    amountUsd: number;
+    status: 'pending' | 'succeeded' | 'failed';
+  }): Promise<void> {
+    // TODO: implement DynamoDB stripe payments
+  }
+
+  async updateStripePaymentStatus(
+    _stripePaymentIntentId: string,
+    _status: 'pending' | 'succeeded' | 'failed'
+  ): Promise<void> {
+    // TODO: implement DynamoDB stripe payments
+  }
+
+  async getStripePaymentByIntentId(_stripePaymentIntentId: string): Promise<import('./main-db.js').StripePayment | null> {
+    return null;
+  }
+
+  async getStripePayments(_userId: string): Promise<import('./main-db.js').StripePayment[]> {
+    return [];
+  }
+
   private async _deleteMemberships(userId: string): Promise<void> {
     const { Items } = await this.client.send(new QueryCommand({
       TableName: this.tables.memberships,

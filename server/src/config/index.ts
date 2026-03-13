@@ -22,6 +22,11 @@ export interface AppConfig {
   github: { clientId: string; clientSecret: string; redirectUri: string };
   discord: { botToken?: string; clientId?: string; channelIds: string[] };
   ses: { region: string; senderEmail: string };
+  stripe: {
+    secretKey: string;
+    webhookSecret: string;
+    publishableKey: string;
+  };
 }
 
 // Mutable singleton — populated by initConfig() before any request handlers run
@@ -78,6 +83,11 @@ export function initConfig(): void {
     ses: {
       region: process.env.AWS_REGION || 'us-east-1',
       senderEmail: process.env.SES_SENDER_EMAIL || 'noreply@example.com',
+    },
+    stripe: {
+      secretKey: process.env.STRIPE_SECRET_KEY || '',
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
     },
   };
 }

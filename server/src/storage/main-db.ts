@@ -37,6 +37,19 @@ export interface OAuthTokenEntry {
 }
 
 /**
+ * Stripe payment record
+ */
+export interface StripePayment {
+  id: string;
+  userId: string;
+  stripePaymentIntentId: string;
+  amountUsd: number;
+  status: 'pending' | 'succeeded' | 'failed';
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
  * Skill record stored in the skills table
  */
 export interface SkillRecord {
@@ -321,6 +334,21 @@ export class MainDatabase implements IMainDatabase {
       );
 
       CREATE INDEX IF NOT EXISTS idx_token_usage_user ON token_usage(userId, createdAt);
+
+      -- Stripe payments table (one row per PaymentIntent)
+      CREATE TABLE IF NOT EXISTS stripe_payments (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        stripePaymentIntentId TEXT UNIQUE NOT NULL,
+        amountUsd REAL NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_stripe_payments_user ON stripe_payments(userId, createdAt);
+      CREATE INDEX IF NOT EXISTS idx_stripe_payments_intent ON stripe_payments(stripePaymentIntentId);
     `);
 
     // Migrate old MCP server IDs to new package names
@@ -340,6 +368,9 @@ export class MainDatabase implements IMainDatabase {
 
     // Migrate scheduled_jobs table to add holdUntil column if needed
     this.migrateScheduledJobsHoldUntil();
+
+    // Migrate users table to add creditBalanceUsd column if needed
+    this.migrateCreditBalanceSchema();
   }
 
   /**
@@ -488,6 +519,20 @@ export class MainDatabase implements IMainDatabase {
     }
   }
 
+  private migrateCreditBalanceSchema(): void {
+    try {
+      const tableInfo = this.db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+      const hasCol = tableInfo.some(col => col.name === 'creditBalanceUsd');
+      if (!hasCol) {
+        console.log('[MainDatabase] Adding creditBalanceUsd column to users table...');
+        this.db.exec(`ALTER TABLE users ADD COLUMN creditBalanceUsd REAL NOT NULL DEFAULT 0;`);
+        console.log('[MainDatabase] creditBalanceUsd column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during creditBalanceUsd schema migration:', error);
+    }
+  }
+
   close(): void {
     this.db.close();
   }
@@ -525,6 +570,7 @@ export class MainDatabase implements IMainDatabase {
       locale: string | null;
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
+      creditBalanceUsd: number;
       createdAt: string;
       updatedAt: string;
     } | undefined;
@@ -540,6 +586,7 @@ export class MainDatabase implements IMainDatabase {
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
+      creditBalanceUsd: row.creditBalanceUsd ?? 0,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -555,6 +602,7 @@ export class MainDatabase implements IMainDatabase {
       locale: string | null;
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
+      creditBalanceUsd: number;
       createdAt: string;
       updatedAt: string;
     } | undefined;
@@ -570,6 +618,7 @@ export class MainDatabase implements IMainDatabase {
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
+      creditBalanceUsd: row.creditBalanceUsd ?? 0,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -585,6 +634,7 @@ export class MainDatabase implements IMainDatabase {
       locale: string | null;
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
+      creditBalanceUsd: number;
       createdAt: string;
       updatedAt: string;
     } | undefined;
@@ -600,6 +650,7 @@ export class MainDatabase implements IMainDatabase {
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
+      creditBalanceUsd: row.creditBalanceUsd ?? 0,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -661,6 +712,7 @@ export class MainDatabase implements IMainDatabase {
       locale: string | null;
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
+      creditBalanceUsd: number;
       createdAt: string;
       updatedAt: string;
     }>;
@@ -674,6 +726,7 @@ export class MainDatabase implements IMainDatabase {
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
+      creditBalanceUsd: row.creditBalanceUsd ?? 0,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     }));
@@ -2013,6 +2066,109 @@ export class MainDatabase implements IMainDatabase {
   }
 
   // ============================================
+  // Credit Balance & Stripe Payments
+  // ============================================
+
+  async getUserCreditBalance(userId: string): Promise<number> {
+    const row = this.db.prepare('SELECT creditBalanceUsd FROM users WHERE id = ?').get(userId) as
+      | { creditBalanceUsd: number }
+      | undefined;
+    return row?.creditBalanceUsd ?? 0;
+  }
+
+  async addUserCredits(userId: string, amountUsd: number): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE users SET creditBalanceUsd = creditBalanceUsd + ?, updatedAt = ? WHERE id = ?
+    `).run(amountUsd, now, userId);
+  }
+
+  /**
+   * Atomically deduct credits from a user's balance.
+   * Returns true if successful, false if the balance would go below zero.
+   */
+  async deductUserCredits(userId: string, amountUsd: number): Promise<boolean> {
+    const now = new Date().toISOString();
+    const result = this.db.prepare(`
+      UPDATE users
+      SET creditBalanceUsd = creditBalanceUsd - ?, updatedAt = ?
+      WHERE id = ? AND creditBalanceUsd >= ?
+    `).run(amountUsd, now, userId, amountUsd);
+    return result.changes > 0;
+  }
+
+  async createStripePayment(params: {
+    userId: string;
+    stripePaymentIntentId: string;
+    amountUsd: number;
+    status: 'pending' | 'succeeded' | 'failed';
+  }): Promise<void> {
+    const id = uuidv4();
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO stripe_payments (id, userId, stripePaymentIntentId, amountUsd, status, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, params.userId, params.stripePaymentIntentId, params.amountUsd, params.status, now, now);
+  }
+
+  async updateStripePaymentStatus(
+    stripePaymentIntentId: string,
+    status: 'pending' | 'succeeded' | 'failed'
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE stripe_payments SET status = ?, updatedAt = ? WHERE stripePaymentIntentId = ?
+    `).run(status, now, stripePaymentIntentId);
+  }
+
+  async getStripePaymentByIntentId(stripePaymentIntentId: string): Promise<StripePayment | null> {
+    const row = this.db.prepare(
+      'SELECT * FROM stripe_payments WHERE stripePaymentIntentId = ?'
+    ).get(stripePaymentIntentId) as {
+      id: string;
+      userId: string;
+      stripePaymentIntentId: string;
+      amountUsd: number;
+      status: string;
+      createdAt: string;
+      updatedAt: string;
+    } | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      userId: row.userId,
+      stripePaymentIntentId: row.stripePaymentIntentId,
+      amountUsd: row.amountUsd,
+      status: row.status as StripePayment['status'],
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    };
+  }
+
+  async getStripePayments(userId: string): Promise<StripePayment[]> {
+    const rows = this.db.prepare(`
+      SELECT * FROM stripe_payments WHERE userId = ? ORDER BY createdAt DESC LIMIT 50
+    `).all(userId) as Array<{
+      id: string;
+      userId: string;
+      stripePaymentIntentId: string;
+      amountUsd: number;
+      status: string;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+    return rows.map(row => ({
+      id: row.id,
+      userId: row.userId,
+      stripePaymentIntentId: row.stripePaymentIntentId,
+      amountUsd: row.amountUsd,
+      status: row.status as StripePayment['status'],
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    }));
+  }
+
+  // ============================================
   // Token Usage
   // ============================================
 
@@ -2113,12 +2269,12 @@ export async function getMainDatabase(dataDir: string = './data'): Promise<IMain
 
   if (dbType === 'dynamodb') {
     const { getDynamoDBMainDatabase } = await import('./dynamodb-main-db.js');
-    mainDb = getDynamoDBMainDatabase();
+    mainDb = getDynamoDBMainDatabase() as IMainDatabase;
   } else {
-    mainDb = new MainDatabase(dataDir);
+    mainDb = new MainDatabase(dataDir) as IMainDatabase;
   }
 
-  return mainDb;
+  return mainDb!;
 }
 
 export type { IMainDatabase };
