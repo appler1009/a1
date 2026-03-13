@@ -22,6 +22,17 @@ interface Payment {
   createdAt: string;
 }
 
+interface LedgerEntry {
+  id: string;
+  type: 'topup' | 'usage';
+  amountUsd: number;
+  balanceAfter: number;
+  description: string;
+  stripePaymentIntentId?: string;
+  model?: string;
+  createdAt: string;
+}
+
 const PRESET_AMOUNTS: { cents: number; label: string }[] = [
   { cents: 500,  label: '$5' },
   { cents: 1000, label: '$10' },
@@ -104,6 +115,7 @@ function PaymentForm({ amountCents, onSuccess, onCancel }: PaymentFormProps) {
 export function BillingSettings() {
   const [balance, setBalance] = React.useState<BalanceData | null>(null);
   const [payments, setPayments] = React.useState<Payment[]>([]);
+  const [ledger, setLedger] = React.useState<LedgerEntry[]>([]);
   const [loadingBalance, setLoadingBalance] = React.useState(true);
 
   // Checkout state
@@ -113,28 +125,43 @@ export function BillingSettings() {
   const [creatingIntent, setCreatingIntent] = React.useState(false);
   const [checkoutError, setCheckoutError] = React.useState<string | null>(null);
   const [successMsg, setSuccessMsg] = React.useState<string | null>(null);
+  // Keep a ref to the balance so the polling closure always sees the latest value
+  const balanceRef = React.useRef<number>(0);
+  React.useEffect(() => {
+    balanceRef.current = balance?.creditBalanceUsd ?? 0;
+  }, [balance?.creditBalanceUsd]);
 
   // ── Fetch balance + payments ────────────────────────────────────────────────
-  const fetchBalance = React.useCallback(async () => {
+  const fetchBalance = React.useCallback(async (): Promise<number> => {
     setLoadingBalance(true);
+    let newBalance = balanceRef.current;
     try {
-      const [balRes, payRes] = await Promise.all([
+      const [balRes, payRes, ledgerRes] = await Promise.all([
         apiFetch('/api/billing/balance', { excludeRoleId: true }),
         apiFetch('/api/billing/payments', { excludeRoleId: true }),
+        apiFetch('/api/billing/ledger', { excludeRoleId: true }),
       ]);
       if (balRes.ok) {
         const d = await balRes.json();
-        if (d.success) setBalance(d.data);
+        if (d.success) {
+          setBalance(d.data);
+          newBalance = d.data.creditBalanceUsd;
+        }
       }
       if (payRes.ok) {
         const d = await payRes.json();
         if (d.success) setPayments(d.data);
+      }
+      if (ledgerRes.ok) {
+        const d = await ledgerRes.json();
+        if (d.success) setLedger(d.data);
       }
     } catch {
       // silently ignore; balance stays null
     } finally {
       setLoadingBalance(false);
     }
+    return newBalance;
   }, []);
 
   React.useEffect(() => {
@@ -275,29 +302,67 @@ export function BillingSettings() {
         </div>
       )}
 
-      {/* Payment history */}
-      {payments.length > 0 && (
+      {/* Ledger */}
+      {ledger.length > 0 && (
         <div>
-          <p className="text-xs font-medium text-muted-foreground mb-2">Payment History</p>
+          <p className="text-xs font-medium text-muted-foreground mb-2">Transaction Ledger</p>
+          <div className="rounded-lg border border-border overflow-hidden">
+            {/* Header */}
+            <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 bg-muted/40 text-xs font-medium text-muted-foreground">
+              <span>Description</span>
+              <span className="text-right">Amount</span>
+              <span className="text-right w-16">Balance</span>
+            </div>
+            {/* Rows */}
+            <div className="divide-y divide-border max-h-64 overflow-y-auto">
+              {ledger.map(entry => (
+                <div
+                  key={entry.id}
+                  className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 text-xs items-center hover:bg-muted/20"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`shrink-0 w-1.5 h-1.5 rounded-full ${
+                          entry.type === 'topup' ? 'bg-green-500' : 'bg-muted-foreground'
+                        }`}
+                      />
+                      <span className="truncate text-foreground">{entry.description}</span>
+                    </div>
+                    <span className="text-muted-foreground ml-3">
+                      {new Date(entry.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                  <span
+                    className={`text-right font-mono font-medium tabular-nums ${
+                      entry.type === 'topup' ? 'text-green-600' : 'text-muted-foreground'
+                    }`}
+                  >
+                    {entry.type === 'topup' ? '+' : '−'}${entry.amountUsd.toFixed(4)}
+                  </span>
+                  <span className="text-right font-mono tabular-nums text-muted-foreground w-16">
+                    ${entry.balanceAfter.toFixed(4)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pending payments (not yet confirmed by webhook) */}
+      {payments.filter(p => p.status === 'pending').length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-muted-foreground mb-2">Pending Payments</p>
           <div className="space-y-1">
-            {payments.map(p => (
+            {payments.filter(p => p.status === 'pending').map(p => (
               <div
                 key={p.id}
-                className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/20 text-sm"
+                className="flex items-center justify-between px-3 py-2 rounded-lg bg-amber-500/10 text-xs"
               >
                 <span className="font-medium">${p.amountUsd.toFixed(2)}</span>
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full ${
-                    p.status === 'succeeded'
-                      ? 'bg-green-500/15 text-green-700'
-                      : p.status === 'failed'
-                      ? 'bg-red-500/15 text-red-700'
-                      : 'bg-muted text-muted-foreground'
-                  }`}
-                >
-                  {p.status}
-                </span>
-                <span className="text-xs text-muted-foreground">
+                <span className="text-amber-700">⏳ awaiting confirmation</span>
+                <span className="text-muted-foreground">
                   {new Date(p.createdAt).toLocaleDateString()}
                 </span>
               </div>

@@ -37,6 +37,22 @@ export interface OAuthTokenEntry {
 }
 
 /**
+ * Credit ledger entry — one row per credit or debit event.
+ * amountUsd is always positive; type distinguishes credits from debits.
+ */
+export interface CreditLedgerEntry {
+  id: string;
+  userId: string;
+  type: 'topup' | 'usage';
+  amountUsd: number;          // absolute value — always > 0
+  balanceAfter: number;       // snapshot of balance after this entry
+  description: string;        // human-readable label
+  stripePaymentIntentId?: string;   // set for topup entries
+  model?: string;             // set for usage entries
+  createdAt: Date;
+}
+
+/**
  * Stripe payment record
  */
 export interface StripePayment {
@@ -349,6 +365,23 @@ export class MainDatabase implements IMainDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_stripe_payments_user ON stripe_payments(userId, createdAt);
       CREATE INDEX IF NOT EXISTS idx_stripe_payments_intent ON stripe_payments(stripePaymentIntentId);
+
+      -- Credit ledger: one row per credit (topup) or debit (usage).
+      -- Provides a full audit trail; balance on the users row is a denormalised cache.
+      CREATE TABLE IF NOT EXISTS credit_ledger (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('topup', 'usage')),
+        amountUsd REAL NOT NULL,
+        balanceAfter REAL NOT NULL,
+        description TEXT NOT NULL,
+        stripePaymentIntentId TEXT,
+        model TEXT,
+        createdAt TEXT NOT NULL,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_credit_ledger_user ON credit_ledger(userId, createdAt);
     `);
 
     // Migrate old MCP server IDs to new package names
@@ -2076,25 +2109,84 @@ export class MainDatabase implements IMainDatabase {
     return row?.creditBalanceUsd ?? 0;
   }
 
-  async addUserCredits(userId: string, amountUsd: number): Promise<void> {
+  async addUserCredits(
+    userId: string,
+    amountUsd: number,
+    opts: { stripePaymentIntentId?: string; description?: string } = {}
+  ): Promise<void> {
     const now = new Date().toISOString();
-    this.db.prepare(`
-      UPDATE users SET creditBalanceUsd = creditBalanceUsd + ?, updatedAt = ? WHERE id = ?
-    `).run(amountUsd, now, userId);
+    const ledgerId = uuidv4();
+
+    // Atomic: update balance and insert ledger entry in one transaction
+    const txn = this.db.transaction(() => {
+      this.db.prepare(`
+        UPDATE users SET creditBalanceUsd = creditBalanceUsd + ?, updatedAt = ? WHERE id = ?
+      `).run(amountUsd, now, userId);
+
+      const row = this.db.prepare('SELECT creditBalanceUsd FROM users WHERE id = ?').get(userId) as
+        | { creditBalanceUsd: number }
+        | undefined;
+      const balanceAfter = row?.creditBalanceUsd ?? 0;
+
+      this.db.prepare(`
+        INSERT INTO credit_ledger (id, userId, type, amountUsd, balanceAfter, description, stripePaymentIntentId, createdAt)
+        VALUES (?, ?, 'topup', ?, ?, ?, ?, ?)
+      `).run(
+        ledgerId,
+        userId,
+        amountUsd,
+        balanceAfter,
+        opts.description ?? `Top-up $${amountUsd.toFixed(2)}`,
+        opts.stripePaymentIntentId ?? null,
+        now
+      );
+    });
+    txn();
   }
 
   /**
-   * Atomically deduct credits from a user's balance.
+   * Atomically deduct credits from a user's balance and record a ledger entry.
    * Returns true if successful, false if the balance would go below zero.
    */
-  async deductUserCredits(userId: string, amountUsd: number): Promise<boolean> {
+  async deductUserCredits(
+    userId: string,
+    amountUsd: number,
+    opts: { description?: string; model?: string } = {}
+  ): Promise<boolean> {
     const now = new Date().toISOString();
-    const result = this.db.prepare(`
-      UPDATE users
-      SET creditBalanceUsd = creditBalanceUsd - ?, updatedAt = ?
-      WHERE id = ? AND creditBalanceUsd >= ?
-    `).run(amountUsd, now, userId, amountUsd);
-    return result.changes > 0;
+    const ledgerId = uuidv4();
+    let succeeded = false;
+
+    const txn = this.db.transaction(() => {
+      const result = this.db.prepare(`
+        UPDATE users
+        SET creditBalanceUsd = creditBalanceUsd - ?, updatedAt = ?
+        WHERE id = ? AND creditBalanceUsd >= ?
+      `).run(amountUsd, now, userId, amountUsd);
+
+      if (result.changes === 0) return;
+      succeeded = true;
+
+      const row = this.db.prepare('SELECT creditBalanceUsd FROM users WHERE id = ?').get(userId) as
+        | { creditBalanceUsd: number }
+        | undefined;
+      const balanceAfter = row?.creditBalanceUsd ?? 0;
+
+      this.db.prepare(`
+        INSERT INTO credit_ledger (id, userId, type, amountUsd, balanceAfter, description, model, createdAt)
+        VALUES (?, ?, 'usage', ?, ?, ?, ?, ?)
+      `).run(
+        ledgerId,
+        userId,
+        amountUsd,
+        balanceAfter,
+        opts.description ?? `Usage — ${opts.model ?? 'unknown model'}`,
+        opts.model ?? null,
+        now
+      );
+    });
+    txn();
+    return succeeded;
   }
 
   async createStripePayment(params: {
@@ -2143,6 +2235,33 @@ export class MainDatabase implements IMainDatabase {
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
+  }
+
+  async getCreditLedger(userId: string, limit = 50): Promise<CreditLedgerEntry[]> {
+    const rows = this.db.prepare(`
+      SELECT * FROM credit_ledger WHERE userId = ? ORDER BY createdAt DESC LIMIT ?
+    `).all(userId, limit) as Array<{
+      id: string;
+      userId: string;
+      type: string;
+      amountUsd: number;
+      balanceAfter: number;
+      description: string;
+      stripePaymentIntentId: string | null;
+      model: string | null;
+      createdAt: string;
+    }>;
+    return rows.map(row => ({
+      id: row.id,
+      userId: row.userId,
+      type: row.type as CreditLedgerEntry['type'],
+      amountUsd: row.amountUsd,
+      balanceAfter: row.balanceAfter,
+      description: row.description,
+      stripePaymentIntentId: row.stripePaymentIntentId ?? undefined,
+      model: row.model ?? undefined,
+      createdAt: new Date(row.createdAt),
+    }));
   }
 
   async getStripePayments(userId: string): Promise<StripePayment[]> {

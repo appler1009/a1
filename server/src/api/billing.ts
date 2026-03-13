@@ -118,6 +118,36 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
       })),
     });
   });
+
+  // ----------------------------------------------------------------
+  // GET /api/billing/ledger
+  // Returns a full credit/debit ledger for the authenticated user.
+  // ----------------------------------------------------------------
+  fastify.get('/billing/ledger', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const query = request.query as { limit?: string };
+    const limit = Math.min(parseInt(query.limit ?? '100', 10), 500);
+
+    const mainDb = await getMainDatabase(config.storage.root);
+    const entries = await mainDb.getCreditLedger(request.user.id, limit);
+
+    return reply.send({
+      success: true,
+      data: entries.map(e => ({
+        id: e.id,
+        type: e.type,
+        amountUsd: e.amountUsd,
+        balanceAfter: e.balanceAfter,
+        description: e.description,
+        stripePaymentIntentId: e.stripePaymentIntentId,
+        model: e.model,
+        createdAt: e.createdAt.toISOString(),
+      })),
+    });
+  });
 }
 
 /**
@@ -191,7 +221,10 @@ export async function billingWebhookRoute(fastify: FastifyInstance): Promise<voi
           return reply.send({ received: true });
         }
 
-        await mainDb.addUserCredits(userId, amountUsd);
+        await mainDb.addUserCredits(userId, amountUsd, {
+          stripePaymentIntentId: intent.id,
+          description: `Top-up $${amountUsd.toFixed(2)} via Stripe`,
+        });
         await mainDb.updateStripePaymentStatus(intent.id, 'succeeded');
 
         fastify.log.info(

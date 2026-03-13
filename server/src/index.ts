@@ -429,7 +429,7 @@ const start = async () => {
         if (!event.provider.startsWith('byok:')) {
           const cost = calculateCost(event.model, event);
           if (cost !== null && cost > 0) {
-            mainDb.deductUserCredits(event.userId, cost).catch(err => {
+            mainDb.deductUserCredits(event.userId, cost, { model: event.model }).catch(err => {
               console.error('[Billing] Failed to deduct credits:', err);
             });
           }

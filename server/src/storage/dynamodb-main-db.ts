@@ -42,6 +42,8 @@ function tableNames(prefix: string) {
     memoryRelations: `${prefix}memory_relations`,
     tokenUsage: `${prefix}token_usage`,
     serviceCredentials: `${prefix}service_credentials`,
+    stripePayments: `${prefix}stripe_payments`,
+    creditLedger: `${prefix}credit_ledger`,
   };
 }
 
@@ -59,6 +61,7 @@ function toUser(item: Record<string, unknown>): User {
     locale: (item.locale as string) || undefined,
     timezone: (item.timezone as string) || undefined,
     monthlySpendLimitUsd: item.monthlySpendLimitUsd !== undefined ? (item.monthlySpendLimitUsd as number) : undefined,
+    creditBalanceUsd: item.creditBalanceUsd !== undefined ? (item.creditBalanceUsd as number) : 0,
     createdAt: new Date(item.createdAt as string),
     updatedAt: new Date(item.updatedAt as string),
   };
@@ -1651,45 +1654,202 @@ export class DynamoDBMainDatabase implements IMainDatabase {
   }
 
   // ================================================================
-  // Credit Balance & Stripe Payments — stub implementations
-  // DynamoDB backend: add proper table-based implementations when needed.
+  // Credit Balance
   // ================================================================
 
-  async getUserCreditBalance(_userId: string): Promise<number> {
-    return 0;
+  async getUserCreditBalance(userId: string): Promise<number> {
+    const { Item } = await this.client.send(new GetCommand({
+      TableName: this.tables.users,
+      Key: { userId },
+      ProjectionExpression: 'creditBalanceUsd',
+    }));
+    return Item?.creditBalanceUsd !== undefined ? (Item.creditBalanceUsd as number) : 0;
   }
 
-  async addUserCredits(_userId: string, _amountUsd: number): Promise<void> {
-    // TODO: implement DynamoDB credit balance
+  async addUserCredits(
+    userId: string,
+    amountUsd: number,
+    opts: { stripePaymentIntentId?: string; description?: string } = {}
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const id = uuidv4();
+
+    // Atomically increment balance on the user record.
+    // DynamoDB ADD on a non-existent Number attribute initialises it to 0 then adds.
+    const { Attributes } = await this.client.send(new UpdateCommand({
+      TableName: this.tables.users,
+      Key: { userId },
+      UpdateExpression: 'ADD creditBalanceUsd :amt SET updatedAt = :now',
+      ExpressionAttributeValues: { ':amt': amountUsd, ':now': now },
+      ReturnValues: 'ALL_NEW',
+    }));
+
+    const balanceAfter = (Attributes?.creditBalanceUsd as number) ?? amountUsd;
+
+    // Write ledger entry
+    await this.client.send(new PutCommand({
+      TableName: this.tables.creditLedger,
+      Item: {
+        userId,
+        sk: `${now}#${id}`,
+        id,
+        type: 'topup',
+        amountUsd,
+        balanceAfter,
+        description: opts.description ?? `Top-up $${amountUsd.toFixed(2)}`,
+        ...(opts.stripePaymentIntentId ? { stripePaymentIntentId: opts.stripePaymentIntentId } : {}),
+        createdAt: now,
+      },
+    }));
   }
 
-  async deductUserCredits(_userId: string, _amountUsd: number): Promise<boolean> {
-    // TODO: implement DynamoDB credit balance
+  async deductUserCredits(
+    userId: string,
+    amountUsd: number,
+    opts: { description?: string; model?: string } = {}
+  ): Promise<boolean> {
+    const now = new Date().toISOString();
+    const id = uuidv4();
+
+    // Atomically decrement — condition prevents going below zero.
+    // Fails with ConditionalCheckFailedException if balance < amountUsd or attribute missing.
+    let balanceAfter: number;
+    try {
+      const { Attributes } = await this.client.send(new UpdateCommand({
+        TableName: this.tables.users,
+        Key: { userId },
+        UpdateExpression: 'SET creditBalanceUsd = creditBalanceUsd - :amt, updatedAt = :now',
+        ConditionExpression: 'creditBalanceUsd >= :amt',
+        ExpressionAttributeValues: { ':amt': amountUsd, ':now': now },
+        ReturnValues: 'ALL_NEW',
+      }));
+      balanceAfter = (Attributes?.creditBalanceUsd as number) ?? 0;
+    } catch (err: unknown) {
+      if ((err as { name?: string }).name === 'ConditionalCheckFailedException') return false;
+      throw err;
+    }
+
+    // Write ledger entry (best-effort; do not block on failure)
+    this.client.send(new PutCommand({
+      TableName: this.tables.creditLedger,
+      Item: {
+        userId,
+        sk: `${now}#${id}`,
+        id,
+        type: 'usage',
+        amountUsd,
+        balanceAfter,
+        description: opts.description ?? `Usage — ${opts.model ?? 'unknown model'}`,
+        ...(opts.model ? { model: opts.model } : {}),
+        createdAt: now,
+      },
+    })).catch(err => console.error('[Billing] Failed to write credit ledger entry:', err));
+
     return true;
   }
 
-  async createStripePayment(_params: {
+  // ================================================================
+  // Stripe Payments
+  // ================================================================
+
+  async createStripePayment(params: {
     userId: string;
     stripePaymentIntentId: string;
     amountUsd: number;
     status: 'pending' | 'succeeded' | 'failed';
   }): Promise<void> {
-    // TODO: implement DynamoDB stripe payments
+    const now = new Date().toISOString();
+    await this.client.send(new PutCommand({
+      TableName: this.tables.stripePayments,
+      Item: {
+        stripePaymentIntentId: params.stripePaymentIntentId,
+        userId: params.userId,
+        id: uuidv4(),
+        amountUsd: params.amountUsd,
+        status: params.status,
+        createdAt: now,
+        updatedAt: now,
+      },
+    }));
   }
 
   async updateStripePaymentStatus(
-    _stripePaymentIntentId: string,
-    _status: 'pending' | 'succeeded' | 'failed'
+    stripePaymentIntentId: string,
+    status: 'pending' | 'succeeded' | 'failed'
   ): Promise<void> {
-    // TODO: implement DynamoDB stripe payments
+    const now = new Date().toISOString();
+    await this.client.send(new UpdateCommand({
+      TableName: this.tables.stripePayments,
+      Key: { stripePaymentIntentId },
+      UpdateExpression: 'SET #status = :status, updatedAt = :now',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ExpressionAttributeValues: { ':status': status, ':now': now },
+    })).catch(err => {
+      // Item may not exist yet if webhook fires before createStripePayment — ignore
+      if (err.name !== 'ConditionalCheckFailedException') throw err;
+    });
   }
 
-  async getStripePaymentByIntentId(_stripePaymentIntentId: string): Promise<import('./main-db.js').StripePayment | null> {
-    return null;
+  async getStripePaymentByIntentId(stripePaymentIntentId: string): Promise<import('./main-db.js').StripePayment | null> {
+    const { Item } = await this.client.send(new GetCommand({
+      TableName: this.tables.stripePayments,
+      Key: { stripePaymentIntentId },
+    }));
+    if (!Item) return null;
+    return {
+      id: Item.id as string,
+      userId: Item.userId as string,
+      stripePaymentIntentId: Item.stripePaymentIntentId as string,
+      amountUsd: Item.amountUsd as number,
+      status: Item.status as 'pending' | 'succeeded' | 'failed',
+      createdAt: new Date(Item.createdAt as string),
+      updatedAt: new Date(Item.updatedAt as string),
+    };
   }
 
-  async getStripePayments(_userId: string): Promise<import('./main-db.js').StripePayment[]> {
-    return [];
+  async getStripePayments(userId: string): Promise<import('./main-db.js').StripePayment[]> {
+    const { Items } = await this.client.send(new QueryCommand({
+      TableName: this.tables.stripePayments,
+      IndexName: 'userId-index',
+      KeyConditionExpression: 'userId = :userId',
+      ExpressionAttributeValues: { ':userId': userId },
+      ScanIndexForward: false,
+      Limit: 50,
+    }));
+    return (Items ?? []).map(item => ({
+      id: item.id as string,
+      userId: item.userId as string,
+      stripePaymentIntentId: item.stripePaymentIntentId as string,
+      amountUsd: item.amountUsd as number,
+      status: item.status as 'pending' | 'succeeded' | 'failed',
+      createdAt: new Date(item.createdAt as string),
+      updatedAt: new Date(item.updatedAt as string),
+    }));
+  }
+
+  // ================================================================
+  // Credit Ledger
+  // ================================================================
+
+  async getCreditLedger(userId: string, limit = 50): Promise<import('./main-db.js').CreditLedgerEntry[]> {
+    const { Items } = await this.client.send(new QueryCommand({
+      TableName: this.tables.creditLedger,
+      KeyConditionExpression: 'userId = :userId',
+      ExpressionAttributeValues: { ':userId': userId },
+      ScanIndexForward: false,   // newest first
+      Limit: limit,
+    }));
+    return (Items ?? []).map(item => ({
+      id: item.id as string,
+      userId: item.userId as string,
+      type: item.type as 'topup' | 'usage',
+      amountUsd: item.amountUsd as number,
+      balanceAfter: item.balanceAfter as number,
+      description: item.description as string,
+      stripePaymentIntentId: (item.stripePaymentIntentId as string) || undefined,
+      model: (item.model as string) || undefined,
+      createdAt: new Date(item.createdAt as string),
+    }));
   }
 
   private async _deleteMemberships(userId: string): Promise<void> {

@@ -1,7 +1,7 @@
 import type { User, Session, Group, GroupMember, Invitation } from '@local-agent/shared';
-import type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob, MagicLinkToken, StripePayment } from './main-db.js';
+import type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob, MagicLinkToken, StripePayment, CreditLedgerEntry } from './main-db.js';
 
-export type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob, MagicLinkToken, StripePayment };
+export type { RoleDefinition, OAuthTokenEntry, SkillRecord, ScheduledJob, MagicLinkToken, StripePayment, CreditLedgerEntry };
 
 export interface TokenUsageRecord {
   id: string;
@@ -192,8 +192,8 @@ export interface IMainDatabase {
 
   // ---- Credit Balance & Stripe Payments ----
   getUserCreditBalance(userId: string): Promise<number>;
-  addUserCredits(userId: string, amountUsd: number): Promise<void>;
-  deductUserCredits(userId: string, amountUsd: number): Promise<boolean>;
+  addUserCredits(userId: string, amountUsd: number, opts?: { stripePaymentIntentId?: string; description?: string }): Promise<void>;
+  deductUserCredits(userId: string, amountUsd: number, opts?: { description?: string; model?: string }): Promise<boolean>;
   createStripePayment(params: {
     userId: string;
     stripePaymentIntentId: string;
@@ -203,6 +203,7 @@ export interface IMainDatabase {
   updateStripePaymentStatus(stripePaymentIntentId: string, status: 'pending' | 'succeeded' | 'failed'): Promise<void>;
   getStripePaymentByIntentId(stripePaymentIntentId: string): Promise<StripePayment | null>;
   getStripePayments(userId: string): Promise<StripePayment[]>;
+  getCreditLedger(userId: string, limit?: number): Promise<CreditLedgerEntry[]>;
 
   // ---- Token Usage ----
   recordTokenUsage(record: {
