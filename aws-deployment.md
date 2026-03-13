@@ -260,6 +260,20 @@ The app fetches secrets from Secrets Manager at startup when `AWS_SECRETS_ENABLE
 - `DISCORD_CHANNEL_IDS` — comma-separated list of channel IDs the bot listens in
 - All infrastructure variables (`MAIN_DB_TYPE`, `DYNAMODB_REGION`, `STORAGE_TYPE`, etc.)
 
+### Email bounce and complaint suppression
+
+SES tracks sender reputation. Repeatedly sending to addresses that hard-bounce or generate spam complaints will eventually cause SES to throttle or suspend your account.
+
+When SES detects a permanent bounce or a complaint:
+1. SES publishes a notification to the `ses-bounce-events` SNS topic (via the configuration set event destination)
+2. SNS invokes the `ses-bounce-handler` Lambda
+3. The Lambda looks up the address via the `email-index` GSI and writes `emailDisabled = 'bounce' | 'complaint'` to the user's DynamoDB record
+4. The next time that user requests a magic-link login, the API returns HTTP 400 immediately — no email is sent
+
+The Lambda only suppresses **permanent** bounces; transient bounces (mailbox full, greylisting) are ignored. The DynamoDB write is idempotent (`attribute_not_exists` condition) so re-delivered SNS messages are safe.
+
+See `lambda-ses-bounce/src/index.ts` for the handler and `docs/deploy-aws.md §18` for the full wiring steps.
+
 ### Why not AWS Secrets Manager for OAuth tokens
 
 Secrets Manager is designed for static, long-lived service credentials. OAuth tokens are per-user, per-provider, and rotate frequently (access tokens expire hourly; refresh tokens rotate on use). Using Secrets Manager for OAuth tokens would cost ~$0.40/token/month and hit API rate limits under moderate traffic. Store them in the DynamoDB `oauth_tokens` table instead, with application-level KMS encryption (see below).
@@ -515,3 +529,6 @@ When unsure, run Option 1 first then Option 2 to clear any stragglers.
 - [ ] ACM certificate for your domain
 - [ ] Route 53 record (or CNAME) pointing to ALB DNS name
 - [ ] OAuth redirect URIs updated in each provider's console
+- [ ] SES configuration set with bounce/complaint event destination → SNS (see deploy-aws.md §18)
+- [ ] SNS topic `ses-bounce-events` with SES publish policy
+- [ ] Lambda `ses-bounce-handler` subscribed to SNS topic (deployed via GitHub Actions)

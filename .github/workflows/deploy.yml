@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths-ignore:
       - 'lambda-scheduler/**'
+      - 'lambda-ses-bounce/**'
 
 permissions:
   id-token: write   # required for OIDC

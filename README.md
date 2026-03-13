@@ -4,7 +4,7 @@ A self-hosted, multi-user AI agent platform with first-class MCP (Model Context 
 
 ## Features
 
-- **Multi-user**: Magic link login via email (AWS SES); invite-code-based registration
+- **Multi-user**: Magic link login via email (AWS SES); invite-code-based registration; automatic suppression of bounced/complaining addresses via SNS → Lambda
 - **Agent Roles**: Per-role system prompts, model selection, and MCP server sets; switch roles mid-conversation
 - **Multi-LLM**: Grok (default), OpenAI, and Anthropic/Claude; optional keyword-based model router
 - **Bring Your Own Key (BYOK)**: Users can supply their own xAI, OpenAI, or Anthropic API key and model name via Settings; keys are KMS-encrypted at rest and override the app default for that user's sessions
@@ -26,7 +26,7 @@ A self-hosted, multi-user AI agent platform with first-class MCP (Model Context 
 
 **LLM Providers:** xAI Grok (`grok-4-1-fast-reasoning` default), OpenAI, Anthropic Claude
 
-**AWS (optional/production):** S3, DynamoDB, KMS, SES, Lambda
+**AWS (optional/production):** S3, DynamoDB, KMS, SES, SNS, Lambda
 
 ## Quick Start
 
@@ -141,6 +141,7 @@ These enable users to link external services after logging in — they are not l
 | `KMS_OAUTH_DISABLED` | Set `true` to skip KMS (local dev) | |
 | `KMS_ENDPOINT` | Custom KMS endpoint (e.g. LocalStack) | |
 | `SES_SENDER_EMAIL` | From address for magic link emails | |
+| `INTERNAL_API_KEY` | Shared secret for internal endpoints (scheduler dispatch, SES events webhook) | |
 
 ### Discord Bot
 
@@ -188,6 +189,8 @@ External servers (stdio subprocess) can be configured per-role through the MCP s
 │       ├── hooks/            # Custom React hooks
 │       ├── lib/              # API client, preview adapters (PDF, image, email)
 │       └── pages/            # Login, OAuth callback, Join
+├── lambda-scheduler/         # Scheduled job evaluator Lambda (independent package)
+├── lambda-ses-bounce/        # SES bounce/complaint suppressor Lambda (independent package)
 ├── server/                   # Fastify backend
 │   └── src/
 │       ├── ai/               # LLM providers (Grok, OpenAI, Anthropic) + router

@@ -294,6 +294,17 @@ export async function authRoutes(fastify: FastifyInstance) {
         user = await mainDb.createUser(email, undefined, 'individual');
       }
 
+      // Fail fast for addresses that have previously bounced or complained
+      if (user.emailDisabled) {
+        const reason = user.emailDisabled === 'complaint'
+          ? 'This email address has been flagged as a spam complaint and cannot receive login emails.'
+          : 'This email address is no longer deliverable. Please use a different email address.';
+        return reply.code(400).send({
+          success: false,
+          error: { message: reason, code: 'EMAIL_DISABLED', reason: user.emailDisabled },
+        });
+      }
+
       // Clean up expired tokens for this email
       await mainDb.deleteExpiredMagicLinkTokens(email);
 

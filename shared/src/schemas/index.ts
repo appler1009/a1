@@ -11,6 +11,8 @@ export const UserSchema = z.object({
   timezone: z.string().optional(),
   monthlySpendLimitUsd: z.number().optional(),
   creditBalanceUsd: z.number().optional(),
+  /** Set when SES reports a hard bounce or spam complaint for this address. */
+  emailDisabled: z.enum(['bounce', 'complaint']).optional(),
   createdAt: z.string().or(z.date()),
   updatedAt: z.string().or(z.date()).optional(),
 });

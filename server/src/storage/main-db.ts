@@ -140,6 +140,7 @@ export class MainDatabase implements IMainDatabase {
         name TEXT,
         accountType TEXT DEFAULT 'individual',
         discordUserId TEXT,
+        emailDisabled TEXT,
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL
       );
@@ -404,6 +405,9 @@ export class MainDatabase implements IMainDatabase {
 
     // Migrate users table to add creditBalanceUsd column if needed
     this.migrateCreditBalanceSchema();
+
+    // Migrate users table to add emailDisabled column if needed
+    this.migrateEmailDisabledSchema();
   }
 
   /**
@@ -566,6 +570,20 @@ export class MainDatabase implements IMainDatabase {
     }
   }
 
+  private migrateEmailDisabledSchema(): void {
+    try {
+      const tableInfo = this.db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+      const hasCol = tableInfo.some(col => col.name === 'emailDisabled');
+      if (!hasCol) {
+        console.log('[MainDatabase] Adding emailDisabled column to users table...');
+        this.db.exec(`ALTER TABLE users ADD COLUMN emailDisabled TEXT;`);
+        console.log('[MainDatabase] emailDisabled column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during emailDisabled schema migration:', error);
+    }
+  }
+
   close(): void {
     this.db.close();
   }
@@ -604,6 +622,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
       creditBalanceUsd: number;
+      emailDisabled: string | null;
       createdAt: string;
       updatedAt: string;
     } | undefined;
@@ -620,6 +639,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
+      emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -636,6 +656,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
       creditBalanceUsd: number;
+      emailDisabled: string | null;
       createdAt: string;
       updatedAt: string;
     } | undefined;
@@ -652,6 +673,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
+      emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -668,6 +690,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
       creditBalanceUsd: number;
+      emailDisabled: string | null;
       createdAt: string;
       updatedAt: string;
     } | undefined;
@@ -684,6 +707,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
+      emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -725,6 +749,10 @@ export class MainDatabase implements IMainDatabase {
       fields.push('monthlySpendLimitUsd = ?');
       values.push(updates.monthlySpendLimitUsd ?? null);
     }
+    if (updates.emailDisabled !== undefined) {
+      fields.push('emailDisabled = ?');
+      values.push(updates.emailDisabled ?? null);
+    }
 
     values.push(id);
 
@@ -733,6 +761,14 @@ export class MainDatabase implements IMainDatabase {
     `).run(...values);
 
     return this.getUser(id);
+  }
+
+  async disableEmailAddress(email: string, reason: 'bounce' | 'complaint'): Promise<void> {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE users SET emailDisabled = ?, updatedAt = ? WHERE email = ?
+    `).run(reason, now, email);
+    console.log(`[MainDatabase] emailDisabled=${reason} set for ${email}`);
   }
 
   async getAllUsers(): Promise<User[]> {
@@ -746,6 +782,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
       creditBalanceUsd: number;
+      emailDisabled: string | null;
       createdAt: string;
       updatedAt: string;
     }>;
@@ -760,6 +797,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
+      emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     }));

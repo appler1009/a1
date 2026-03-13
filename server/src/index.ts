@@ -265,6 +265,73 @@ fastify.post('/internal/scheduler/dispatch', async (request, reply) => {
   return { ok: true, run: run.length, hold: hold.length };
 });
 
+// ---------------------------------------------------------------------------
+// SES bounce / complaint webhook
+// SNS posts to this endpoint when SES reports a hard bounce or spam complaint.
+// Accepts both the initial SubscriptionConfirmation handshake and real Notification
+// messages.  Protected by the same internal API key as the scheduler endpoints.
+// ---------------------------------------------------------------------------
+
+fastify.post('/internal/ses-events', async (request, reply) => {
+  if (!assertInternalApiKey(request, reply)) return;
+
+  const messageType = (request.headers['x-amz-sns-message-type'] as string | undefined) ?? '';
+  const body = request.body as Record<string, unknown>;
+
+  // ── 1. Subscription confirmation ──────────────────────────────────────────
+  if (messageType === 'SubscriptionConfirmation') {
+    const subscribeUrl = body.SubscribeURL as string | undefined;
+    if (subscribeUrl) {
+      console.log('[SESEvents] Confirming SNS subscription:', subscribeUrl);
+      await fetch(subscribeUrl).catch(err =>
+        console.error('[SESEvents] Failed to confirm SNS subscription:', err),
+      );
+    }
+    return reply.send({ ok: true });
+  }
+
+  // ── 2. Real notification ───────────────────────────────────────────────────
+  if (messageType !== 'Notification') {
+    return reply.send({ ok: true, skipped: true });
+  }
+
+  let sesNotification: Record<string, unknown>;
+  try {
+    sesNotification = JSON.parse(body.Message as string);
+  } catch {
+    return reply.code(400).send({ error: 'Invalid Message JSON' });
+  }
+
+  const notifType = sesNotification.notificationType as string | undefined;
+  const mainDb = await getMainDatabase(config.storage.root);
+
+  if (notifType === 'Bounce') {
+    const bounce = sesNotification.bounce as Record<string, unknown>;
+    const bounceType = bounce?.bounceType as string | undefined;
+    // Only suppress on permanent (hard) bounces
+    if (bounceType === 'Permanent') {
+      const recipients = (bounce?.bouncedRecipients as Array<{ emailAddress: string }>) ?? [];
+      await Promise.all(
+        recipients.map(r => {
+          console.log(`[SESEvents] Hard bounce — disabling ${r.emailAddress}`);
+          return mainDb.disableEmailAddress(r.emailAddress.toLowerCase(), 'bounce');
+        }),
+      );
+    }
+  } else if (notifType === 'Complaint') {
+    const complaint = sesNotification.complaint as Record<string, unknown>;
+    const recipients = (complaint?.complainedRecipients as Array<{ emailAddress: string }>) ?? [];
+    await Promise.all(
+      recipients.map(r => {
+        console.log(`[SESEvents] Complaint — disabling ${r.emailAddress}`);
+        return mainDb.disableEmailAddress(r.emailAddress.toLowerCase(), 'complaint');
+      }),
+    );
+  }
+
+  return reply.send({ ok: true });
+});
+
 // Test-only cleanup endpoint — deletes a user and all their data by email.
 // Only available outside production to prevent accidental data loss.
 if (!config.env.isProduction) {

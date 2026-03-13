@@ -62,6 +62,7 @@ function toUser(item: Record<string, unknown>): User {
     timezone: (item.timezone as string) || undefined,
     monthlySpendLimitUsd: item.monthlySpendLimitUsd !== undefined ? (item.monthlySpendLimitUsd as number) : undefined,
     creditBalanceUsd: item.creditBalanceUsd !== undefined ? (item.creditBalanceUsd as number) : 0,
+    emailDisabled: (item.emailDisabled as 'bounce' | 'complaint') || undefined,
     createdAt: new Date(item.createdAt as string),
     updatedAt: new Date(item.updatedAt as string),
   };
@@ -290,6 +291,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     if (updates.locale !== undefined) { sets.push('locale = :locale'); values[':locale'] = updates.locale ?? null; }
     if (updates.timezone !== undefined) { sets.push('timezone = :timezone'); values[':timezone'] = updates.timezone ?? null; }
     if (updates.monthlySpendLimitUsd !== undefined) { sets.push('monthlySpendLimitUsd = :monthlySpendLimitUsd'); values[':monthlySpendLimitUsd'] = updates.monthlySpendLimitUsd ?? null; }
+    if (updates.emailDisabled !== undefined) { sets.push('emailDisabled = :emailDisabled'); values[':emailDisabled'] = updates.emailDisabled ?? null; }
 
     const { Attributes } = await this.client.send(new UpdateCommand({
       TableName: this.tables.users,
@@ -345,6 +347,30 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     ]);
 
     return true; // We treat deleteUser as always succeeding for existing users
+  }
+
+  async disableEmailAddress(email: string, reason: 'bounce' | 'complaint'): Promise<void> {
+    // Look up the user by email via GSI, then update in place.
+    const { Items } = await this.client.send(new QueryCommand({
+      TableName: this.tables.users,
+      IndexName: 'email-index',
+      KeyConditionExpression: 'email = :email',
+      ExpressionAttributeValues: { ':email': email },
+      Limit: 1,
+    }));
+    if (!Items || Items.length === 0) {
+      console.warn(`[DynamoDBMainDB] disableEmailAddress: no user found for ${email}`);
+      return;
+    }
+    const userId = Items[0].userId as string;
+    const now = new Date().toISOString();
+    await this.client.send(new UpdateCommand({
+      TableName: this.tables.users,
+      Key: { userId },
+      UpdateExpression: 'SET emailDisabled = :reason, updatedAt = :now',
+      ExpressionAttributeValues: { ':reason': reason, ':now': now },
+    }));
+    console.log(`[DynamoDBMainDB] emailDisabled=${reason} set for ${email} (userId=${userId})`);
   }
 
   // ============================================================

@@ -1,0 +1,51 @@
+name: Deploy Lambda SES Bounce Handler
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lambda-ses-bounce/**'
+
+permissions:
+  id-token: write   # required for OIDC
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC — no keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: lambda-ses-bounce/package-lock.json
+
+      - name: Install dependencies
+        working-directory: lambda-ses-bounce
+        run: npm ci
+
+      - name: Build and package
+        working-directory: lambda-ses-bounce
+        run: npm run package
+
+      - name: Deploy to Lambda
+        working-directory: lambda-ses-bounce
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ secrets.LAMBDA_SES_BOUNCE_FUNCTION_NAME }} \
+            --zip-file fileb://function.zip
+
+          aws lambda wait function-updated \
+            --function-name ${{ secrets.LAMBDA_SES_BOUNCE_FUNCTION_NAME }}
+
+          echo "Deployed $(du -sh function.zip | cut -f1) zip to ${{ secrets.LAMBDA_SES_BOUNCE_FUNCTION_NAME }}"

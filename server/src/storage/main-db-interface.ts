@@ -45,6 +45,8 @@ export interface IMainDatabase {
   updateUser(id: string, updates: Partial<User>): Promise<User | null>;
   getAllUsers(): Promise<User[]>;
   deleteUser(id: string): Promise<boolean>;
+  /** Mark an email address as undeliverable due to a hard bounce or spam complaint. */
+  disableEmailAddress(email: string, reason: 'bounce' | 'complaint'): Promise<void>;
 
   // ---- Sessions ----
   createSession(userId: string): Promise<Session>;
