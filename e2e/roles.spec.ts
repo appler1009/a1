@@ -1,42 +1,91 @@
 import { test, expect } from './fixtures';
 
-test.describe('App Smoke Tests', () => {
-  test('login page displays correctly', async ({ page }) => {
-    await page.goto('/login');
-    await expect(page.getByRole('heading', { name: /sign in/i })).toBeVisible();
-    await expect(page.getByLabel(/email address/i)).toBeVisible();
-    await expect(page.getByRole('button', { name: /continue/i })).toBeVisible();
+test.describe('Role Management', () => {
+  test.describe.configure({ mode: 'serial' });
+
+  test('sidebar shows the initial role after onboarding', async ({ authenticatedPage: page }) => {
+    await expect(page.getByRole('button', { name: /test role/i }).first()).toBeVisible();
   });
 
-  test('continue button is disabled with empty email', async ({ page }) => {
-    await page.goto('/login');
-    await expect(page.getByRole('button', { name: /continue/i })).toBeDisabled();
-  });
-
-  test('continue button enables with email input', async ({ page }) => {
-    await page.goto('/login');
-    await page.fill('input[type="email"]', 'test@example.com');
-    await expect(page.getByRole('button', { name: /continue/i })).toBeEnabled();
-  });
-
-  test('unauthenticated root redirects to login or shows app', async ({ page }) => {
-    await page.goto('/');
-    const finalUrl = page.url();
-    expect(
-      finalUrl.includes('/login') ||
-        finalUrl === 'http://localhost:5173/' ||
-        finalUrl.includes('/onboarding')
-    ).toBeTruthy();
-  });
-
-  test('authenticated user sees app with fresh empty state', async ({
+  test('can open and close CreateRoleDialog without creating a role', async ({
     authenticatedPage: page,
-    testEmail,
   }) => {
-    // Each test run creates a brand-new user, so there are no prior messages
+    await page.getByTitle('Create role').click();
+    await expect(page.getByRole('heading', { name: /create new role/i })).toBeVisible();
+
+    // Cancel dismisses the dialog
+    await page.getByRole('button', { name: /cancel/i }).click();
+    await expect(page.getByRole('heading', { name: /create new role/i })).not.toBeVisible();
+  });
+
+  test('Escape key closes CreateRoleDialog', async ({ authenticatedPage: page }) => {
+    await page.getByTitle('Create role').click();
+    await expect(page.getByRole('heading', { name: /create new role/i })).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('heading', { name: /create new role/i })).not.toBeVisible();
+  });
+
+  test('Create Role button is disabled when name is empty', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.getByTitle('Create role').click();
+    await expect(
+      page.getByRole('button', { name: 'Create Role', exact: true }),
+    ).toBeDisabled();
+    await page.keyboard.press('Escape');
+  });
+
+  test('can create a second role from the sidebar', async ({ authenticatedPage: page }) => {
+    await page.getByTitle('Create role').click();
+    await page.getByLabel(/role name/i).fill('Side Project');
+    await page.getByRole('button', { name: 'Create Role', exact: true }).click();
+
+    // Dialog closes and new role appears in the sidebar
+    await expect(page.getByRole('heading', { name: /create new role/i })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: /side project/i }).first()).toBeVisible();
+  });
+
+  test('can switch between roles', async ({ authenticatedPage: page }) => {
+    // Both roles should be present (created in prior serial test)
+    await expect(page.getByRole('button', { name: /test role/i }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /side project/i }).first()).toBeVisible();
+
+    // Click "Test Role" to switch
+    await page.getByRole('button', { name: /test role/i }).first().click();
+    // Chat input visible means the switch completed and app is responsive
     await expect(page.getByPlaceholder('Type a message...')).toBeVisible();
-    await expect(page.getByText('Start a conversation')).toBeVisible();
-    // Confirm we're using the isolated test email (not the old shared one)
-    expect(testEmail).toMatch(/^test-w\d+-[0-9a-f]+@test\.local$/);
+  });
+
+  test('can open Role Description dialog and save a description', async ({
+    authenticatedPage: page,
+  }) => {
+    // Expand the chevron for "Test Role"
+    const roleRow = page.locator('div').filter({ hasText: /^test role$/ }).first();
+    await page.getByTitle('Role options').first().click();
+
+    // Click "Role Description" sub-menu item
+    await page.getByRole('button', { name: /role description/i }).click();
+    await expect(page.getByRole('heading', { name: /role description/i })).toBeVisible();
+
+    // Clear and type a new description
+    const textarea = page.getByPlaceholder(/describe your role/i);
+    await textarea.clear();
+    await textarea.fill('I manage software projects and need help with planning.');
+    await page.getByRole('button', { name: /^save$/i }).click();
+
+    // Dialog should close after saving
+    await expect(page.getByRole('heading', { name: /role description/i })).not.toBeVisible();
+  });
+
+  test('Role Description dialog closes on Escape without saving', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.getByTitle('Role options').first().click();
+    await page.getByRole('button', { name: /role description/i }).click();
+    await expect(page.getByRole('heading', { name: /role description/i })).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('heading', { name: /role description/i })).not.toBeVisible();
   });
 });

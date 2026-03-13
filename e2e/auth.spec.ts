@@ -5,22 +5,18 @@ test.describe('Authentication', () => {
     await page.goto('/login');
     await expect(page.getByRole('heading', { name: /sign in/i })).toBeVisible();
     await expect(page.getByLabel(/email address/i)).toBeVisible();
-    await expect(page.getByRole('button', { name: /continue/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /send login link/i })).toBeVisible();
   });
 
-  test('continue button is disabled with empty email', async ({ page }) => {
+  test('send login link button is disabled with empty email', async ({ page }) => {
     await page.goto('/login');
-    const continueButton = page.getByRole('button', { name: /continue/i });
-    await expect(continueButton).toBeDisabled();
+    await expect(page.getByRole('button', { name: /send login link/i })).toBeDisabled();
   });
 
-  test('continue button enables with email input', async ({ page }) => {
+  test('send login link button enables with email input', async ({ page }) => {
     await page.goto('/login');
-    const emailInput = page.getByLabel(/email address/i);
-    const continueButton = page.getByRole('button', { name: /continue/i });
-
-    await emailInput.fill('test@example.com');
-    await expect(continueButton).toBeEnabled();
+    await page.getByLabel(/email address/i).fill('test@example.com');
+    await expect(page.getByRole('button', { name: /send login link/i })).toBeEnabled();
   });
 
   test('can navigate to join page', async ({ page }) => {
@@ -33,18 +29,19 @@ test.describe('Authentication', () => {
   });
 
   test('app redirects unauthenticated users to login', async ({ page }) => {
-    // Navigate to root without being authenticated
-    // The browser might have lingering session data, so this tests page structure
     await page.goto('/');
 
-    // Should either show login or app with real data
-    // Check for either login form or chat input
+    // Wait for the React app to finish routing — either destination is valid
     const loginForm = page.getByLabel(/email address/i);
     const chatInput = page.getByPlaceholder('Type a message...');
 
-    const hasLoginForm = await loginForm.isVisible().catch(() => false);
-    const hasChatInput = await chatInput.isVisible().catch(() => false);
+    await Promise.race([
+      loginForm.waitFor({ state: 'visible' }),
+      chatInput.waitFor({ state: 'visible' }),
+    ]);
 
+    const hasLoginForm = await loginForm.isVisible();
+    const hasChatInput = await chatInput.isVisible();
     expect(hasLoginForm || hasChatInput).toBeTruthy();
   });
 });

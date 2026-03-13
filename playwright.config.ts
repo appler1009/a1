@@ -8,11 +8,15 @@ process.env.PW_RUN_ID ??= crypto.randomBytes(6).toString('hex');
 
 export default defineConfig({
   testDir: './e2e',
+  timeout: 60000,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: process.env.CI ? 1 : 3,
   reporter: 'html',
+  expect: {
+    timeout: 10000,
+  },
   use: {
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',

@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nodeEnv = process.env.NODE_ENV || 'development';
 // .env files are in the server directory (one level up from src/)
 const envFile = path.join(__dirname, '..', `.env.${nodeEnv}`);
-dotenvConfig({ path: envFile });
+dotenvConfig({ path: envFile, override: true });
 
 // Load secrets from AWS Secrets Manager before config is assembled.
 // No-op when AWS_SECRETS_ENABLED is not set (local development).

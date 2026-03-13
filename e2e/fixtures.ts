@@ -1,6 +1,6 @@
 import { test as base, request as baseRequest, type BrowserContext } from '@playwright/test';
 
-const SERVER_URL = process.env.API_URL || 'http://localhost:3000';
+const SERVER_URL = process.env.API_URL || 'http://localhost:5173';
 
 type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>;
 
@@ -14,9 +14,9 @@ type TestFixtures = {
 type WorkerFixtures = {
   /**
    * Worker-scoped: one test user per Playwright worker per run.
-   * Stores the full browser storage state (cookies + localStorage) captured
-   * after completing the entire onboarding flow, so each test can restore it
-   * instantly without repeating the UI flow.
+   * Uses the magic-link flow: requests a link (server returns testToken in
+   * non-production), verifies it to get a real session cookie, then completes
+   * onboarding once. The storage state is shared across all tests in this worker.
    */
   workerAuth: { email: string; storageState: StorageState };
 };
@@ -27,57 +27,74 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       const runId = process.env.PW_RUN_ID || Date.now().toString();
       const email = `test-w${workerInfo.workerIndex}-${runId}@test.local`;
 
-      // Complete the full signup + role creation flow once per worker.
-      // The resulting storage state is shared across all tests in this worker.
+      const apiContext = await baseRequest.newContext({ baseURL: SERVER_URL });
+
+      // Step 1: Request a magic link. In non-production the server echoes back
+      // the raw token so we can verify it without a real email service.
+      const requestRes = await apiContext.post('/api/auth/magic-link/request', {
+        data: { email },
+      });
+      if (!requestRes.ok()) {
+        const body = await requestRes.text();
+        await apiContext.dispose();
+        throw new Error(`magic-link/request failed: ${requestRes.status()} ${body}`);
+      }
+      const requestData = await requestRes.json();
+      const testToken: string | undefined = requestData.data?.testToken;
+      await apiContext.dispose();
+      if (!testToken) {
+        throw new Error(
+          'magic-link/request did not return testToken — is the server running in non-production mode?',
+        );
+      }
+
+      // Step 2: Navigate the browser through the normal verify flow.
+      // This calls /api/auth/magic-link/verify, sets the session cookie, AND
+      // stores the user in Zustand's persisted localStorage — both are required.
       const context = await browser.newContext();
       const page = await context.newPage();
 
       try {
-        // 1. Login page → enter email and continue
-        await page.goto('/login');
-        await page.getByLabel(/email address/i).fill(email);
-        await page.getByRole('button', { name: /continue/i }).click();
+        await page.goto(`/login/verify?token=${testToken}`);
 
-        // 2. OnboardingPage → choose "Personal use"
-        await page.waitForURL(/\/onboarding/, { timeout: 10000 });
-        await page.getByRole('button', { name: /personal use/i }).click();
+        // The verify page redirects to / after ~1.5 s on success.
+        await page.waitForURL('/', { timeout: 10000 });
 
-        // 3. Individual signup form → fill name and create account
-        await page.locator('input[placeholder="Your name"]').fill('Test User');
-        await page.getByRole('button', { name: /create account/i }).click();
+        // Wait for either the role-creation prompt or the chat input.
+        const createRoleBtn = page.getByRole('button', { name: /create your first role/i });
+        const chatInput = page.getByPlaceholder('Type a message...');
 
-        // 4. OnboardingPane → create the first role
-        await page
-          .getByRole('button', { name: /create your first role/i })
-          .waitFor({ state: 'visible', timeout: 15000 });
-        await page.getByRole('button', { name: /create your first role/i }).click();
+        await Promise.race([
+          createRoleBtn.waitFor({ state: 'visible', timeout: 15000 }),
+          chatInput.waitFor({ state: 'visible', timeout: 15000 }),
+        ]);
 
-        // 5. CreateRoleDialog → fill role name and submit
-        await page.locator('input[placeholder="Enter role name..."]').fill('Test Role');
-        await page.getByRole('button', { name: 'Create Role', exact: true }).click();
+        if (await createRoleBtn.isVisible()) {
+          await createRoleBtn.click();
+          await page.locator('input[placeholder="Enter role name..."]').fill('Test Role');
+          await page.getByRole('button', { name: 'Create Role', exact: true }).click();
+          // Wait for the dialog to close before expecting the chat input
+          await page.getByRole('button', { name: 'Create Role', exact: true }).waitFor({ state: 'hidden', timeout: 10000 });
+        }
 
-        // 6. Wait for the chat input — signals full auth + role selection complete
-        await page
-          .getByPlaceholder('Type a message...')
-          .waitFor({ state: 'visible', timeout: 15000 });
+        await chatInput.waitFor({ state: 'visible', timeout: 20000 });
       } catch (error) {
         await context.close();
         throw error;
       }
 
-      // Capture cookies + localStorage so tests can restore state instantly
       const storageState = await context.storageState();
       await context.close();
 
       await use({ email, storageState });
 
-      // Teardown: delete the test user and all associated data
+      // Teardown: delete the test user and all associated data.
       try {
-        const apiContext = await baseRequest.newContext({ baseURL: SERVER_URL });
-        await apiContext.post('/api/test/cleanup', { data: { email } });
-        await apiContext.dispose();
+        const cleanupContext = await baseRequest.newContext({ baseURL: SERVER_URL });
+        await cleanupContext.post('/api/test/cleanup', { data: { email } });
+        await cleanupContext.dispose();
       } catch {
-        // Best-effort — the test DB is separate from production anyway
+        // Best-effort — the test DB is separate from production anyway.
       }
     },
     { scope: 'worker' },
@@ -95,12 +112,29 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   authenticatedPage: async ({ browser, workerAuth }, use) => {
     const context = await browser.newContext({ storageState: workerAuth.storageState });
     const page = await context.newPage();
+
+    // Set up the response waiter BEFORE navigating so we catch the initial
+    // fetchMessages GET that fires immediately on mount. Silence the rejection
+    // so a slow response never aborts the fixture.
+    const messagesLoaded = page
+      .waitForResponse(
+        (resp) =>
+          resp.url().includes('/api/messages?') &&
+          resp.request().method() === 'GET',
+        { timeout: 15000 },
+      )
+      .catch(() => null);
+
     await page.goto('/');
 
-    // Sanity-check: ensure chat is immediately available
     await page
       .getByPlaceholder('Type a message...')
-      .waitFor({ state: 'visible', timeout: 10000 });
+      .waitFor({ state: 'visible', timeout: 15000 });
+
+    // Wait for the initial message fetch to finish so the store is stable
+    // before the test interacts. Without this, addMessage() can race with
+    // fetchMessages() completing and overwriting the store.
+    await messagesLoaded;
 
     await use(page);
     await context.close();

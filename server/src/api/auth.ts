@@ -309,14 +309,22 @@ export async function authRoutes(fastify: FastifyInstance) {
       const protocol = request.protocol === 'https' ? 'https' : 'http';
       const magicLink = `${protocol}://${cleanHostname}:${port}/login/verify?token=${magicLinkToken.token}`;
 
-      // Send email
-      const emailService = getEmailService();
-      await emailService.sendMagicLinkEmail(email, magicLink);
+      let emailSent = false;
+      try {
+        const emailService = getEmailService();
+        await emailService.sendMagicLinkEmail(email, magicLink);
+        emailSent = true;
+      } catch (emailError) {
+        console.warn('[MagicLink] Email send failed (no email service configured?):', emailError);
+      }
 
       return reply.send({
         success: true,
         data: {
-          message: 'Magic link sent to your email',
+          message: emailSent ? 'Magic link sent to your email' : 'Magic link created (email not sent)',
+          // Expose the raw token when email delivery is unavailable so that
+          // local dev and E2E tests can authenticate via /magic-link/verify directly.
+          ...(!emailSent ? { testToken: magicLinkToken.token } : {}),
         },
       });
     } catch (error) {

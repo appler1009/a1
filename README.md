@@ -57,6 +57,27 @@ bun run dev
 - Frontend: `http://localhost:5173`
 - Backend API: `http://localhost:3000`
 
+## Testing
+
+```bash
+# Unit tests (Vitest)
+cd client && npm run test
+
+# Unit tests with coverage report
+cd client && npm run test:coverage
+
+# E2E tests (Playwright) — requires the dev server to be running
+npm run test:e2e
+
+# E2E tests with the browser visible
+npx playwright test --headed
+
+# Run a single E2E spec file
+npx playwright test e2e/roles.spec.ts
+```
+
+> **E2E prerequisites:** start the dev server (`bun run dev`) before running E2E tests. Each run creates isolated test users and cleans them up automatically via `/api/test/cleanup`.
+
 ## Configuration
 
 All config is loaded from `.env.<NODE_ENV>` in the `server/` directory.
@@ -156,7 +177,7 @@ These run in-process (no subprocess overhead):
 | Twelve Data | API key | Real-time and historical market data |
 | Meta MCP Search | None | Semantic tool discovery — the AI's entry point to all tools |
 
-External servers (stdio subprocess) can be added per-role through the MCP settings panel: GitHub, Brave Search, or any custom server.
+External servers (stdio subprocess) can be configured per-role through the MCP settings panel. Adding new ones requires a code change and redeployment.
 
 ## Project Structure
 
