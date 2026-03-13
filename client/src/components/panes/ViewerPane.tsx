@@ -4,7 +4,7 @@ import { X } from 'lucide-react';
 import { TopBanner } from '../TopBanner';
 import { previewAdapterRegistry } from '../../lib/preview-adapters';
 
-export { MCPManagerDialog } from '../settings/MCPManagerDialog';
+export { SettingsDialog } from '../settings/SettingsDialog';
 
 export function ViewerPane({ onClose }: { onClose?: () => void }) {
   const { viewerFile } = useUIStore();

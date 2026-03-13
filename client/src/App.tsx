@@ -5,7 +5,7 @@ import { useAuthStore, useEnvironmentStore, useUIStore, useRolesStore } from './
 import { initializePreviewAdapters } from './lib/adapters';
 import { Sidebar } from './components/Sidebar';
 import { ChatPane } from './components/panes/ChatPane';
-import { ViewerPane, MCPManagerDialog } from './components/panes/ViewerPane';
+import { ViewerPane, SettingsDialog } from './components/panes/ViewerPane';
 import { OnboardingPane } from './components/panes/OnboardingPane';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTheme } from './hooks/useTheme';
@@ -21,7 +21,7 @@ const OAuthCallbackPage = lazy(() => import('./pages/OAuthCallbackPage').then(m 
 function MainApp() {
   const isMobile = useIsMobile();
   const { user } = useAuthStore();
-  const { showMcpManager, setShowMcpManager, viewerFile, setViewerFile, mobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
+  const { showSettings, setShowSettings, viewerFile, setViewerFile, mobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
   const { currentRole, rolesLoaded } = useRolesStore();
 
   useEffect(() => {
@@ -30,13 +30,13 @@ function MainApp() {
       const isSettingsShortcut = (isMac ? e.metaKey : e.ctrlKey) && e.shiftKey && e.key === ',';
       if (isSettingsShortcut) {
         e.preventDefault();
-        setShowMcpManager(true);
+        setShowSettings(true);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setShowMcpManager]);
+  }, [setShowSettings]);
 
   useEffect(() => {
     document.title = currentRole ? `${currentRole.name} - assist1` : 'assist1';
@@ -88,10 +88,10 @@ function MainApp() {
         />
       )}
 
-      {showMcpManager && (
-        <DialogOverlay onClose={() => setShowMcpManager(false)}>
-          <MCPManagerDialog
-            onClose={() => setShowMcpManager(false)}
+      {showSettings && (
+        <DialogOverlay onClose={() => setShowSettings(false)}>
+          <SettingsDialog
+            onClose={() => setShowSettings(false)}
           />
         </DialogOverlay>
       )}

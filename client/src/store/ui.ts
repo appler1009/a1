@@ -51,7 +51,7 @@ interface UIState {
   mobileSidebarOpen: boolean;
   viewerTab: string;
   viewerFile: ViewerFile | null;
-  showMcpManager: boolean;
+  showSettings: boolean;
   showScheduledJobs: boolean;
   roleSwitching: boolean;
   toggleSidebar: () => void;
@@ -59,7 +59,7 @@ interface UIState {
   setMobileSidebarOpen: (open: boolean) => void;
   setViewerTab: (tab: string) => void;
   setViewerFile: (file: ViewerFile | null) => void;
-  setShowMcpManager: (show: boolean) => void;
+  setShowSettings: (show: boolean) => void;
   setShowScheduledJobs: (show: boolean) => void;
   setRoleSwitching: (switching: boolean) => void;
 }
@@ -71,7 +71,7 @@ export const useUIStore = create<UIState>()(
       mobileSidebarOpen: false,
       viewerTab: 'docs',
       viewerFile: null,
-      showMcpManager: false,
+      showSettings: false,
       showScheduledJobs: false,
       roleSwitching: false,
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
@@ -79,7 +79,7 @@ export const useUIStore = create<UIState>()(
       setMobileSidebarOpen: (open) => set({ mobileSidebarOpen: open }),
       setViewerTab: (tab) => set({ viewerTab: tab }),
       setViewerFile: (file) => set({ viewerFile: file }),
-      setShowMcpManager: (show) => set({ showMcpManager: show }),
+      setShowSettings: (show) => set({ showSettings: show }),
       setShowScheduledJobs: (show) => set({ showScheduledJobs: show }),
       setRoleSwitching: (switching) => set({ roleSwitching: switching }),
     }),
@@ -89,7 +89,7 @@ export const useUIStore = create<UIState>()(
         sidebarOpen: state.sidebarOpen,
         viewerTab: state.viewerTab,
         viewerFile: state.viewerFile,
-        showMcpManager: state.showMcpManager,
+        showSettings: state.showSettings,
       }),
     }
   )

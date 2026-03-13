@@ -1,4 +1,5 @@
 import React from 'react';
+import { licenses } from 'virtual:licenses';
 import { apiFetch } from '../../lib/api';
 import { AccountSettings } from './AccountSettings';
 import { BYOKSettings } from './BYOKSettings';
@@ -27,11 +28,11 @@ interface PredefinedMCPServer {
   hidden?: boolean;
 }
 
-interface MCPManagerDialogProps {
+interface SettingsDialogProps {
   onClose: () => void;
 }
 
-export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
+export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [servers, setServers] = React.useState<MCPServer[]>([]);
   const [predefinedServers, setPredefinedServers] = React.useState<PredefinedMCPServer[]>([]);
   const [adding, setAdding] = React.useState(false);
@@ -868,29 +869,10 @@ export function MCPManagerDialog({ onClose }: MCPManagerDialogProps) {
                 </button>
                 {showLicenses && (
                   <div className="mt-3 space-y-2 max-h-72 overflow-y-auto pr-1">
-                    {([
-                      { name: 'React', license: 'MIT', author: 'Meta Platforms, Inc.' },
-                      { name: 'react-router-dom', license: 'MIT', author: 'Remix Software' },
-                      { name: 'Zustand', license: 'MIT', author: 'Paul Henschel' },
-                      { name: 'Tailwind CSS', license: 'MIT', author: 'Tailwind Labs' },
-                      { name: 'Vite', license: 'MIT', author: 'Yuxi (Evan) You' },
-                      { name: '@radix-ui', license: 'MIT', author: 'WorkOS' },
-                      { name: 'lucide-react', license: 'ISC', author: 'Lucide Contributors' },
-                      { name: 'react-markdown', license: 'MIT', author: 'Titus Wormer' },
-                      { name: 'react-resizable-panels', license: 'MIT', author: 'Brian Vaughn' },
-                      { name: '@tanstack/react-query', license: 'MIT', author: 'TanStack' },
-                      { name: 'fuse.js', license: 'Apache 2.0', author: 'Kiro Risk' },
-                      { name: 'marked', license: 'MIT', author: 'Christopher Jeffrey' },
-                      { name: 'clsx', license: 'MIT', author: 'Luke Edwards' },
-                      { name: 'class-variance-authority', license: 'Apache 2.0', author: 'Joe Bell' },
-                      { name: 'Fastify', license: 'MIT', author: 'Fastify Contributors' },
-                      { name: 'better-sqlite3', license: 'MIT', author: 'Joshua Wise' },
-                      { name: '@aws-sdk', license: 'Apache 2.0', author: 'Amazon Web Services' },
-                      { name: 'Bun', license: 'MIT', author: 'Oven' },
-                    ] as const).map(({ name, license, author }) => (
+                    {licenses.map(({ name, license, author }) => (
                       <div key={name} className="flex items-baseline justify-between text-sm py-1 border-b border-border/50 last:border-0">
                         <span className="font-medium">{name}</span>
-                        <span className="text-muted-foreground text-xs ml-4 shrink-0">{license} · {author}</span>
+                        <span className="text-muted-foreground text-xs ml-4 shrink-0">{author ? `${license} · ${author}` : license}</span>
                       </div>
                     ))}
                   </div>

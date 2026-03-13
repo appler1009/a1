@@ -33,7 +33,7 @@ export function Sidebar() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { user, currentGroup, groups, setCurrentGroup, logout } = useAuthStore();
   const { roles, currentRole, switchRole, addRole } = useRolesStore();
-  const { sidebarOpen, toggleSidebar, mobileSidebarOpen, setMobileSidebarOpen, setShowMcpManager, showScheduledJobs, setShowScheduledJobs, roleSwitching, setRoleSwitching } = useUIStore();
+  const { sidebarOpen, toggleSidebar, mobileSidebarOpen, setMobileSidebarOpen, setShowSettings, showScheduledJobs, setShowScheduledJobs, roleSwitching, setRoleSwitching } = useUIStore();
   const environment = useEnvironmentStore((state) => state.environment);
 
   useEffect(() => {
@@ -330,7 +330,7 @@ export function Sidebar() {
             </button>
           )}
           <button
-            onClick={() => setShowMcpManager(true)}
+            onClick={() => setShowSettings(true)}
             className="p-2 hover:bg-muted rounded-lg flex items-center gap-2 text-sm"
             title="Settings"
           >

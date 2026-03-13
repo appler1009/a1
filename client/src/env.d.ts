@@ -7,3 +7,7 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+declare module 'virtual:licenses' {
+  export const licenses: Array<{ name: string; license: string; author: string }>;
+}
