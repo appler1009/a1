@@ -203,7 +203,7 @@ export interface IMainDatabase {
   updateStripePaymentStatus(stripePaymentIntentId: string, status: 'pending' | 'succeeded' | 'failed'): Promise<void>;
   getStripePaymentByIntentId(stripePaymentIntentId: string): Promise<StripePayment | null>;
   getStripePayments(userId: string): Promise<StripePayment[]>;
-  getCreditLedger(userId: string, limit?: number): Promise<CreditLedgerEntry[]>;
+  getCreditLedger(userId: string, limit?: number, cursor?: { before?: string; after?: string }): Promise<CreditLedgerEntry[]>;
 
   // ---- Token Usage ----
   recordTokenUsage(record: {

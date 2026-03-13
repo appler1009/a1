@@ -2237,10 +2237,24 @@ export class MainDatabase implements IMainDatabase {
     };
   }
 
-  async getCreditLedger(userId: string, limit = 50): Promise<CreditLedgerEntry[]> {
-    const rows = this.db.prepare(`
-      SELECT * FROM credit_ledger WHERE userId = ? ORDER BY createdAt DESC LIMIT ?
-    `).all(userId, limit) as Array<{
+  async getCreditLedger(userId: string, limit = 25, cursor: { before?: string; after?: string } = {}): Promise<CreditLedgerEntry[]> {
+    let sql = `SELECT * FROM credit_ledger WHERE userId = ?`;
+    const params: (string | number)[] = [userId];
+
+    if (cursor.before) {
+      sql += ` AND createdAt < ?`;
+      params.push(cursor.before);
+    } else if (cursor.after) {
+      sql += ` AND createdAt > ?`;
+      params.push(cursor.after);
+    }
+
+    // When paginating forward (after) we need ascending order then reverse
+    const ascending = !!cursor.after;
+    sql += ` ORDER BY createdAt ${ascending ? 'ASC' : 'DESC'} LIMIT ?`;
+    params.push(limit);
+
+    const rows = this.db.prepare(sql).all(...params) as Array<{
       id: string;
       userId: string;
       type: string;
@@ -2251,7 +2265,7 @@ export class MainDatabase implements IMainDatabase {
       model: string | null;
       createdAt: string;
     }>;
-    return rows.map(row => ({
+    const mapped = rows.map(row => ({
       id: row.id,
       userId: row.userId,
       type: row.type as CreditLedgerEntry['type'],
@@ -2262,6 +2276,9 @@ export class MainDatabase implements IMainDatabase {
       model: row.model ?? undefined,
       createdAt: new Date(row.createdAt),
     }));
+
+    // After-cursor results come back oldest-first; reverse so caller always gets newest-first
+    return ascending ? mapped.reverse() : mapped;
   }
 
   async getStripePayments(userId: string): Promise<StripePayment[]> {

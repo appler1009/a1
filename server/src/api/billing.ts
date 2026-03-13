@@ -128,11 +128,14 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
-    const query = request.query as { limit?: string };
-    const limit = Math.min(parseInt(query.limit ?? '100', 10), 500);
+    const query = request.query as { limit?: string; before?: string; after?: string };
+    const limit = Math.min(parseInt(query.limit ?? '25', 10), 100);
 
     const mainDb = await getMainDatabase(config.storage.root);
-    const entries = await mainDb.getCreditLedger(request.user.id, limit);
+    const entries = await mainDb.getCreditLedger(request.user.id, limit, {
+      before: query.before,
+      after: query.after,
+    });
 
     return reply.send({
       success: true,

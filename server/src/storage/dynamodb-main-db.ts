@@ -1831,15 +1831,27 @@ export class DynamoDBMainDatabase implements IMainDatabase {
   // Credit Ledger
   // ================================================================
 
-  async getCreditLedger(userId: string, limit = 50): Promise<import('./main-db.js').CreditLedgerEntry[]> {
-    const { Items } = await this.client.send(new QueryCommand({
+  async getCreditLedger(userId: string, limit = 25, cursor: { before?: string; after?: string } = {}): Promise<import('./main-db.js').CreditLedgerEntry[]> {
+    const params: QueryCommandInput = {
       TableName: this.tables.creditLedger,
       KeyConditionExpression: 'userId = :userId',
       ExpressionAttributeValues: { ':userId': userId },
-      ScanIndexForward: false,   // newest first
+      ScanIndexForward: false,  // newest first by default
       Limit: limit,
-    }));
-    return (Items ?? []).map(item => ({
+    };
+
+    // sk format is `createdAt#id` so range comparisons on sk work as time cursors
+    if (cursor.before) {
+      params.KeyConditionExpression += ' AND sk < :cursor';
+      (params.ExpressionAttributeValues as Record<string, unknown>)[':cursor'] = cursor.before;
+    } else if (cursor.after) {
+      params.KeyConditionExpression += ' AND sk > :cursor';
+      (params.ExpressionAttributeValues as Record<string, unknown>)[':cursor'] = cursor.after;
+      params.ScanIndexForward = true;  // ascending to get the next page
+    }
+
+    const { Items } = await this.client.send(new QueryCommand(params));
+    const mapped = (Items ?? []).map(item => ({
       id: item.id as string,
       userId: item.userId as string,
       type: item.type as 'topup' | 'usage',
@@ -1850,6 +1862,9 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       model: (item.model as string) || undefined,
       createdAt: new Date(item.createdAt as string),
     }));
+
+    // after-cursor results come back oldest-first; reverse so caller always gets newest-first
+    return cursor.after ? mapped.reverse() : mapped;
   }
 
   private async _deleteMemberships(userId: string): Promise<void> {
