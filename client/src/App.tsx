@@ -8,6 +8,7 @@ import { ChatPane } from './components/panes/ChatPane';
 import { ViewerPane, MCPManagerDialog } from './components/panes/ViewerPane';
 import { OnboardingPane } from './components/panes/OnboardingPane';
 import { useIsMobile } from './hooks/useIsMobile';
+import { useTheme } from './hooks/useTheme';
 import { DialogOverlay } from './components/DialogOverlay';
 
 // Lazy-load route-only pages to keep the main bundle lean
@@ -99,6 +100,7 @@ function MainApp() {
 }
 
 function App() {
+  useTheme();
   const fetchEnvironment = useEnvironmentStore((state) => state.fetchEnvironment);
   const fetchRoles = useRolesStore((state) => state.fetchRoles);
   const user = useAuthStore((state) => state.user);

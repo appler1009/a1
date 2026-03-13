@@ -8,8 +8,11 @@ import {
   ChevronRight,
   Brain,
   Clock,
-  FileText
+  FileText,
+  Sun,
+  Moon,
 } from 'lucide-react';
+import { useTheme } from '../hooks/useTheme';
 import { useAuthStore, useRolesStore, useUIStore, useEnvironmentStore } from '../store';
 import { CreateRoleDialog } from './CreateRoleDialog';
 import { RoleDescriptionDialog } from './RoleDescriptionDialog';
@@ -27,6 +30,7 @@ export function Sidebar() {
   const [descriptionDialogRole, setDescriptionDialogRole] = useState<{ id: string; name: string; jobDesc?: string } | null>(null);
 
   const isMobile = useIsMobile();
+  const { theme, setTheme, resolvedTheme } = useTheme();
   const { user, currentGroup, groups, setCurrentGroup, logout } = useAuthStore();
   const { roles, currentRole, switchRole, addRole } = useRolesStore();
   const { sidebarOpen, toggleSidebar, mobileSidebarOpen, setMobileSidebarOpen, setShowMcpManager, showScheduledJobs, setShowScheduledJobs, roleSwitching, setRoleSwitching } = useUIStore();
@@ -275,6 +279,56 @@ export function Sidebar() {
             <Clock className="w-4 h-4" />
             {(isMobile || sidebarOpen) && <span>Scheduled</span>}
           </button>
+          {(isMobile || sidebarOpen) ? (
+            <div className="flex items-center gap-2 px-2 py-1.5 text-sm">
+              {/* Dark / Light toggle */}
+              <button
+                disabled={theme === 'system'}
+                onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-md border transition-colors ${
+                  theme === 'system'
+                    ? 'opacity-50 cursor-default border-border text-muted-foreground'
+                    : 'border-border hover:bg-muted cursor-pointer'
+                }`}
+                title={theme === 'system' ? `System (${resolvedTheme})` : `Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'}`}
+              >
+                {resolvedTheme === 'dark'
+                  ? <Moon className="w-3.5 h-3.5" />
+                  : <Sun className="w-3.5 h-3.5" />}
+                <span className="capitalize">{resolvedTheme}</span>
+              </button>
+
+              <div className="flex-1" />
+
+              {/* System checkbox */}
+              <label className="flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground select-none">
+                <span>System</span>
+                <input
+                  type="checkbox"
+                  checked={theme === 'system'}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setTheme('system');
+                    } else {
+                      setTheme(resolvedTheme);
+                    }
+                  }}
+                  className="w-3.5 h-3.5 accent-primary"
+                />
+              </label>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                if (theme === 'system') setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+                else setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+              }}
+              className="p-2 hover:bg-muted rounded-lg"
+              title={`Theme: ${theme} (${resolvedTheme})`}
+            >
+              {resolvedTheme === 'dark' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+            </button>
+          )}
           <button
             onClick={() => setShowMcpManager(true)}
             className="p-2 hover:bg-muted rounded-lg flex items-center gap-2 text-sm"
