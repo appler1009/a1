@@ -4,7 +4,7 @@
   "description": "Scheduled job evaluator — runs on EventBridge every 5 minutes",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc --noEmit && esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --external:@aws-sdk/*",
+    "build": "tsc --noEmit && esbuild src/index.ts --bundle --platform=node --target=node22 --outfile=dist/index.js --external:@aws-sdk/*",
     "package": "npm run build && cd dist && zip -r ../function.zip index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
