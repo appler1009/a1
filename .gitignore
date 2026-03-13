@@ -124,3 +124,4 @@ pnpm-lock.yaml
 # Local Lambda
 lambda-scheduler/*.zip
 
+docker-compose.override.yml

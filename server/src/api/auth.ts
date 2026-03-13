@@ -315,6 +315,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         await emailService.sendMagicLinkEmail(email, magicLink);
         emailSent = true;
       } catch (emailError) {
+        if (config.env.isProduction) {
+          throw emailError;
+        }
         console.warn('[MagicLink] Email send failed (no email service configured?):', emailError);
       }
 
@@ -322,9 +325,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         success: true,
         data: {
           message: emailSent ? 'Magic link sent to your email' : 'Magic link created (email not sent)',
-          // Expose the raw token when email delivery is unavailable so that
+          // Expose the raw token only in non-production environments so that
           // local dev and E2E tests can authenticate via /magic-link/verify directly.
-          ...(!emailSent ? { testToken: magicLinkToken.token } : {}),
+          ...(!config.env.isProduction && !emailSent ? { testToken: magicLinkToken.token } : {}),
         },
       });
     } catch (error) {

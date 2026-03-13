@@ -5,14 +5,12 @@ services:
       - "3000:3000"
     volumes:
       - ./data:/app/data
-      - ~/.aws:/root/.aws:ro
     env_file:
       - ./server/.env.production
     environment:
       - NODE_ENV=production
       - PORT=3000
       - HOST=0.0.0.0
-      - AWS_PROFILE=a1-task-local
       - COOKIE_SECURE=false
       - STORAGE_TYPE=s3
       - STORAGE_BUCKET=${STORAGE_BUCKET:-appler-a1}
