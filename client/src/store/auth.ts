@@ -8,6 +8,7 @@ export interface User {
   name?: string;
   accountType: 'individual' | 'group';
   discordUserId?: string;
+  telegramUserId?: string;
   locale?: string;
   timezone?: string;
   creditBalanceUsd?: number;

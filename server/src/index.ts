@@ -34,6 +34,7 @@ import { byokRoutes } from './api/byok.js';
 import { billingRoutes, billingWebhookRoute } from './api/billing.js';
 import { authService } from './auth/index.js';
 import { startDiscordBot } from './discord/bot.js';
+import { startTelegramBot, stopTelegramBot } from './telegram/bot.js';
 import { JobRunner } from './scheduler/job-runner.js';
 import { initializeGmailInProcess } from './mcp/in-process/gmail.js';
 import { initializeDisplayEmail } from './mcp/in-process/display-email.js';
@@ -520,6 +521,9 @@ const start = async () => {
 
     // Start Discord bot if token is configured
     await startDiscordBot(config.port);
+
+    // Start Telegram bot if token is configured
+    await startTelegramBot(config.port);
   } catch (error) {
     fastify.log.error(error);
     process.exit(1);
@@ -566,6 +570,7 @@ async function gracefulShutdown(signal: string) {
     ),
   ]);
 
+  stopTelegramBot();
   await fastify.close();
   console.log('[shutdown] Fastify closed — exiting');
   process.exit(0);

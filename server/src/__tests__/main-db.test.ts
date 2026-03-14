@@ -96,6 +96,37 @@ describe('Users', () => {
     await db.createUser('dup@example.com');
     await expect(db.createUser('dup@example.com')).rejects.toThrow();
   });
+
+  it('retrieves a user by discord ID', async () => {
+    const user = await db.createUser('disc@example.com');
+    await db.updateUser(user.id, { discordUserId: '111222333' });
+    const found = await db.getUserByDiscordId('111222333');
+    expect(found?.id).toBe(user.id);
+  });
+
+  it('returns null for unknown discord ID', async () => {
+    expect(await db.getUserByDiscordId('no-such-id')).toBeNull();
+  });
+
+  it('retrieves a user by telegram ID', async () => {
+    const user = await db.createUser('tg@example.com');
+    await db.updateUser(user.id, { telegramUserId: '987654321' });
+    const found = await db.getUserByTelegramId('987654321');
+    expect(found?.id).toBe(user.id);
+    expect(found?.telegramUserId).toBe('987654321');
+  });
+
+  it('returns null for unknown telegram ID', async () => {
+    expect(await db.getUserByTelegramId('no-such-id')).toBeNull();
+  });
+
+  it('can update and clear telegram ID', async () => {
+    const user = await db.createUser('tg2@example.com');
+    await db.updateUser(user.id, { telegramUserId: '111' });
+    expect((await db.getUser(user.id))?.telegramUserId).toBe('111');
+    await db.updateUser(user.id, { telegramUserId: '' });
+    expect((await db.getUser(user.id))?.telegramUserId).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

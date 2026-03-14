@@ -21,6 +21,7 @@ export interface AppConfig {
   gmail: { clientId: string; clientSecret: string; redirectUri: string };
   github: { clientId: string; clientSecret: string; redirectUri: string };
   discord: { botToken?: string; clientId?: string; channelIds: string[] };
+  telegram: { botToken?: string };
   ses: { region: string; senderEmail: string };
   stripe: {
     secretKey: string;
@@ -79,6 +80,9 @@ export function initConfig(): void {
       botToken: process.env.DISCORD_BOT_TOKEN,
       clientId: process.env.DISCORD_CLIENT_ID,
       channelIds: (process.env.DISCORD_CHANNEL_IDS || '').split(',').map(s => s.trim()).filter(Boolean),
+    },
+    telegram: {
+      botToken: process.env.TELEGRAM_BOT_TOKEN,
     },
     ses: {
       region: process.env.AWS_REGION || 'us-east-1',

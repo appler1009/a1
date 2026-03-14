@@ -42,6 +42,7 @@ export interface IMainDatabase {
   getUser(id: string): Promise<User | null>;
   getUserByEmail(email: string): Promise<User | null>;
   getUserByDiscordId(discordUserId: string): Promise<User | null>;
+  getUserByTelegramId(telegramUserId: string): Promise<User | null>;
   updateUser(id: string, updates: Partial<User>): Promise<User | null>;
   getAllUsers(): Promise<User[]>;
   deleteUser(id: string): Promise<boolean>;

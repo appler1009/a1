@@ -5,6 +5,7 @@ import { AccountSettings } from './AccountSettings';
 import { BYOKSettings } from './BYOKSettings';
 import { TokenUsageSettings } from './TokenUsageSettings';
 import { DiscordSettings } from './DiscordSettings';
+import { TelegramSettings } from './TelegramSettings';
 import { LocaleTimezoneSettings } from './LocaleTimezoneSettings';
 import { BillingSettings } from './BillingSettings';
 
@@ -44,7 +45,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [authProvider, setAuthProvider] = React.useState<string | null>(null);
   const [connecting, setConnecting] = React.useState(false);
   const [toast, setToast] = React.useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [activeTab, setActiveTab] = React.useState<'features' | 'region' | 'discord' | 'account' | 'models' | 'billing' | 'about'>('features');
+  const [activeTab, setActiveTab] = React.useState<'features' | 'region' | 'bots' | 'account' | 'models' | 'billing' | 'about'>('features');
   const [showLicenses, setShowLicenses] = React.useState(false);
 
   const [smtpImapForm, setSmtpImapForm] = React.useState<{
@@ -660,7 +661,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
       {/* Tab bar */}
       <div className="flex gap-1 mb-5 border-b border-border">
-        {(['account', 'billing', 'models', 'features', 'region', 'discord', 'about'] as const).map((tab) => (
+        {(['account', 'billing', 'models', 'features', 'region', 'bots', 'about'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -670,7 +671,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            {tab === 'region' ? 'Region' : tab === 'models' ? 'Models' : tab === 'billing' ? 'Billing' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {tab === 'region' ? 'Region' : tab === 'models' ? 'Models' : tab === 'billing' ? 'Billing' : tab === 'bots' ? 'Bots' : tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -869,11 +870,17 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             </div>
           )}
 
-          {/* Discord tab */}
-          {activeTab === 'discord' && (
-            <div className="mb-6">
-              <h3 className="text-sm font-semibold mb-3">Discord Integration</h3>
-              <DiscordSettings onUpdate={fetchServers} />
+          {/* Bots tab */}
+          {activeTab === 'bots' && (
+            <div className="mb-6 space-y-6">
+              <div>
+                <h3 className="text-sm font-semibold mb-3">Discord</h3>
+                <DiscordSettings onUpdate={fetchServers} />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold mb-3">Telegram</h3>
+                <TelegramSettings onUpdate={fetchServers} />
+              </div>
             </div>
           )}
 

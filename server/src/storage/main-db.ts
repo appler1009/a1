@@ -394,6 +394,9 @@ export class MainDatabase implements IMainDatabase {
     // Migrate users table to add discordUserId column if needed
     this.migrateDiscordUserIdSchema();
 
+    // Migrate users table to add telegramUserId column if needed
+    this.migrateTelegramUserIdSchema();
+
     // Migrate users table to add locale and timezone columns if needed
     this.migrateLocaleTimezoneSchema();
 
@@ -497,6 +500,25 @@ export class MainDatabase implements IMainDatabase {
     } catch (error) {
       console.warn('[MainDatabase] Error during discordUserId schema migration:', error);
       // Don't fail initialization if migration fails
+    }
+  }
+
+  /**
+   * Add telegramUserId column to users table if it doesn't exist
+   */
+  private migrateTelegramUserIdSchema(): void {
+    try {
+      const tableInfo = this.db.prepare(`PRAGMA table_info(users)`).all() as Array<{
+        name: string;
+        type: string;
+      }>;
+      if (!tableInfo.some(col => col.name === 'telegramUserId')) {
+        console.log('[MainDatabase] Adding telegramUserId column to users table...');
+        this.db.exec(`ALTER TABLE users ADD COLUMN telegramUserId TEXT;`);
+        console.log('[MainDatabase] telegramUserId column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during telegramUserId schema migration:', error);
     }
   }
 
@@ -618,6 +640,7 @@ export class MainDatabase implements IMainDatabase {
       name: string | null;
       accountType: 'individual' | 'group';
       discordUserId: string | null;
+      telegramUserId: string | null;
       locale: string | null;
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
@@ -635,6 +658,7 @@ export class MainDatabase implements IMainDatabase {
       name: row.name || undefined,
       accountType: row.accountType,
       discordUserId: row.discordUserId || undefined,
+      telegramUserId: row.telegramUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
@@ -652,6 +676,7 @@ export class MainDatabase implements IMainDatabase {
       name: string | null;
       accountType: 'individual' | 'group';
       discordUserId: string | null;
+      telegramUserId: string | null;
       locale: string | null;
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
@@ -669,6 +694,7 @@ export class MainDatabase implements IMainDatabase {
       name: row.name || undefined,
       accountType: row.accountType,
       discordUserId: row.discordUserId || undefined,
+      telegramUserId: row.telegramUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
@@ -686,6 +712,7 @@ export class MainDatabase implements IMainDatabase {
       name: string | null;
       accountType: 'individual' | 'group';
       discordUserId: string | null;
+      telegramUserId: string | null;
       locale: string | null;
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
@@ -703,6 +730,43 @@ export class MainDatabase implements IMainDatabase {
       name: row.name || undefined,
       accountType: row.accountType,
       discordUserId: row.discordUserId || undefined,
+      telegramUserId: row.telegramUserId || undefined,
+      locale: row.locale || undefined,
+      timezone: row.timezone || undefined,
+      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
+      creditBalanceUsd: row.creditBalanceUsd ?? 0,
+      emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    };
+  }
+
+  async getUserByTelegramId(telegramUserId: string): Promise<User | null> {
+    const row = this.db.prepare('SELECT * FROM users WHERE telegramUserId = ?').get(telegramUserId) as {
+      id: string;
+      email: string;
+      name: string | null;
+      accountType: 'individual' | 'group';
+      discordUserId: string | null;
+      telegramUserId: string | null;
+      locale: string | null;
+      timezone: string | null;
+      monthlySpendLimitUsd: number | null;
+      creditBalanceUsd: number;
+      emailDisabled: string | null;
+      createdAt: string;
+      updatedAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      email: row.email,
+      name: row.name || undefined,
+      accountType: row.accountType,
+      discordUserId: row.discordUserId || undefined,
+      telegramUserId: row.telegramUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
@@ -736,6 +800,10 @@ export class MainDatabase implements IMainDatabase {
     if (updates.discordUserId !== undefined) {
       fields.push('discordUserId = ?');
       values.push(updates.discordUserId || null);
+    }
+    if (updates.telegramUserId !== undefined) {
+      fields.push('telegramUserId = ?');
+      values.push(updates.telegramUserId || null);
     }
     if (updates.locale !== undefined) {
       fields.push('locale = ?');
@@ -778,6 +846,7 @@ export class MainDatabase implements IMainDatabase {
       name: string | null;
       accountType: 'individual' | 'group';
       discordUserId: string | null;
+      telegramUserId: string | null;
       locale: string | null;
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
@@ -793,6 +862,7 @@ export class MainDatabase implements IMainDatabase {
       name: row.name || undefined,
       accountType: row.accountType,
       discordUserId: row.discordUserId || undefined,
+      telegramUserId: row.telegramUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,

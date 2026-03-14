@@ -14,6 +14,7 @@ A self-hosted, multi-user AI agent platform with first-class MCP (Model Context 
 - **Memory System**: Per-role knowledge graph (entities + relations) backed by SQLite locally or DynamoDB in production
 - **Scheduled Jobs**: Lambda-based job runner for autonomous background tasks with two-phase tool discovery
 - **Discord Bot**: Expose any agent role to Discord; responds to @mentions or auto-replies in configured channels
+- **Telegram Bot**: Expose any agent role to Telegram; responds to private messages and @mentions in group chats
 - **Split-pane UI**: Chat on the left, file/email/document viewer on the right; responsive mobile layout with cross-device message sync
 - **Token Usage Tracking**: Per-user cost accounting across all LLM providers, with configurable monthly spend limits
 - **OAuth Token Security**: AES-256 encryption via AWS KMS; can be disabled for local dev without AWS
@@ -151,6 +152,12 @@ These enable users to link external services after logging in — they are not l
 | `DISCORD_CLIENT_ID` | Discord application client ID |
 | `DISCORD_CHANNEL_IDS` | Comma-separated channel IDs for auto-respond (optional) |
 
+### Telegram Bot
+
+| Variable | Description |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather — bot is disabled when unset |
+
 ### MCP
 
 | Variable | Description | Default |
@@ -197,7 +204,9 @@ External servers (stdio subprocess) can be configured per-role through the MCP s
 │       ├── api/              # REST route handlers
 │       ├── auth/             # Session auth, magic link, Google/GitHub OAuth (connected accounts)
 │       ├── config/           # App config
+│       ├── bots/             # Shared bot abstraction (BaseBot, session mgmt, SSE parsing)
 │       ├── discord/          # Discord bot
+│       ├── telegram/         # Telegram bot
 │       ├── mcp/
 │       │   ├── adapters/     # BaseStdioAdapter, InProcessAdapter, MultiAccountAdapter, registry
 │       │   └── in-process/   # Built-in MCP server implementations

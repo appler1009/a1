@@ -7,6 +7,7 @@ export const UserSchema = z.object({
   name: z.string().optional(),
   accountType: z.enum(['individual', 'group']),
   discordUserId: z.string().optional(),
+  telegramUserId: z.string().optional(),
   locale: z.string().optional(),
   timezone: z.string().optional(),
   monthlySpendLimitUsd: z.number().optional(),

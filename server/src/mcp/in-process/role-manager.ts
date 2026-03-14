@@ -12,7 +12,7 @@
 import type { MCPToolInfo } from '@local-agent/shared';
 import type { InProcessMCPModule } from '../adapters/InProcessAdapter.js';
 import type { IMainDatabase } from '../../storage/main-db.js';
-import { pendingRoleChanges } from '../../discord/pending-role-changes.js';
+import { pendingRoleChanges } from '../../bots/pending-role-changes.js';
 
 /**
  * Role Manager In-Process MCP Module

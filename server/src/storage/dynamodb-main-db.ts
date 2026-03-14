@@ -58,6 +58,7 @@ function toUser(item: Record<string, unknown>): User {
     name: (item.name as string) || undefined,
     accountType: (item.accountType as 'individual' | 'group') || 'individual',
     discordUserId: (item.discordUserId as string) || undefined,
+    telegramUserId: (item.telegramUserId as string) || undefined,
     locale: (item.locale as string) || undefined,
     timezone: (item.timezone as string) || undefined,
     monthlySpendLimitUsd: item.monthlySpendLimitUsd !== undefined ? (item.monthlySpendLimitUsd as number) : undefined,
@@ -278,6 +279,28 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     return Items?.[0] ? toUser(Items[0]) : null;
   }
 
+  async getUserByTelegramId(telegramUserId: string): Promise<User | null> {
+    // NOTE: For production DynamoDB, add a 'telegramUserId-index' GSI on the users table.
+    // Until then, falls back to a table scan (acceptable for small user counts).
+    const { Items } = await this.client.send(new QueryCommand({
+      TableName: this.tables.users,
+      IndexName: 'telegramUserId-index',
+      KeyConditionExpression: 'telegramUserId = :tid',
+      ExpressionAttributeValues: { ':tid': telegramUserId },
+      Limit: 1,
+    })).catch(async () => {
+      // GSI not yet provisioned — fall back to scan
+      const { Items: scanItems } = await this.client.send(new ScanCommand({
+        TableName: this.tables.users,
+        FilterExpression: 'telegramUserId = :tid',
+        ExpressionAttributeValues: { ':tid': telegramUserId },
+        Limit: 1,
+      }));
+      return { Items: scanItems };
+    });
+    return Items?.[0] ? toUser(Items[0]) : null;
+  }
+
   async updateUser(id: string, updates: Partial<User>): Promise<User | null> {
     const now = new Date().toISOString();
     const sets: string[] = ['updatedAt = :updatedAt'];
@@ -288,6 +311,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     if (updates.name !== undefined) { sets.push('#name = :name'); names['#name'] = 'name'; values[':name'] = updates.name ?? null; }
     if (updates.accountType !== undefined) { sets.push('accountType = :accountType'); values[':accountType'] = updates.accountType; }
     if (updates.discordUserId !== undefined) { sets.push('discordUserId = :discordUserId'); values[':discordUserId'] = updates.discordUserId ?? null; }
+    if (updates.telegramUserId !== undefined) { sets.push('telegramUserId = :telegramUserId'); values[':telegramUserId'] = updates.telegramUserId ?? null; }
     if (updates.locale !== undefined) { sets.push('locale = :locale'); values[':locale'] = updates.locale ?? null; }
     if (updates.timezone !== undefined) { sets.push('timezone = :timezone'); values[':timezone'] = updates.timezone ?? null; }
     if (updates.monthlySpendLimitUsd !== undefined) { sets.push('monthlySpendLimitUsd = :monthlySpendLimitUsd'); values[':monthlySpendLimitUsd'] = updates.monthlySpendLimitUsd ?? null; }

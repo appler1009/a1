@@ -451,12 +451,13 @@ export async function authRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const body = request.body as { name?: string; discordUserId?: string; locale?: string; timezone?: string };
+    const body = request.body as { name?: string; discordUserId?: string; telegramUserId?: string; locale?: string; timezone?: string };
     const mainDb = await getMainDatabase(config.storage.root);
 
-    const updates: Partial<{ name?: string; discordUserId?: string; locale?: string; timezone?: string }> = {};
+    const updates: Partial<{ name?: string; discordUserId?: string; telegramUserId?: string; locale?: string; timezone?: string }> = {};
     if (body.name !== undefined) updates.name = body.name;
     if (body.discordUserId !== undefined) updates.discordUserId = body.discordUserId;
+    if (body.telegramUserId !== undefined) updates.telegramUserId = body.telegramUserId;
     if (body.locale !== undefined) updates.locale = body.locale;
     if (body.timezone !== undefined) updates.timezone = body.timezone;
 
