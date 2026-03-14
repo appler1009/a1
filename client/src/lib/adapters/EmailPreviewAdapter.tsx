@@ -99,26 +99,66 @@ function EmailHeader({ email }: { email: EmailMessage }) {
 }
 
 /**
+ * Sandboxed iframe renderer for HTML email bodies.
+ *
+ * Renders the email HTML inside an <iframe srcdoc> so that all styles,
+ * fonts, and globals defined by the email are fully isolated from the
+ * host page's DOM.  No scripts are allowed to run (no `allow-scripts`
+ * in the sandbox attribute), but links open normally in a new tab via
+ * `allow-popups`.
+ *
+ * Height is adjusted to match the iframe content after load so the
+ * parent scroll container handles scrolling (no nested scrollbars).
+ */
+function HtmlEmailFrame({ html }: { html: string }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(300);
+
+  const updateHeight = () => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    try {
+      const doc = iframe.contentDocument;
+      if (doc?.documentElement) {
+        const h = Math.max(
+          doc.documentElement.scrollHeight,
+          doc.body?.scrollHeight ?? 0,
+        );
+        if (h > 0) setHeight(h);
+      }
+    } catch {
+      // Shouldn't happen with srcdoc + allow-same-origin, but ignore if it does.
+    }
+  };
+
+  return (
+    <iframe
+      ref={iframeRef}
+      srcDoc={html}
+      // allow-same-origin: lets us read scrollHeight after load.
+      // allow-popups + allow-popups-to-escape-sandbox: links open in new tab.
+      // No allow-scripts: email JS is never executed.
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      onLoad={updateHeight}
+      style={{ width: '100%', height: `${height}px`, border: 'none', display: 'block' }}
+      title="Email content"
+    />
+  );
+}
+
+/**
  * Email body display
  */
 function EmailBody({ email }: { email: EmailMessage }) {
   if (email.isHtml) {
-    // NOTE: For production use, install and use DOMPurify for HTML sanitization:
-    // npm install dompurify
-    // import DOMPurify from 'dompurify';
-    // const sanitized = DOMPurify.sanitize(email.body);
-    //
-    // This implementation renders HTML as-is. Only use with trusted email sources!
-
-    // Post-process HTML to add target="_blank" to all links
+    // Patch all links to open in a new tab (the iframe sandbox's allow-popups
+    // makes this work without needing allow-scripts).
     const processedHtml = email.body.replace(
       /<a\s+([^>]*?)href\s*=\s*['"]([^'"]+)['"](.*?)>/gi,
       (match, before, href, after) => {
-        // Only add target="_blank" if it doesn't already have a target attribute
         if (!/\btarget\s*=/i.test(match)) {
           return `<a ${before}href="${href}" target="_blank" rel="noopener noreferrer"${after}>`;
         }
-        // If it already has a target, ensure rel="noopener noreferrer" for external links
         if (!/\brel\s*=/i.test(match)) {
           return `<a ${before}href="${href}"${after} rel="noopener noreferrer">`;
         }
@@ -127,47 +167,9 @@ function EmailBody({ email }: { email: EmailMessage }) {
     );
 
     return (
-      <>
-        <style>{`
-          .email-html-body table,
-          .email-html-body table * {
-            border: none !important;
-            border-collapse: collapse;
-          }
-          .email-html-body {
-            color: inherit !important;
-            background-color: inherit !important;
-            font-family: inherit !important;
-          }
-          .email-html-body * {
-            color: inherit !important;
-            font-family: inherit !important;
-          }
-          .email-html-body h1,
-          .email-html-body h2,
-          .email-html-body h3,
-          .email-html-body h4,
-          .email-html-body h5,
-          .email-html-body h6 {
-            font-weight: 600;
-            margin-top: 0.75rem;
-            margin-bottom: 0.5rem;
-          }
-          .email-html-body a {
-            color: hsl(var(--primary)) !important;
-            text-decoration: underline;
-          }
-          .email-html-body a:hover {
-            opacity: 0.8;
-          }
-        `}</style>
-        <div
-          className="email-html-body max-w-none p-4 text-base leading-relaxed"
-          dangerouslySetInnerHTML={{ __html: processedHtml }}
-          // WARNING: dangerouslySetInnerHTML can be a security risk
-          // Only use if email content is from a trusted source
-        />
-      </>
+      <div className="p-2">
+        <HtmlEmailFrame html={processedHtml} />
+      </div>
     );
   }
 
