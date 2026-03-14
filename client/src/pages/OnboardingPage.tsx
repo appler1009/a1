@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Users, User, Building2, Copy, Check } from 'lucide-react';
-import { useAuthStore } from '../store';
+import { useAuthStore } from '../store/auth';
 
 type OnboardingStep = 'choose' | 'individual' | 'create-group' | 'join-group' | 'created-group';
 

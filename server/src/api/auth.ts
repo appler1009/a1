@@ -7,6 +7,7 @@ import { GitHubOAuthHandler } from '../auth/github-oauth.js';
 import { getMainDatabase } from '../storage/index.js';
 import { config } from '../config/index.js';
 import { getEmailService } from '../email-service.js';
+import { PRICING_MARGIN } from '../ai/cost.js';
 
 export async function authRoutes(fastify: FastifyInstance) {
   // Check if email exists
@@ -805,6 +806,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         byModel,
         byProvider,
         recordCount: records.length,
+        margin: PRICING_MARGIN,
       },
     });
   });

@@ -13,6 +13,7 @@ type UsageData = {
   cacheCreationTokens: number;
   byModel: Record<string, ModelTokens>;
   byProvider: Record<string, ModelTokens & { totalTokens: number }>;
+  margin: number;
 };
 
 function toMonthParam(date: Date): string {
@@ -87,10 +88,11 @@ export function TokenUsageSettings() {
       {loading ? (
         <p className="text-xs text-muted-foreground">Loading...</p>
       ) : tokenUsage ? (() => {
+        const margin = tokenUsage.margin ?? 1;
         const totalCost = Object.entries(tokenUsage.byModel).reduce((sum, [model, t]) => {
           const cost = calculateCost(model, t);
           return cost !== null ? sum + cost : sum;
-        }, 0);
+        }, 0) * margin;
         const hasCost = Object.keys(tokenUsage.byModel).some(m => getPricing(m) !== null);
 
         const byProvider = tokenUsage.byProvider ?? {};
@@ -151,7 +153,7 @@ export function TokenUsageSettings() {
                     if (modelProvider !== providerPrefix) return sum;
                     const cost = calculateCost(model, mt);
                     return cost !== null ? sum + cost : sum;
-                  }, 0);
+                  }, 0) * margin;
                   const hasProviderCost = Object.keys(tokenUsage.byModel).some(model => {
                     const modelProvider = model.startsWith('claude-') ? 'anthropic'
                       : model.startsWith('gpt-') || model.startsWith('o1') || model.startsWith('o3') ? 'openai'

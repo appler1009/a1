@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { estimateCostUsd } from '../ai/cost.js';
+import { estimateCostUsd, PRICING_MARGIN } from '../ai/cost.js';
 import type { TokenUsageRecord } from '../storage/main-db-interface.js';
 
 function makeRecord(overrides: Partial<TokenUsageRecord> = {}): TokenUsageRecord {
@@ -19,6 +19,8 @@ function makeRecord(overrides: Partial<TokenUsageRecord> = {}): TokenUsageRecord
   };
 }
 
+const M = PRICING_MARGIN;
+
 describe('estimateCostUsd', () => {
   it('returns 0 for empty records', () => {
     expect(estimateCostUsd([])).toBe(0);
@@ -34,64 +36,64 @@ describe('estimateCostUsd', () => {
 
   describe('Anthropic (claude-haiku-4-5) — $1.00/M input, $5.00/M output', () => {
     it('calculates plain input cost', () => {
-      // 1M prompt tokens at $1.00/M = $1.00
+      // 1M prompt tokens at $1.00/M = $1.00 * margin
       const cost = estimateCostUsd([makeRecord({ promptTokens: 1_000_000 })]);
-      expect(cost).toBeCloseTo(1.0, 6);
+      expect(cost).toBeCloseTo(1.0 * M, 6);
     });
 
     it('calculates plain output cost', () => {
-      // 1M completion tokens at $5.00/M = $5.00
+      // 1M completion tokens at $5.00/M = $5.00 * margin
       const cost = estimateCostUsd([makeRecord({ completionTokens: 1_000_000 })]);
-      expect(cost).toBeCloseTo(5.0, 6);
+      expect(cost).toBeCloseTo(5.0 * M, 6);
     });
 
     it('does NOT subtract cachedInputTokens from promptTokens (Anthropic semantics)', () => {
       // promptTokens is already non-cached for Anthropic
-      // 1M prompt + 1M cached read — cost = $1.00 + $0.10 = $1.10
+      // 1M prompt + 1M cached read — cost = ($1.00 + $0.10) * margin
       const cost = estimateCostUsd([makeRecord({
         promptTokens: 1_000_000,
         cachedInputTokens: 1_000_000,
       })]);
-      expect(cost).toBeCloseTo(1.10, 6);
+      expect(cost).toBeCloseTo(1.10 * M, 6);
     });
 
     it('applies cache creation cost', () => {
-      // 1M cache creation tokens at $1.25/M = $1.25
+      // 1M cache creation tokens at $1.25/M = $1.25 * margin
       const cost = estimateCostUsd([makeRecord({ cacheCreationTokens: 1_000_000 })]);
-      expect(cost).toBeCloseTo(1.25, 6);
+      expect(cost).toBeCloseTo(1.25 * M, 6);
     });
 
     it('calculates combined input + output + cache', () => {
-      // 500k prompt ($0.50) + 500k output ($2.50) + 200k cached ($0.02) + 100k creation ($0.125) = $3.145
+      // 500k prompt ($0.50) + 500k output ($2.50) + 200k cached ($0.02) + 100k creation ($0.125) = $3.145 * margin
       const cost = estimateCostUsd([makeRecord({
         promptTokens: 500_000,
         completionTokens: 500_000,
         cachedInputTokens: 200_000,
         cacheCreationTokens: 100_000,
       })]);
-      expect(cost).toBeCloseTo(3.145, 6);
+      expect(cost).toBeCloseTo(3.145 * M, 6);
     });
   });
 
   describe('Grok (grok-4-1-fast-non-reasoning) — $0.20/M input, $0.50/M output', () => {
     it('calculates plain output cost', () => {
-      // 1M completion at $0.50/M = $0.50
+      // 1M completion at $0.50/M = $0.50 * margin
       const cost = estimateCostUsd([makeRecord({
         model: 'grok-4-1-fast-non-reasoning',
         completionTokens: 1_000_000,
       })]);
-      expect(cost).toBeCloseTo(0.50, 6);
+      expect(cost).toBeCloseTo(0.50 * M, 6);
     });
 
     it('subtracts cachedInputTokens from promptTokens (Grok semantics)', () => {
       // promptTokens=1M includes 400k cached. non-cached=600k at $0.20/M = $0.12
-      // cached 400k at $0.05/M = $0.02. total = $0.14
+      // cached 400k at $0.05/M = $0.02. total = $0.14 * margin
       const cost = estimateCostUsd([makeRecord({
         model: 'grok-4-1-fast-non-reasoning',
         promptTokens: 1_000_000,
         cachedInputTokens: 400_000,
       })]);
-      expect(cost).toBeCloseTo(0.14, 6);
+      expect(cost).toBeCloseTo(0.14 * M, 6);
     });
   });
 
@@ -102,7 +104,7 @@ describe('estimateCostUsd', () => {
         model: 'claude-haiku-4-5-20251001',
         promptTokens: 1_000_000,
       })]);
-      expect(cost).toBeCloseTo(1.0, 6);
+      expect(cost).toBeCloseTo(1.0 * M, 6);
     });
   });
 
@@ -110,11 +112,12 @@ describe('estimateCostUsd', () => {
     it('sums cost across multiple records', () => {
       // claude-haiku: 1M prompt = $1.00
       // grok: 1M output = $0.50
+      // total = $1.50 * margin
       const cost = estimateCostUsd([
         makeRecord({ model: 'claude-haiku-4-5', promptTokens: 1_000_000 }),
         makeRecord({ model: 'grok-4-1-fast-non-reasoning', completionTokens: 1_000_000 }),
       ]);
-      expect(cost).toBeCloseTo(1.50, 6);
+      expect(cost).toBeCloseTo(1.50 * M, 6);
     });
 
     it('skips unknown models without affecting total', () => {
@@ -122,7 +125,7 @@ describe('estimateCostUsd', () => {
         makeRecord({ model: 'claude-haiku-4-5', promptTokens: 1_000_000 }),
         makeRecord({ model: 'unknown-model', promptTokens: 999_000_000 }),
       ]);
-      expect(cost).toBeCloseTo(1.0, 6);
+      expect(cost).toBeCloseTo(1.0 * M, 6);
     });
   });
 });

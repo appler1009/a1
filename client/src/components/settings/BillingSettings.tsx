@@ -110,6 +110,104 @@ function PaymentForm({ amountCents, onSuccess, onCancel }: PaymentFormProps) {
   );
 }
 
+// ─── Collapsible ledger table ─────────────────────────────────────────────────
+
+interface CollapsibleLedgerProps {
+  ledger: LedgerEntry[];
+  ledgerLoading: boolean;
+  cursorStack: string[];
+  hasMore: boolean;
+  onFirst: () => void;
+  onPrev: () => void;
+  onNext: () => void;
+}
+
+function CollapsibleLedger({ ledger, ledgerLoading, cursorStack, hasMore, onFirst, onPrev, onNext }: CollapsibleLedgerProps) {
+  const [open, setOpen] = React.useState(false);
+
+  return (
+    <div className="rounded-lg border border-border overflow-hidden">
+      {/* Toggle header */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-muted/40 hover:bg-muted/60 transition-colors text-left"
+      >
+        <span className="text-xs font-medium text-muted-foreground">Transactions</span>
+        <span className="text-xs text-muted-foreground">{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <>
+          {/* Column headers */}
+          <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 bg-muted/20 text-xs font-medium text-muted-foreground border-t border-border">
+            <span>Description</span>
+            <span className="text-right">Amount</span>
+            <span className="text-right w-16">Balance</span>
+          </div>
+          {/* Rows */}
+          <div className="divide-y divide-border">
+            {ledgerLoading ? (
+              <div className="px-3 py-4 text-xs text-muted-foreground text-center">Loading…</div>
+            ) : ledger.length === 0 ? (
+              <div className="px-3 py-4 text-xs text-muted-foreground text-center">No transactions on this page</div>
+            ) : ledger.map(entry => (
+              <div
+                key={entry.id}
+                className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 text-xs items-center hover:bg-muted/20"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${entry.type === 'topup' ? 'bg-green-500' : 'bg-muted-foreground'}`} />
+                    <span className="truncate text-foreground">{entry.description}</span>
+                  </div>
+                  <span className="text-muted-foreground ml-3">
+                    {new Date(entry.createdAt).toLocaleString()}
+                  </span>
+                </div>
+                <span className={`text-right font-mono font-medium tabular-nums ${entry.type === 'topup' ? 'text-green-600' : 'text-muted-foreground'}`}>
+                  {entry.type === 'topup' ? '+' : '−'}${entry.amountUsd.toFixed(4)}
+                </span>
+                <span className="text-right font-mono tabular-nums text-muted-foreground w-16">
+                  ${entry.balanceAfter.toFixed(4)}
+                </span>
+              </div>
+            ))}
+          </div>
+          {/* Pagination */}
+          <div className="flex items-center justify-between px-3 py-2 border-t border-border bg-muted/20">
+            <button
+              onClick={onFirst}
+              disabled={ledgerLoading || cursorStack.length === 0}
+              className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              ← Latest
+            </button>
+            <span className="text-xs text-muted-foreground">
+              {cursorStack.length > 0 ? `Page ${cursorStack.length + 1}` : 'Page 1'}
+            </span>
+            <div className="flex gap-3">
+              <button
+                onClick={onPrev}
+                disabled={ledgerLoading || cursorStack.length === 0}
+                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                ‹ Prev
+              </button>
+              <button
+                onClick={onNext}
+                disabled={ledgerLoading || !hasMore}
+                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Next ›
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Main BillingSettings component ──────────────────────────────────────────
 
 export function BillingSettings() {
@@ -327,88 +425,26 @@ export function BillingSettings() {
 
       {/* Ledger */}
       {(ledger.length > 0 || ledgerLoading || cursorStack.length > 0) && (
-        <div>
-          <div className="rounded-lg border border-border overflow-hidden">
-            {/* Header */}
-            <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 bg-muted/40 text-xs font-medium text-muted-foreground">
-              <span>Description</span>
-              <span className="text-right">Amount</span>
-              <span className="text-right w-16">Balance</span>
-            </div>
-            {/* Rows */}
-            <div className="divide-y divide-border">
-              {ledgerLoading ? (
-                <div className="px-3 py-4 text-xs text-muted-foreground text-center">Loading…</div>
-              ) : ledger.length === 0 ? (
-                <div className="px-3 py-4 text-xs text-muted-foreground text-center">No transactions on this page</div>
-              ) : ledger.map(entry => (
-                <div
-                  key={entry.id}
-                  className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-2 text-xs items-center hover:bg-muted/20"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${entry.type === 'topup' ? 'bg-green-500' : 'bg-muted-foreground'}`} />
-                      <span className="truncate text-foreground">{entry.description}</span>
-                    </div>
-                    <span className="text-muted-foreground ml-3">
-                      {new Date(entry.createdAt).toLocaleString()}
-                    </span>
-                  </div>
-                  <span className={`text-right font-mono font-medium tabular-nums ${entry.type === 'topup' ? 'text-green-600' : 'text-muted-foreground'}`}>
-                    {entry.type === 'topup' ? '+' : '−'}${entry.amountUsd.toFixed(4)}
-                  </span>
-                  <span className="text-right font-mono tabular-nums text-muted-foreground w-16">
-                    ${entry.balanceAfter.toFixed(4)}
-                  </span>
-                </div>
-              ))}
-            </div>
-            {/* Pagination controls */}
-            <div className="flex items-center justify-between px-3 py-2 border-t border-border bg-muted/20">
-              <button
-                onClick={() => {
-                  setCursorStack([]);
-                  fetchLedgerPage();
-                }}
-                disabled={ledgerLoading || cursorStack.length === 0}
-                className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                ← Latest
-              </button>
-              <span className="text-xs text-muted-foreground">
-                {cursorStack.length > 0 ? `Page ${cursorStack.length + 1}` : 'Page 1'}
-              </span>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    if (cursorStack.length === 0) return;
-                    const newStack = cursorStack.slice(0, -1);
-                    setCursorStack(newStack);
-                    fetchLedgerPage(newStack[newStack.length - 1]);
-                  }}
-                  disabled={ledgerLoading || cursorStack.length === 0}
-                  className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  ‹ Prev
-                </button>
-                <button
-                  onClick={() => {
-                    if (!hasMore || ledger.length === 0) return;
-                    const oldest = ledger[ledger.length - 1].createdAt;
-                    const newStack = [...cursorStack, oldest];
-                    setCursorStack(newStack);
-                    fetchLedgerPage(oldest);
-                  }}
-                  disabled={ledgerLoading || !hasMore}
-                  className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  Next ›
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <CollapsibleLedger
+          ledger={ledger}
+          ledgerLoading={ledgerLoading}
+          cursorStack={cursorStack}
+          hasMore={hasMore}
+          onFirst={() => { setCursorStack([]); fetchLedgerPage(); }}
+          onPrev={() => {
+            if (cursorStack.length === 0) return;
+            const newStack = cursorStack.slice(0, -1);
+            setCursorStack(newStack);
+            fetchLedgerPage(newStack[newStack.length - 1]);
+          }}
+          onNext={() => {
+            if (!hasMore || ledger.length === 0) return;
+            const oldest = ledger[ledger.length - 1].createdAt;
+            const newStack = [...cursorStack, oldest];
+            setCursorStack(newStack);
+            fetchLedgerPage(oldest);
+          }}
+        />
       )}
 
       {/* Pending payments (not yet confirmed by webhook) */}

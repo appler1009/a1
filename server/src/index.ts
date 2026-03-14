@@ -26,7 +26,7 @@ import type { User, Session } from '@local-agent/shared';
 import { createStorage, autoMigrate, getMainDatabase, createTempStorage } from './storage/index.js';
 import type { IMainDatabase } from './storage/index.js';
 import { createLLMRouter } from './ai/router.js';
-import { estimateCostUsd, DEFAULT_MONTHLY_SPEND_LIMIT_USD, calculateCost } from './ai/cost.js';
+import { estimateCostUsd, DEFAULT_MONTHLY_SPEND_LIMIT_USD, calculateCost, PRICING_MARGIN } from './ai/cost.js';
 import { mcpManager } from './mcp/index.js';
 import { authRoutes } from './api/auth.js';
 import { smtpImapRoutes } from './api/smtp-imap.js';
@@ -496,7 +496,7 @@ const start = async () => {
         if (!event.provider.startsWith('byok:')) {
           const cost = calculateCost(event.model, event);
           if (cost !== null && cost > 0) {
-            mainDb.deductUserCredits(event.userId, cost, { model: event.model }).catch(err => {
+            mainDb.deductUserCredits(event.userId, cost * PRICING_MARGIN, { model: event.model }).catch(err => {
               console.error('[Billing] Failed to deduct credits:', err);
             });
           }

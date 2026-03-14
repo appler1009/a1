@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Users } from 'lucide-react';
-import { useAuthStore } from '../store';
+import { useAuthStore } from '../store/auth';
 
 export function JoinPage() {
   const [email, setEmail] = useState('');

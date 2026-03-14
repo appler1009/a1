@@ -2196,13 +2196,15 @@ export class MainDatabase implements IMainDatabase {
     let succeeded = false;
 
     const txn = this.db.transaction(() => {
-      const result = this.db.prepare(`
+      // No balance guard — the pre-flight check in the API layer is the gate.
+      // Allowing slight negative balance under races is preferable to silently
+      // dropping deductions and losing ledger entries.
+      this.db.prepare(`
         UPDATE users
         SET creditBalanceUsd = creditBalanceUsd - ?, updatedAt = ?
-        WHERE id = ? AND creditBalanceUsd >= ?
-      `).run(amountUsd, now, userId, amountUsd);
+        WHERE id = ?
+      `).run(amountUsd, now, userId);
 
-      if (result.changes === 0) return;
       succeeded = true;
 
       const row = this.db.prepare('SELECT creditBalanceUsd FROM users WHERE id = ?').get(userId) as

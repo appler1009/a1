@@ -1737,39 +1737,53 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     const now = new Date().toISOString();
     const id = uuidv4();
 
-    // Atomically decrement — condition prevents going below zero.
-    // Fails with ConditionalCheckFailedException if balance < amountUsd or attribute missing.
-    let balanceAfter: number;
-    try {
-      const { Attributes } = await this.client.send(new UpdateCommand({
-        TableName: this.tables.users,
-        Key: { userId },
-        UpdateExpression: 'SET creditBalanceUsd = creditBalanceUsd - :amt, updatedAt = :now',
-        ConditionExpression: 'creditBalanceUsd >= :amt',
-        ExpressionAttributeValues: { ':amt': amountUsd, ':now': now },
-        ReturnValues: 'ALL_NEW',
-      }));
-      balanceAfter = (Attributes?.creditBalanceUsd as number) ?? 0;
-    } catch (err: unknown) {
-      if ((err as { name?: string }).name === 'ConditionalCheckFailedException') return false;
-      throw err;
-    }
+    // Atomically decrement balance AND write ledger entry in a single transaction.
+    // No condition guard — the pre-flight balance check in the API layer is the gate.
+    // Allowing balance to go slightly negative in race conditions is preferable to
+    // silently dropping deductions and losing ledger entries.
+    await this.client.send(new TransactWriteCommand({
+      TransactItems: [
+        {
+          Update: {
+            TableName: this.tables.users,
+            Key: { userId },
+            UpdateExpression: 'SET creditBalanceUsd = creditBalanceUsd - :amt, updatedAt = :now',
+            ExpressionAttributeValues: { ':amt': amountUsd, ':now': now },
+          },
+        },
+        {
+          Put: {
+            TableName: this.tables.creditLedger,
+            Item: {
+              userId,
+              sk: `${now}#${id}`,
+              id,
+              type: 'usage',
+              amountUsd,
+              description: opts.description ?? `Usage — ${opts.model ?? 'unknown model'}`,
+              ...(opts.model ? { model: opts.model } : {}),
+              createdAt: now,
+            },
+          },
+        },
+      ],
+    }));
 
-    // Write ledger entry (best-effort; do not block on failure)
-    this.client.send(new PutCommand({
+    // Fetch balanceAfter separately — TransactWrite doesn't return updated values.
+    // This read is best-effort for display; the balance itself is authoritative on the user record.
+    const { Item } = await this.client.send(new GetCommand({
+      TableName: this.tables.users,
+      Key: { userId },
+      ProjectionExpression: 'creditBalanceUsd',
+    }));
+    const balanceAfter = (Item?.creditBalanceUsd as number) ?? 0;
+
+    await this.client.send(new UpdateCommand({
       TableName: this.tables.creditLedger,
-      Item: {
-        userId,
-        sk: `${now}#${id}`,
-        id,
-        type: 'usage',
-        amountUsd,
-        balanceAfter,
-        description: opts.description ?? `Usage — ${opts.model ?? 'unknown model'}`,
-        ...(opts.model ? { model: opts.model } : {}),
-        createdAt: now,
-      },
-    })).catch(err => console.error('[Billing] Failed to write credit ledger entry:', err));
+      Key: { userId, sk: `${now}#${id}` },
+      UpdateExpression: 'SET balanceAfter = :b',
+      ExpressionAttributeValues: { ':b': balanceAfter },
+    }));
 
     return true;
   }
