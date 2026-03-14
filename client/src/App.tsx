@@ -103,6 +103,7 @@ function App() {
   useTheme();
   const fetchEnvironment = useEnvironmentStore((state) => state.fetchEnvironment);
   const fetchRoles = useRolesStore((state) => state.fetchRoles);
+  const fetchUser = useAuthStore((state) => state.fetchUser);
   const user = useAuthStore((state) => state.user);
 
   useEffect(() => {
@@ -113,9 +114,10 @@ function App() {
   useEffect(() => {
     if (user) {
       console.log('[App] User authenticated, fetching roles...');
+      fetchUser();
       fetchRoles();
     }
-  }, [user, fetchRoles]);
+  }, [user?.id, fetchUser, fetchRoles]);
 
   return (
     <BrowserRouter>

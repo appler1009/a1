@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { apiFetch } from '../lib/api';
 
 export interface User {
   id: string;
@@ -37,6 +38,7 @@ interface AuthState {
   setGroups: (groups: Group[]) => void;
   addGroup: (group: Group) => void;
   logout: () => void;
+  fetchUser: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -52,6 +54,18 @@ export const useAuthStore = create<AuthState>()(
       setGroups: (groups) => set({ groups }),
       addGroup: (group) => set((state) => ({ groups: [...state.groups, group] })),
       logout: () => set({ user: null, session: null, currentGroup: null, groups: [] }),
+      fetchUser: async () => {
+        try {
+          const response = await apiFetch('/api/auth/me', { excludeRoleId: true });
+          if (!response.ok) return;
+          const data = await response.json();
+          if (data.success && data.data.user) {
+            set({ user: data.data.user, groups: data.data.groups ?? [] });
+          }
+        } catch {
+          // silently ignore — cached user remains
+        }
+      },
     }),
     {
       name: 'auth-storage',

@@ -51,21 +51,6 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
   },
 
   {
-    id: 'brave-search',
-    name: 'Brave Search',
-    description: 'Search the web using Brave Search API. Requires Brave API key.',
-    command: 'npx',
-    args: ['-y', 'brave-search-mcp'],
-    env: {
-      BRAVE_SEARCH_API_KEY: '', // User must set via env or secrets
-    },
-    auth: {
-      provider: 'none',
-    },
-    icon: 'search',
-  },
-
-  {
     id: 'markitdown',
     name: 'MarkItDown',
     description: 'Convert PDF files and other documents to markdown format for AI processing. Supports PDF, DOCX, XLSX, PPTX, images, and more.',

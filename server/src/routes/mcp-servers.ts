@@ -139,7 +139,9 @@ export async function mcpServerRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
     }
 
-    const servers = listPredefinedServers();
+    const query = request.query as Record<string, string>;
+    const includeHidden = query.includeHidden === 'true';
+    const servers = listPredefinedServers(includeHidden);
     return reply.send({ success: true, data: servers });
   });
 

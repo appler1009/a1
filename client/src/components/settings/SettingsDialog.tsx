@@ -27,6 +27,7 @@ interface PredefinedMCPServer {
   };
   icon?: string;
   hidden?: boolean;
+  inProcess?: boolean;
 }
 
 interface SettingsDialogProps {
@@ -139,7 +140,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
   const fetchPredefinedServers = React.useCallback(async () => {
     try {
-      const response = await apiFetch('/api/mcp/available-servers');
+      const response = await apiFetch('/api/mcp/available-servers?includeHidden=true');
       const data = await response.json();
       if (data.success) {
         setPredefinedServers(data.data || []);
@@ -819,7 +820,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
               <h3 className="text-sm font-semibold mb-3">Available Features</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {predefinedServers.map((server) => (
+                {predefinedServers.filter(s => !s.hidden).map((server) => (
                   <button
                     key={server.id}
                     onClick={() => handleAddServer(server.id)}
@@ -838,6 +839,25 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                   </button>
                 ))}
               </div>
+
+              {predefinedServers.some(s => s.hidden) && (
+                <>
+                  <hr className="my-4" />
+                  <h3 className="text-sm font-semibold mb-1">Built-in Features</h3>
+                  <p className="text-xs text-muted-foreground mb-3">Always active — these run automatically in the background.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {predefinedServers.filter(s => s.hidden).map((server) => (
+                      <div
+                        key={server.id}
+                        className="p-4 border border-border rounded-lg bg-muted/20"
+                      >
+                        <h4 className="font-semibold text-sm mb-1">{server.name}</h4>
+                        <p className="text-xs text-muted-foreground">{server.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </>
           )}
 
