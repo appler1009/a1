@@ -12,6 +12,7 @@ import { authService } from '../auth/index.js';
 import { pendingRoleChanges } from './pending-role-changes.js';
 import { extractEmailDataFromMarker, isDisplayEmailMarker } from '../mcp/in-process/display-email.js';
 import { config as appConfig } from '../config/index.js';
+import { stripHtml } from '@local-agent/shared';
 
 /**
  * Session tracking for Discord users
@@ -299,23 +300,6 @@ function stripPreviewFileTags(text: string): string {
   return text
     .replace(/\[preview-file:[^\]]+\]\([^)]+\)/g, '')
     .replace(/<preview-file[^>]*\/>/gi, '')
-    .trim();
-}
-
-/**
- * Strip HTML tags and decode common HTML entities for plain text output.
- */
-function stripHtml(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
     .trim();
 }
 

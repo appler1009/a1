@@ -17,6 +17,7 @@ import './pdf-viewer.css';
 import { PreviewAdapter } from '../preview-adapters';
 import { ViewerFile } from '../../store';
 import { EmailMessage, EmailThread } from './types';
+import { stripHtml } from '@local-agent/shared';
 
 // Configure the PDF.js worker (required by react-pdf)
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -147,10 +148,23 @@ function HtmlEmailFrame({ html }: { html: string }) {
 }
 
 /**
+ * Returns true if the content is a full HTML document (has <html> or <!DOCTYPE>).
+ * Emails where isHtml is true but the body is just a fragment (e.g. <p>hello</p>)
+ * are rendered as plain text so the app's dark-mode theming applies.
+ */
+function isFullHtmlDocument(body: string): boolean {
+  return /<html[\s>]/i.test(body) || /<!doctype\s+html/i.test(body);
+}
+
+/**
  * Email body display
  */
 function EmailBody({ email }: { email: EmailMessage }) {
-  if (email.isHtml) {
+  // Only use the sandboxed iframe for full HTML documents. Emails where the
+  // server returned isHtml=true but the body is just a lightweight fragment
+  // (e.g. Gmail's plain-text alternative wrapped in <p> tags) are rendered
+  // as plain text so the app's dark-mode CSS applies correctly.
+  if (email.isHtml && isFullHtmlDocument(email.body)) {
     // Patch all links to open in a new tab (the iframe sandbox's allow-popups
     // makes this work without needing allow-scripts).
     const processedHtml = email.body.replace(
@@ -173,11 +187,14 @@ function EmailBody({ email }: { email: EmailMessage }) {
     );
   }
 
-  // Plain text - render as markdown for formatting
+  // Plain text (or HTML fragment) — strip any residual tags and render as markdown
+  const bodyText = email.isHtml ? stripHtml(email.body) : email.body;
+
   return (
-    <div className="max-w-none p-4 text-base leading-relaxed">
+    <div className="max-w-none p-4 text-base leading-relaxed text-foreground">
       <ReactMarkdown
         components={{
+          p: ({ children }) => <p className="text-foreground">{children}</p>,
           a: ({ href, children }) => (
             <a
               href={href}
@@ -190,7 +207,7 @@ function EmailBody({ email }: { email: EmailMessage }) {
           ),
         }}
       >
-        {email.body}
+        {bodyText}
       </ReactMarkdown>
     </div>
   );
