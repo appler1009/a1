@@ -43,7 +43,8 @@ jobs:
         run: |
           aws lambda update-function-code \
             --function-name ${{ secrets.LAMBDA_SCHEDULER_FUNCTION_NAME }} \
-            --zip-file fileb://function.zip
+            --zip-file fileb://function.zip \
+            --architectures arm64
 
           aws lambda wait function-updated \
             --function-name ${{ secrets.LAMBDA_SCHEDULER_FUNCTION_NAME }}
