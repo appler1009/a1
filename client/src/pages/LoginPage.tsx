@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Mail, LogIn, ChevronDown, Bot, Zap, Layers, Key } from 'lucide-react';
+import { Mail, LogIn, ChevronDown, Bot, Zap, Layers, Key, Brain } from 'lucide-react';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
@@ -219,6 +219,16 @@ export function LoginPage() {
                 Use your own AI service API key for full control over costs and usage. Claude and Grok are supported. Your keys, your data.
               </p>
             </div>
+
+            <div className="bg-card border border-border rounded-xl p-6">
+              <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
+                <Brain className="w-5 h-5 text-primary" />
+              </div>
+              <h3 className="font-semibold text-lg mb-2">Persistent memory</h3>
+              <p className="text-muted-foreground text-sm">
+                Agents remember what matters. Key facts are extracted automatically from your conversations, and you can manually add, edit, or remove memories at any time.
+              </p>
+            </div>
           </div>
 
           {/* Screenshot placeholders */}
@@ -230,9 +240,11 @@ export function LoginPage() {
                   A clean, distraction-free interface for focused conversations with your AI assistants.
                 </p>
               </div>
-              <div className="w-full aspect-video bg-muted border-2 border-dashed border-border rounded-xl flex items-center justify-center">
-                <p className="text-muted-foreground text-sm">Screenshot coming soon</p>
-              </div>
+              <img
+                src="/screenshots/chat.png"
+                alt="Chat with your agents"
+                className="w-full rounded-xl border border-border shadow-md"
+              />
             </div>
 
             <div className="space-y-4">
@@ -242,9 +254,11 @@ export function LoginPage() {
                   Browse and connect external features to extend your agents with new capabilities.
                 </p>
               </div>
-              <div className="w-full aspect-video bg-muted border-2 border-dashed border-border rounded-xl flex items-center justify-center">
-                <p className="text-muted-foreground text-sm">Screenshot coming soon</p>
-              </div>
+              <img
+                src="/screenshots/mcp.png"
+                alt="Manage external features"
+                className="w-full rounded-xl border border-border shadow-md"
+              />
             </div>
 
             <div className="space-y-4">
@@ -254,9 +268,25 @@ export function LoginPage() {
                   Set up recurring tasks and wake up to fresh insights delivered to your conversations.
                 </p>
               </div>
-              <div className="w-full aspect-video bg-muted border-2 border-dashed border-border rounded-xl flex items-center justify-center">
-                <p className="text-muted-foreground text-sm">Screenshot coming soon</p>
+              <img
+                src="/screenshots/scheduled.png"
+                alt="Automate with scheduled jobs"
+                className="w-full rounded-xl border border-border shadow-md"
+              />
+            </div>
+
+            <div className="space-y-4">
+              <div className="text-center">
+                <h3 className="text-2xl font-semibold mb-2">Memory that grows with you</h3>
+                <p className="text-muted-foreground">
+                  Facts are extracted automatically as you chat — and you can highlight any memory to edit or remove it as you wish.
+                </p>
               </div>
+              <img
+                src="/screenshots/memory.png"
+                alt="Memory that grows with you"
+                className="w-full rounded-xl border border-border shadow-md"
+              />
             </div>
           </div>
         </div>
