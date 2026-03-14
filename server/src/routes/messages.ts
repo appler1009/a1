@@ -460,6 +460,35 @@ export async function messageRoutes(fastify: FastifyInstance): Promise<void> {
       // When search is disabled, ALL available MCP tools are included directly
       const enableMetaMcpSearch = process.env.ENABLE_META_MCP_SEARCH !== 'false';
 
+      // Pre-search: Run user's message through searchTools upfront so relevant tools
+      // are already available in Phase 1 without requiring the LLM to call search_tool first.
+      const lastUserMessage = body.messages.filter(m => m.role === 'user').pop()?.content ?? '';
+      const preSearchedTools: Array<{ name: string; description?: string; inputSchema: Record<string, any>; serverId: string }> = [];
+      const preSearchedServerIds = new Set<string>();
+
+      if (enableMetaMcpSearch && lastUserMessage) {
+        try {
+          const { searchTools } = await import('../mcp/in-process/meta-mcp-search.js');
+          const searchResults = await searchTools(lastUserMessage, 5);
+          for (const { tool } of searchResults) {
+            const fullTool = flattenedTools.find(t => t.name === tool.name);
+            if (fullTool) {
+              const enriched = enrichToolDefinition({
+                name: fullTool.name,
+                description: fullTool.description || '',
+                inputSchema: fullTool.inputSchema || {},
+                serverId: fullTool.serverId,
+              });
+              preSearchedTools.push(enriched as any);
+              if (fullTool.serverId) preSearchedServerIds.add(fullTool.serverId);
+            }
+          }
+          console.log(`[ChatStream] Pre-search: found ${preSearchedTools.length} tools (${[...preSearchedServerIds].join(', ')}) for: "${lastUserMessage.substring(0, 80)}"`);
+        } catch (err) {
+          console.error('[ChatStream] Pre-search failed:', err);
+        }
+      }
+
       const phase1Tools = [];
 
       // When meta-mcp-search is disabled, include all available MCP tools directly in Phase 1
@@ -508,6 +537,17 @@ After calling this tool, you'll receive tool names and their server information.
           },
           serverId: 'meta-mcp-search',
         });
+      }
+
+      // Add pre-searched tools (results of running user's message through searchTools upfront)
+      // Deduplicate against tools already added (e.g. when meta-mcp-search is disabled and all tools are included)
+      for (const tool of preSearchedTools) {
+        if (!phase1Tools.some(t => t.name === tool.name)) {
+          phase1Tools.push(tool);
+        }
+      }
+      if (preSearchedTools.length > 0) {
+        console.log(`[ChatStream] Phase 1 now includes pre-searched tools: ${preSearchedTools.map(t => t.name).join(', ')}`);
       }
 
       // Memory retrieval tools - always available for context
@@ -680,9 +720,11 @@ ${accountList}
       // on-demand after search_tool returns results for them.
       const ALWAYS_FULL_PROMPT_SERVERS = new Set(['meta-mcp-search', 'role-manager']);
 
-      const alwaysFullPrompts = [...ALWAYS_FULL_PROMPT_SERVERS]
-        .map(id => mcpManager.getSystemPromptFor(id))
-        .filter(Boolean) as string[];
+      const alwaysFullPrompts = [
+        ...[...ALWAYS_FULL_PROMPT_SERVERS],
+        // Also inject full prompts for servers discovered via pre-search
+        ...[...preSearchedServerIds].filter(id => !ALWAYS_FULL_PROMPT_SERVERS.has(id)),
+      ].map(id => mcpManager.getSystemPromptFor(id)).filter(Boolean) as string[];
 
       const serverSummaries = mcpManager.getSystemPromptSummaries(ALWAYS_FULL_PROMPT_SERVERS);
 
@@ -797,7 +839,8 @@ ${accountList}
       let hasLoadedPhase2Tools = false;
 
       // Track which server system prompts have already been injected this request
-      const injectedServerIds = new Set(ALWAYS_FULL_PROMPT_SERVERS);
+      // Seed with servers whose prompts were already injected (always-full + pre-searched)
+      const injectedServerIds = new Set([...ALWAYS_FULL_PROMPT_SERVERS, ...preSearchedServerIds]);
 
       // Handle tool execution if tools were called (with iteration limit)
       while (toolCalls.length > 0 && toolIteration < MAX_TOOL_ITERATIONS) {
