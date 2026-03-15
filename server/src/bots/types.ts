@@ -8,7 +8,6 @@ export interface BotSession {
   currentRoleId: string | null;
   locale?: string;
   timezone?: string;
-  conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
 /**

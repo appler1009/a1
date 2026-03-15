@@ -5,7 +5,7 @@
  *   bun server/scripts/create-dynamodb-tables.ts
  *
  * Environment variables:
- *   AWS_REGION / DYNAMODB_REGION   — defaults to us-east-1
+ *   AWS_REGION / DYNAMODB_REGION   — defaults to us-west-2
  *   DYNAMODB_TABLE_PREFIX          — optional prefix, e.g. "prod_"
  *   DYNAMODB_ENDPOINT              — optional local endpoint, e.g. http://localhost:8000
  *
@@ -22,7 +22,7 @@ import {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const REGION = process.env.DYNAMODB_REGION ?? process.env.AWS_REGION ?? 'us-east-1';
+const REGION = process.env.DYNAMODB_REGION ?? process.env.AWS_REGION ?? 'us-west-2';
 const ENDPOINT = process.env.DYNAMODB_ENDPOINT;
 const PREFIX = process.env.DYNAMODB_TABLE_PREFIX ?? '';
 

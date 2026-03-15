@@ -146,9 +146,9 @@ describe('BaseBot.notifyScheduledJobCompletion', () => {
     const bot = new TestBot();
     // Manually inject sessions to simulate two active bot users mapped to the same app user
     const sessions: Map<string, any> = (bot as any).sessions;
-    sessions.set('tg-111', { appUserId: 'app-user-1', sessionId: 's1', currentRoleId: null, conversationHistory: [] });
-    sessions.set('tg-222', { appUserId: 'app-user-1', sessionId: 's2', currentRoleId: null, conversationHistory: [] });
-    sessions.set('tg-333', { appUserId: 'app-user-2', sessionId: 's3', currentRoleId: null, conversationHistory: [] });
+    sessions.set('tg-111', { appUserId: 'app-user-1', sessionId: 's1', currentRoleId: null });
+    sessions.set('tg-222', { appUserId: 'app-user-1', sessionId: 's2', currentRoleId: null });
+    sessions.set('tg-333', { appUserId: 'app-user-2', sessionId: 's3', currentRoleId: null });
 
     await bot.notifyScheduledJobCompletion('app-user-1', 'MyRole', 'Background task complete');
 

@@ -21,7 +21,7 @@ export interface AppConfig {
   gmail: { clientId: string; clientSecret: string; redirectUri: string };
   github: { clientId: string; clientSecret: string; redirectUri: string };
   discord: { botToken?: string; clientId?: string; channelIds: string[] };
-  telegram: { botToken?: string };
+  telegram: { botToken?: string; webhookUrl?: string; webhookSecret?: string };
   ses: { region: string; senderEmail: string };
   stripe: {
     secretKey: string;
@@ -83,9 +83,11 @@ export function initConfig(): void {
     },
     telegram: {
       botToken: process.env.TELEGRAM_BOT_TOKEN,
+      webhookUrl: process.env.TELEGRAM_WEBHOOK_URL,
+      webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
     },
     ses: {
-      region: process.env.AWS_REGION || 'us-east-1',
+      region: process.env.AWS_REGION || 'us-west-2',
       senderEmail: process.env.SES_SENDER_EMAIL || 'noreply@example.com',
     },
     stripe: {

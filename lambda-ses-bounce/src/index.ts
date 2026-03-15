@@ -5,7 +5,7 @@
  *   SES → SNS topic (ses-bounce-events) → Lambda (this function) → DynamoDB users table
  *
  * Required environment variables:
- *   AWS_REGION              — AWS region (default: us-east-1)
+ *   AWS_REGION              — AWS region (default: us-west-2)
  *   DYNAMODB_TABLE_PREFIX   — optional table name prefix (e.g. "a1_prod_")
  *
  * The Lambda execution role needs:
@@ -22,7 +22,7 @@ import {
 
 // ── AWS clients ───────────────────────────────────────────────────────────────
 
-const REGION = process.env.AWS_REGION ?? 'us-east-1';
+const REGION = process.env.AWS_REGION ?? 'us-west-2';
 const PREFIX = process.env.DYNAMODB_TABLE_PREFIX ?? '';
 const USERS_TABLE = `${PREFIX}users`;
 

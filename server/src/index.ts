@@ -34,7 +34,7 @@ import { byokRoutes } from './api/byok.js';
 import { billingRoutes, billingWebhookRoute } from './api/billing.js';
 import { authService } from './auth/index.js';
 import { startDiscordBot } from './discord/bot.js';
-import { startTelegramBot, stopTelegramBot } from './telegram/bot.js';
+import { startTelegramBot, stopTelegramBot, getTelegramBot } from './telegram/bot.js';
 import { JobRunner } from './scheduler/job-runner.js';
 import { initializeGmailInProcess } from './mcp/in-process/gmail.js';
 import { initializeDisplayEmail } from './mcp/in-process/display-email.js';
@@ -415,6 +415,28 @@ fastify.register(mcpServerRoutes, { prefix: '/api' });
 fastify.register(settingsRoutes, { prefix: '/api' });
 fastify.register(skillsRoutes, { prefix: '/api' });
 fastify.register(scheduledRoutes, { prefix: '/api' });
+
+// Telegram webhook — receives updates from Telegram and feeds them to Telegraf.
+// The route is public (no session auth) but validated with a shared secret.
+fastify.post('/telegram/webhook', async (request, reply) => {
+  const bot = getTelegramBot();
+  if (!bot) return reply.code(404).send();
+
+  const secret = config.telegram?.webhookSecret;
+  if (secret) {
+    const received = request.headers['x-telegram-bot-api-secret-token'];
+    if (received !== secret) {
+      return reply.code(401).send();
+    }
+  }
+
+  try {
+    await bot.handleUpdate(request.body);
+  } catch (err) {
+    fastify.log.error(err, '[Telegram] Error handling webhook update');
+  }
+  reply.code(200).send();
+});
 
 // Start server
 const start = async () => {

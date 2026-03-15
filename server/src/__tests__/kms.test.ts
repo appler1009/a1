@@ -55,7 +55,7 @@ function startMockKmsServer(): Promise<{ url: string; stop: () => Promise<void> 
             res.end(JSON.stringify({
               KeyMetadata: {
                 KeyId: 'mock-key-id',
-                Arn: 'arn:aws:kms:us-east-1:123456789012:key/mock-key-id',
+                Arn: 'arn:aws:kms:us-west-2:123456789012:key/mock-key-id',
                 Enabled: true,
               },
             }));
@@ -65,7 +65,7 @@ function startMockKmsServer(): Promise<{ url: string; stop: () => Promise<void> 
           res.end(JSON.stringify({
             KeyMetadata: {
               KeyId: 'new-mock-key-id',
-              Arn: 'arn:aws:kms:us-east-1:123456789012:key/new-mock-key-id',
+              Arn: 'arn:aws:kms:us-west-2:123456789012:key/new-mock-key-id',
             },
           }));
         } else if (target.endsWith('CreateAlias')) {
@@ -98,7 +98,7 @@ describe('KMS token encryption', () => {
     // Provide dummy credentials so the SDK can sign requests locally
     process.env.AWS_ACCESS_KEY_ID = 'test';
     process.env.AWS_SECRET_ACCESS_KEY = 'test';
-    process.env.AWS_REGION = 'us-east-1';
+    process.env.AWS_REGION = 'us-west-2';
     delete process.env.AWS_PROFILE; // don't try to load ~/.aws/credentials
     delete process.env.KMS_OAUTH_DISABLED;
     process.env.KMS_OAUTH_KEY_ID = 'alias/test-oauth-tokens';
@@ -191,10 +191,10 @@ describe('KMS token encryption', () => {
 
     it('skips provisioning and returns the key ID when not an alias', async () => {
       const savedKeyId = process.env.KMS_OAUTH_KEY_ID;
-      process.env.KMS_OAUTH_KEY_ID = 'arn:aws:kms:us-east-1:123:key/existing-key';
+      process.env.KMS_OAUTH_KEY_ID = 'arn:aws:kms:us-west-2:123:key/existing-key';
       const { ensureKmsKey } = await import('../config/kms.js');
       const result = await ensureKmsKey();
-      expect(result).toBe('arn:aws:kms:us-east-1:123:key/existing-key');
+      expect(result).toBe('arn:aws:kms:us-west-2:123:key/existing-key');
       process.env.KMS_OAUTH_KEY_ID = savedKeyId;
     });
 
@@ -202,14 +202,14 @@ describe('KMS token encryption', () => {
       mockDescribeKeyNotFound = false;
       const { ensureKmsKey } = await import('../config/kms.js');
       const arn = await ensureKmsKey();
-      expect(arn).toBe('arn:aws:kms:us-east-1:123456789012:key/mock-key-id');
+      expect(arn).toBe('arn:aws:kms:us-west-2:123456789012:key/mock-key-id');
     });
 
     it('creates key and alias when alias not found', async () => {
       mockDescribeKeyNotFound = true;
       const { ensureKmsKey } = await import('../config/kms.js');
       const arn = await ensureKmsKey();
-      expect(arn).toBe('arn:aws:kms:us-east-1:123456789012:key/new-mock-key-id');
+      expect(arn).toBe('arn:aws:kms:us-west-2:123456789012:key/new-mock-key-id');
       mockDescribeKeyNotFound = false;
     });
   });

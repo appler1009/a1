@@ -121,7 +121,7 @@ class DiscordBot extends BaseBot {
         }
       }
 
-      void fullText; // used in conversationHistory inside processMessage
+      void fullText;
     } catch (error) {
       console.error('[Discord] Error handling message:', error);
       try {

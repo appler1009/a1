@@ -102,7 +102,6 @@ export abstract class BaseBot {
         currentRoleId: defaultRoleId,
         locale: appUser.locale,
         timezone: appUser.timezone,
-        conversationHistory: [],
       };
       this.sessions.set(platformUserId, session);
     } else {
@@ -118,9 +117,12 @@ export abstract class BaseBot {
    * Call /api/chat/stream and parse the SSE response into platform-agnostic segments.
    * Each segment represents a logical chunk: pre-tool thinking or the final answer.
    */
-  protected async callChatEndpoint(session: BotSession): Promise<BotSegment[]> {
+  protected async callChatEndpoint(
+    session: BotSession,
+    conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>,
+  ): Promise<BotSegment[]> {
     const requestBody: Record<string, unknown> = {
-      messages: session.conversationHistory,
+      messages: conversationHistory,
       roleId: session.currentRoleId,
       stream: true,
     };
@@ -246,12 +248,47 @@ export abstract class BaseBot {
     const session = await this.getOrCreateSession(platformUserId, appUser);
     console.log(`[${this.getName()}] Session role: ${session.currentRoleId || 'none'}`);
 
-    session.conversationHistory.push({ role: 'user', content: text });
+    const mainDb = await getMainDatabase(appConfig.storage.root);
 
-    const segments = await this.callChatEndpoint(session);
+    // Load recent conversation history from DB
+    const historyRows = session.currentRoleId
+      ? await mainDb.listMessages(session.appUserId, session.currentRoleId, { limit: 20 })
+      : [];
+    const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [
+      ...historyRows
+        .filter(r => r.from === 'user' || r.from === 'assistant')
+        .map(r => ({ role: r.from as 'user' | 'assistant', content: r.content })),
+      { role: 'user', content: text },
+    ];
 
+    // Persist incoming user message
+    if (session.currentRoleId) {
+      await mainDb.saveMessage({
+        id: crypto.randomUUID(),
+        userId: session.appUserId,
+        roleId: session.currentRoleId,
+        groupId: null,
+        from: 'user',
+        content: text,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    const segments = await this.callChatEndpoint(session, conversationHistory);
     const fullText = segments.map((s) => s.text).filter(Boolean).join('\n');
-    session.conversationHistory.push({ role: 'assistant', content: fullText });
+
+    // Persist assistant response
+    if (session.currentRoleId && fullText) {
+      await mainDb.saveMessage({
+        id: crypto.randomUUID(),
+        userId: session.appUserId,
+        roleId: session.currentRoleId,
+        groupId: null,
+        from: 'assistant',
+        content: fullText,
+        createdAt: new Date().toISOString(),
+      });
+    }
 
     // Apply any pending role change triggered by role-manager tool
     const pendingChange = pendingRoleChanges.get(session.appUserId);
@@ -259,11 +296,6 @@ export abstract class BaseBot {
       console.log(`[${this.getName()}] Applying pending role change: ${pendingChange.roleName}`);
       session.currentRoleId = pendingChange.roleId;
       pendingRoleChanges.delete(session.appUserId);
-    }
-
-    // Keep conversation history bounded
-    if (session.conversationHistory.length > 20) {
-      session.conversationHistory = session.conversationHistory.slice(-20);
     }
 
     return { segments, session };

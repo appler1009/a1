@@ -16,9 +16,11 @@ import type { User } from '@local-agent/shared';
 
 class TelegramBot extends BaseBot {
   private telegraf: Telegraf;
+  private readonly token: string;
 
   constructor(token: string, port: number) {
     super(port);
+    this.token = token;
     this.telegraf = new Telegraf(token);
   }
 
@@ -35,17 +37,58 @@ class TelegramBot extends BaseBot {
     console.log(`[Telegram] Sent notification to ${telegramUserId}`);
   }
 
-  async start(): Promise<void> {
+  private registerHandlers(): void {
     this.telegraf.on('message', async (ctx) => {
       await this.handleMessage(ctx);
     });
-
-    // Launch in long-polling mode (no webhook setup required)
-    await this.telegraf.launch();
-    console.log(`[Telegram] Bot started (${(await this.telegraf.telegram.getMe()).username})`);
   }
 
-  /** Stop the bot gracefully */
+  /** Start in webhook mode — Telegram will POST updates to webhookUrl. */
+  async startWebhook(webhookUrl: string, secretToken?: string): Promise<void> {
+    this.registerHandlers();
+    await this.telegraf.telegram.setWebhook(webhookUrl, { secret_token: secretToken });
+    const me = await this.telegraf.telegram.getMe();
+    console.log(`[Telegram] Bot started in webhook mode (@${me.username} → ${webhookUrl})`);
+  }
+
+  /** Start in long-polling mode (local dev only — not safe for multiple instances). */
+  async startPolling(): Promise<void> {
+    this.registerHandlers();
+
+    // Retry on 409 Conflict — previous session may still be active after a fast restart.
+    const maxRetries = 6;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await this.telegraf.launch();
+        break;
+      } catch (error: any) {
+        const isConflict = error?.response?.error_code === 409 || String(error).includes('409');
+        if (isConflict && attempt < maxRetries) {
+          const delay = attempt * 5000;
+          console.log(`[Telegram] Previous session still active, retrying in ${delay / 1000}s (attempt ${attempt}/${maxRetries - 1})...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          this.telegraf = new Telegraf(this.token);
+          this.registerHandlers();
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    const me = await this.telegraf.telegram.getMe();
+    console.log(`[Telegram] Bot started in polling mode (@${me.username})`);
+  }
+
+  async start(): Promise<void> {
+    // Kept for interface compatibility — callers use startWebhook / startPolling directly.
+  }
+
+  /** Feed a raw Telegram update to Telegraf (called by the webhook route). */
+  async handleUpdate(update: unknown): Promise<void> {
+    await this.telegraf.handleUpdate(update as any);
+  }
+
+  /** Stop the bot gracefully (polling mode only). */
   stop(): void {
     this.telegraf.stop();
   }
@@ -145,7 +188,12 @@ class TelegramBot extends BaseBot {
     // Send text content
     if (segment.text) {
       for (const chunk of this.splitMessage(segment.text)) {
-        await ctx.reply(chunk);
+        try {
+          await ctx.reply(chunk, { parse_mode: 'Markdown' });
+        } catch {
+          // Fall back to plain text if markdown parsing fails (e.g. unbalanced markers)
+          await ctx.reply(chunk);
+        }
       }
     }
   }
@@ -153,6 +201,10 @@ class TelegramBot extends BaseBot {
 
 // Module-level bot instance
 let botInstance: TelegramBot | null = null;
+
+export function getTelegramBot(): TelegramBot | null {
+  return botInstance;
+}
 
 export async function startTelegramBot(port: number): Promise<void> {
   const token = appConfig.telegram?.botToken;
@@ -165,7 +217,13 @@ export async function startTelegramBot(port: number): Promise<void> {
   console.log('[Telegram] Starting Telegram bot...');
   botInstance = new TelegramBot(token, port);
   try {
-    await botInstance.start();
+    const webhookUrl = appConfig.telegram?.webhookUrl;
+    if (webhookUrl) {
+      await botInstance.startWebhook(webhookUrl, appConfig.telegram?.webhookSecret);
+    } else {
+      console.log('[Telegram] No TELEGRAM_WEBHOOK_URL set - falling back to long-polling (local dev only)');
+      await botInstance.startPolling();
+    }
   } catch (error) {
     console.error('[Telegram] Failed to start:', error);
     botInstance = null;

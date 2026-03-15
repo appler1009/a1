@@ -15,7 +15,7 @@ vi.mock('../config/index.js', () => ({
       root: '/tmp/test',
       bucket: 'test-bucket',
       endpoint: 'http://localhost:9000',
-      region: 'us-east-1'
+      region: 'us-west-2'
     }
   }
 }));
@@ -40,7 +40,7 @@ function createMockTempStorage(type: 'fs' | 's3' = 's3'): TempStorage {
       root: '/tmp/test',
       bucket: type === 's3' ? 'test-bucket' : undefined,
       endpoint: type === 's3' ? 'http://localhost:9000' : undefined,
-      region: type === 's3' ? 'us-east-1' : undefined
+      region: type === 's3' ? 'us-west-2' : undefined
     }
   });
 }

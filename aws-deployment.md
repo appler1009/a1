@@ -30,7 +30,7 @@ FRONTEND_URL=https://<your-domain>       # Used for OAuth callback URLs
 ```bash
 # Option A — DynamoDB (recommended)
 MAIN_DB_TYPE=dynamodb
-DYNAMODB_REGION=us-east-1
+DYNAMODB_REGION=us-west-2
 # DYNAMODB_TABLE_PREFIX=prod_   # Optional: prefix all table names (e.g. prod_users)
 # Credentials come from the ECS task IAM role — no keys needed
 
@@ -114,10 +114,10 @@ ECS Fargate task (private subnets, port 3000)
 docker build -t a1-app .
 
 # Push to ECR
-aws ecr get-login-password --region us-east-1 | \
-  docker login --username AWS --password-stdin <account>.dkr.ecr.us-east-1.amazonaws.com
-docker tag a1-app:latest <account>.dkr.ecr.us-east-1.amazonaws.com/a1-app:latest
-docker push <account>.dkr.ecr.us-east-1.amazonaws.com/a1-app:latest
+aws ecr get-login-password --region us-west-2 | \
+  docker login --username AWS --password-stdin <account>.dkr.ecr.us-west-2.amazonaws.com
+docker tag a1-app:latest <account>.dkr.ecr.us-west-2.amazonaws.com/a1-app:latest
+docker push <account>.dkr.ecr.us-west-2.amazonaws.com/a1-app:latest
 ```
 
 ### Healthcheck
@@ -144,9 +144,9 @@ Secrets are loaded by the app at startup (not via ECS `secrets` injection). Set 
     { "name": "PORT",                  "value": "3000" },
     { "name": "FRONTEND_URL",          "value": "https://<your-domain>" },
     { "name": "AWS_SECRETS_ENABLED",   "value": "true" },
-    { "name": "AWS_REGION",            "value": "us-east-1" },
+    { "name": "AWS_REGION",            "value": "us-west-2" },
     { "name": "MAIN_DB_TYPE",          "value": "dynamodb" },
-    { "name": "DYNAMODB_REGION",       "value": "us-east-1" },
+    { "name": "DYNAMODB_REGION",       "value": "us-west-2" },
     { "name": "STORAGE_TYPE",          "value": "s3" },
     { "name": "STORAGE_BUCKET",        "value": "<bucket>" },
     { "name": "LLM_PROVIDER",          "value": "grok" },
