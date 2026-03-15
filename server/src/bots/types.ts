@@ -8,6 +8,7 @@ export interface BotSession {
   currentRoleId: string | null;
   locale?: string;
   timezone?: string;
+  pinnedRoleMessageId?: number;
 }
 
 /**

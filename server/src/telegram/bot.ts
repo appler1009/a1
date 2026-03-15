@@ -9,7 +9,7 @@
 import { Telegraf } from 'telegraf';
 import { getMainDatabase } from '../storage/index.js';
 import { BaseBot } from '../bots/base-bot.js';
-import type { BotSegment } from '../bots/types.js';
+import type { BotSegment, BotSession } from '../bots/types.js';
 import { config as appConfig } from '../config/index.js';
 import { stripHtml } from '@local-agent/shared';
 import type { User } from '@local-agent/shared';
@@ -134,17 +134,26 @@ class TelegramBot extends BaseBot {
       // Show typing indicator
       await ctx.sendChatAction('typing');
 
+      const previousRoleId = this.sessions.get(telegramUserId)?.currentRoleId;
+
       const result = await this.processMessage(telegramUserId, text);
       if (!result) {
         await ctx.reply('Error: could not process message.');
         return;
       }
 
-      const { segments } = result;
+      const { segments, session } = result;
       console.log(`[Telegram] Got ${segments.length} segment(s)`);
 
       for (const segment of segments) {
         await this.sendSegment(ctx, segment);
+      }
+
+      // Pin role message on first session or role change (private chats only)
+      if (isPrivate && session.currentRoleId && session.currentRoleId !== previousRoleId) {
+        await this.updatePinnedRoleMessage(ctx.chat.id, session).catch((err) => {
+          console.error('[Telegram] Failed to update pinned role message:', err);
+        });
       }
     } catch (error) {
       console.error('[Telegram] Error handling message:', error);
@@ -154,6 +163,28 @@ class TelegramBot extends BaseBot {
         // ignore reply failure
       }
     }
+  }
+
+  private async updatePinnedRoleMessage(chatId: number, session: BotSession): Promise<void> {
+    if (!session.currentRoleId) return;
+
+    const mainDb = await getMainDatabase(appConfig.storage.root);
+    const roles = await mainDb.getUserRoles(session.appUserId);
+    const role = roles.find((r) => r.id === session.currentRoleId);
+    const roleName = role?.name ?? session.currentRoleId;
+
+    const sent = await this.telegraf.telegram.sendMessage(
+      chatId,
+      `📌 Current role: *${roleName}*`,
+      { parse_mode: 'Markdown', disable_notification: true },
+    );
+
+    await this.telegraf.telegram.pinChatMessage(chatId, sent.message_id, {
+      disable_notification: true,
+    });
+
+    session.pinnedRoleMessageId = sent.message_id;
+    console.log(`[Telegram] Pinned role message for chat ${chatId}: ${roleName}`);
   }
 
   private async sendSegment(ctx: any, segment: BotSegment): Promise<void> {
