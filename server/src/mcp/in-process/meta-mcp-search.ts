@@ -50,6 +50,17 @@ async function initSearchEngine(): Promise<void> {
     return;
   }
 
+  // Disable WASM multi-threading before the model loads.
+  // onnxruntime-web tries to spawn a Web Worker via a blob: URL, which fails in Node.js/Bun
+  // (readFileSync can't open blob: URIs). numThreads=1 prevents the worker spawn entirely.
+  // @xenova/transformers is a transitive dep — import dynamically to avoid TS module resolution error.
+  try {
+    const xf = await (Function('m', 'return import(m)')('@xenova/transformers') as Promise<any>);
+    xf.env.backends.onnx.wasm.numThreads = 1;
+  } catch {
+    // ignore — model still loads via single-threaded fallback if this fails
+  }
+
   isInitializing = true;
   initPromise = (async () => {
     try {
