@@ -451,13 +451,14 @@ export async function authRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const body = request.body as { name?: string; discordUserId?: string; telegramUserId?: string; locale?: string; timezone?: string; primaryRoleId?: string | null };
+    const body = request.body as { name?: string; discordUserId?: string; telegramUserId?: string; whatsappUserId?: string; locale?: string; timezone?: string; primaryRoleId?: string | null };
     const mainDb = await getMainDatabase(config.storage.root);
 
-    const updates: Partial<{ name?: string; discordUserId?: string; telegramUserId?: string; locale?: string; timezone?: string; primaryRoleId?: string }> = {};
+    const updates: Partial<{ name?: string; discordUserId?: string; telegramUserId?: string; whatsappUserId?: string; locale?: string; timezone?: string; primaryRoleId?: string }> = {};
     if (body.name !== undefined) updates.name = body.name;
     if (body.discordUserId !== undefined) updates.discordUserId = body.discordUserId;
     if (body.telegramUserId !== undefined) updates.telegramUserId = body.telegramUserId;
+    if (body.whatsappUserId !== undefined) (updates as any).whatsappUserId = body.whatsappUserId;
     if (body.locale !== undefined) updates.locale = body.locale;
     if (body.timezone !== undefined) updates.timezone = body.timezone;
     if (body.primaryRoleId !== undefined) updates.primaryRoleId = body.primaryRoleId || undefined;

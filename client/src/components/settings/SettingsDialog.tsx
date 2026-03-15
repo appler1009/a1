@@ -6,6 +6,7 @@ import { BYOKSettings } from './BYOKSettings';
 import { TokenUsageSettings } from './TokenUsageSettings';
 import { DiscordSettings } from './DiscordSettings';
 import { TelegramSettings } from './TelegramSettings';
+import { WhatsAppSettings } from './WhatsAppSettings';
 import { LocaleTimezoneSettings } from './LocaleTimezoneSettings';
 import { BillingSettings } from './BillingSettings';
 
@@ -880,6 +881,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
               <div>
                 <h3 className="text-sm font-semibold mb-3">Telegram</h3>
                 <TelegramSettings onUpdate={fetchServers} />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold mb-3">WhatsApp</h3>
+                <WhatsAppSettings onUpdate={fetchServers} />
               </div>
             </div>
           )}

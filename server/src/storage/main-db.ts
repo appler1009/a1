@@ -397,6 +397,9 @@ export class MainDatabase implements IMainDatabase {
     // Migrate users table to add telegramUserId column if needed
     this.migrateTelegramUserIdSchema();
 
+    // Migrate users table to add whatsappUserId column if needed
+    this.migrateWhatsAppUserIdSchema();
+
     // Migrate users table to add locale and timezone columns if needed
     this.migrateLocaleTimezoneSchema();
 
@@ -503,6 +506,25 @@ export class MainDatabase implements IMainDatabase {
     } catch (error) {
       console.warn('[MainDatabase] Error during discordUserId schema migration:', error);
       // Don't fail initialization if migration fails
+    }
+  }
+
+  /**
+   * Add whatsappUserId column to users table if it doesn't exist
+   */
+  private migrateWhatsAppUserIdSchema(): void {
+    try {
+      const tableInfo = this.db.prepare(`PRAGMA table_info(users)`).all() as Array<{
+        name: string;
+        type: string;
+      }>;
+      if (!tableInfo.some(col => col.name === 'whatsappUserId')) {
+        console.log('[MainDatabase] Adding whatsappUserId column to users table...');
+        this.db.exec(`ALTER TABLE users ADD COLUMN whatsappUserId TEXT;`);
+        console.log('[MainDatabase] whatsappUserId column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during whatsappUserId schema migration:', error);
     }
   }
 
@@ -677,6 +699,7 @@ export class MainDatabase implements IMainDatabase {
       accountType: row.accountType,
       discordUserId: row.discordUserId || undefined,
       telegramUserId: row.telegramUserId || undefined,
+      whatsappUserId: (row as any).whatsappUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
@@ -714,6 +737,7 @@ export class MainDatabase implements IMainDatabase {
       accountType: row.accountType,
       discordUserId: row.discordUserId || undefined,
       telegramUserId: row.telegramUserId || undefined,
+      whatsappUserId: (row as any).whatsappUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
@@ -750,6 +774,7 @@ export class MainDatabase implements IMainDatabase {
       accountType: row.accountType,
       discordUserId: row.discordUserId || undefined,
       telegramUserId: row.telegramUserId || undefined,
+      whatsappUserId: (row as any).whatsappUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
@@ -786,6 +811,44 @@ export class MainDatabase implements IMainDatabase {
       accountType: row.accountType,
       discordUserId: row.discordUserId || undefined,
       telegramUserId: row.telegramUserId || undefined,
+      whatsappUserId: (row as any).whatsappUserId || undefined,
+      locale: row.locale || undefined,
+      timezone: row.timezone || undefined,
+      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
+      creditBalanceUsd: row.creditBalanceUsd ?? 0,
+      emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    };
+  }
+
+  async getUserByWhatsAppId(whatsappUserId: string): Promise<User | null> {
+    const row = this.db.prepare('SELECT * FROM users WHERE whatsappUserId = ?').get(whatsappUserId) as {
+      id: string;
+      email: string;
+      name: string | null;
+      accountType: 'individual' | 'group';
+      discordUserId: string | null;
+      telegramUserId: string | null;
+      locale: string | null;
+      timezone: string | null;
+      monthlySpendLimitUsd: number | null;
+      creditBalanceUsd: number;
+      emailDisabled: string | null;
+      createdAt: string;
+      updatedAt: string;
+    } | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      email: row.email,
+      name: row.name || undefined,
+      accountType: row.accountType,
+      discordUserId: row.discordUserId || undefined,
+      telegramUserId: row.telegramUserId || undefined,
+      whatsappUserId: (row as any).whatsappUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
@@ -823,6 +886,10 @@ export class MainDatabase implements IMainDatabase {
     if (updates.telegramUserId !== undefined) {
       fields.push('telegramUserId = ?');
       values.push(updates.telegramUserId || null);
+    }
+    if ((updates as any).whatsappUserId !== undefined) {
+      fields.push('whatsappUserId = ?');
+      values.push((updates as any).whatsappUserId || null);
     }
     if (updates.locale !== undefined) {
       fields.push('locale = ?');
@@ -886,6 +953,7 @@ export class MainDatabase implements IMainDatabase {
       accountType: row.accountType,
       discordUserId: row.discordUserId || undefined,
       telegramUserId: row.telegramUserId || undefined,
+      whatsappUserId: (row as any).whatsappUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,

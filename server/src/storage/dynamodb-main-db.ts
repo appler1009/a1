@@ -302,6 +302,28 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     return Items?.[0] ? toUser(Items[0]) : null;
   }
 
+  async getUserByWhatsAppId(whatsappUserId: string): Promise<User | null> {
+    // NOTE: For production DynamoDB, add a 'whatsappUserId-index' GSI on the users table.
+    // Until then, falls back to a table scan (acceptable for small user counts).
+    const { Items } = await this.client.send(new QueryCommand({
+      TableName: this.tables.users,
+      IndexName: 'whatsappUserId-index',
+      KeyConditionExpression: 'whatsappUserId = :wid',
+      ExpressionAttributeValues: { ':wid': whatsappUserId },
+      Limit: 1,
+    })).catch(async () => {
+      // GSI not yet provisioned — fall back to scan
+      const { Items: scanItems } = await this.client.send(new ScanCommand({
+        TableName: this.tables.users,
+        FilterExpression: 'whatsappUserId = :wid',
+        ExpressionAttributeValues: { ':wid': whatsappUserId },
+        Limit: 1,
+      }));
+      return { Items: scanItems };
+    });
+    return Items?.[0] ? toUser(Items[0]) : null;
+  }
+
   async updateUser(id: string, updates: Partial<User>): Promise<User | null> {
     const now = new Date().toISOString();
     const sets: string[] = ['updatedAt = :updatedAt'];

@@ -35,6 +35,7 @@ import { billingRoutes, billingWebhookRoute } from './api/billing.js';
 import { authService } from './auth/index.js';
 import { startDiscordBot } from './discord/bot.js';
 import { startTelegramBot, stopTelegramBot, getTelegramBot } from './telegram/bot.js';
+import { startWhatsAppBot, getWhatsAppBot } from './whatsapp/bot.js';
 import { JobRunner } from './scheduler/job-runner.js';
 import { initializeGmailInProcess } from './mcp/in-process/gmail.js';
 import { initializeDisplayEmail } from './mcp/in-process/display-email.js';
@@ -438,6 +439,32 @@ fastify.post('/telegram/webhook', async (request, reply) => {
   reply.code(200).send();
 });
 
+// WhatsApp webhook verification — Meta sends a GET to validate the endpoint.
+fastify.get('/whatsapp/webhook', async (request, reply) => {
+  const query = request.query as Record<string, string>;
+  const mode = query['hub.mode'];
+  const token = query['hub.verify_token'];
+  const challenge = query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === config.whatsapp?.verifyToken) {
+    return reply.code(200).send(challenge);
+  }
+  return reply.code(403).send();
+});
+
+// WhatsApp webhook — receives incoming messages from Meta.
+fastify.post('/whatsapp/webhook', async (request, reply) => {
+  const bot = getWhatsAppBot();
+  if (!bot) return reply.code(404).send();
+
+  try {
+    await bot.handleUpdate(request.body);
+  } catch (err) {
+    fastify.log.error(err, '[WhatsApp] Error handling webhook update');
+  }
+  reply.code(200).send();
+});
+
 // Start server
 const start = async () => {
   try {
@@ -546,6 +573,9 @@ const start = async () => {
 
     // Start Telegram bot if token is configured
     await startTelegramBot(config.port);
+
+    // Start WhatsApp bot if credentials are configured
+    await startWhatsAppBot(config.port);
   } catch (error) {
     fastify.log.error(error);
     process.exit(1);

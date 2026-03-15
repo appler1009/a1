@@ -22,6 +22,7 @@ export interface AppConfig {
   github: { clientId: string; clientSecret: string; redirectUri: string };
   discord: { botToken?: string; clientId?: string; channelIds: string[] };
   telegram: { botToken?: string; webhookUrl?: string; webhookSecret?: string };
+  whatsapp: { accessToken?: string; phoneNumberId?: string; verifyToken?: string };
   ses: { region: string; senderEmail: string };
   stripe: {
     secretKey: string;
@@ -85,6 +86,11 @@ export function initConfig(): void {
       botToken: process.env.TELEGRAM_BOT_TOKEN,
       webhookUrl: process.env.TELEGRAM_WEBHOOK_URL,
       webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
+    },
+    whatsapp: {
+      accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
+      phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+      verifyToken: process.env.WHATSAPP_VERIFY_TOKEN,
     },
     ses: {
       region: process.env.AWS_REGION || 'us-west-2',

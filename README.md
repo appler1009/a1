@@ -15,6 +15,7 @@ A self-hosted, multi-user AI agent platform with first-class MCP (Model Context 
 - **Scheduled Jobs**: Lambda-based job runner for autonomous background tasks with two-phase tool discovery
 - **Discord Bot**: Expose any agent role to Discord; responds to @mentions or auto-replies in configured channels
 - **Telegram Bot**: Expose any agent role to Telegram; responds to private messages and @mentions in group chats
+- **WhatsApp Bot**: Expose any agent role to WhatsApp via Meta Business Cloud API; responds to incoming messages from linked phone numbers
 - **Split-pane UI**: Chat on the left, file/email/document viewer on the right; responsive mobile layout with cross-device message sync
 - **Token Usage Tracking**: Per-user cost accounting across all LLM providers, with configurable monthly spend limits
 - **OAuth Token Security**: AES-256 encryption via AWS KMS; can be disabled for local dev without AWS
@@ -158,6 +159,16 @@ These enable users to link external services after logging in — they are not l
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather — bot is disabled when unset |
 
+### WhatsApp Bot
+
+| Variable | Description |
+|---|---|
+| `WHATSAPP_ACCESS_TOKEN` | Permanent system user access token from Meta for Developers — bot is disabled when unset |
+| `WHATSAPP_PHONE_NUMBER_ID` | Phone Number ID from the Meta app dashboard |
+| `WHATSAPP_VERIFY_TOKEN` | Any secret string you choose; used to verify the webhook with Meta |
+
+See [docs/whatsapp-integration.md](./docs/whatsapp-integration.md) for step-by-step setup instructions.
+
 ### MCP
 
 | Variable | Description | Default |
@@ -207,6 +218,7 @@ External servers (stdio subprocess) can be configured per-role through the MCP s
 │       ├── bots/             # Shared bot abstraction (BaseBot, session mgmt, SSE parsing)
 │       ├── discord/          # Discord bot
 │       ├── telegram/         # Telegram bot
+│       ├── whatsapp/         # WhatsApp bot (Meta Cloud API)
 │       ├── mcp/
 │       │   ├── adapters/     # BaseStdioAdapter, InProcessAdapter, MultiAccountAdapter, registry
 │       │   └── in-process/   # Built-in MCP server implementations
