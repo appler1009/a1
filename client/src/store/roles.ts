@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiFetch } from '../lib/api';
+import { useAuthStore } from './auth';
 
 export interface Role {
   id: string;
@@ -100,6 +101,18 @@ export const useRolesStore = create<RolesState>()(
                   console.log('[Roles] Restored role from server per-user currentRoleId:', serverCurrentRoleId);
                   newCurrentRole = existingRole;
                   newCurrentRoleId = existingRole.id;
+                }
+              }
+
+              if (!newCurrentRole) {
+                const primaryRoleId = useAuthStore.getState().user?.primaryRoleId;
+                if (primaryRoleId) {
+                  const primaryRole = fetchedRoles.find(r => r.id === primaryRoleId);
+                  if (primaryRole) {
+                    console.log('[Roles] Using primary role from user profile:', primaryRoleId);
+                    newCurrentRole = primaryRole;
+                    newCurrentRoleId = primaryRole.id;
+                  }
                 }
               }
 

@@ -33,8 +33,9 @@ export async function roleRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     // Return the per-user current role ID (persisted across devices)
+    // Priority: last switched role > primary role > server-wide current role
     const userCurrentRoleId = await mainDb.getSetting<string>(`user:${request.user.id}:currentRoleId`);
-    const currentRoleId = userCurrentRoleId || serverCurrentRoleId;
+    const currentRoleId = userCurrentRoleId || request.user.primaryRoleId || serverCurrentRoleId;
 
     console.log(`[/api/roles] ✓ Found ${roles.length} roles`);
     if (roles.length > 0) {

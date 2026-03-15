@@ -11,6 +11,7 @@ export interface User {
   telegramUserId?: string;
   locale?: string;
   timezone?: string;
+  primaryRoleId?: string;
   creditBalanceUsd?: number;
   createdAt: string;
 }

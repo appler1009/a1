@@ -63,6 +63,7 @@ function toUser(item: Record<string, unknown>): User {
     timezone: (item.timezone as string) || undefined,
     monthlySpendLimitUsd: item.monthlySpendLimitUsd !== undefined ? (item.monthlySpendLimitUsd as number) : undefined,
     creditBalanceUsd: item.creditBalanceUsd !== undefined ? (item.creditBalanceUsd as number) : 0,
+    primaryRoleId: (item.primaryRoleId as string) || undefined,
     emailDisabled: (item.emailDisabled as 'bounce' | 'complaint') || undefined,
     createdAt: new Date(item.createdAt as string),
     updatedAt: new Date(item.updatedAt as string),
@@ -316,6 +317,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     if (updates.timezone !== undefined) { sets.push('timezone = :timezone'); values[':timezone'] = updates.timezone ?? null; }
     if (updates.monthlySpendLimitUsd !== undefined) { sets.push('monthlySpendLimitUsd = :monthlySpendLimitUsd'); values[':monthlySpendLimitUsd'] = updates.monthlySpendLimitUsd ?? null; }
     if (updates.emailDisabled !== undefined) { sets.push('emailDisabled = :emailDisabled'); values[':emailDisabled'] = updates.emailDisabled ?? null; }
+    if (updates.primaryRoleId !== undefined) { sets.push('primaryRoleId = :primaryRoleId'); values[':primaryRoleId'] = updates.primaryRoleId ?? null; }
 
     const { Attributes } = await this.client.send(new UpdateCommand({
       TableName: this.tables.users,

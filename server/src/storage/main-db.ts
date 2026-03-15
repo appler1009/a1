@@ -411,6 +411,9 @@ export class MainDatabase implements IMainDatabase {
 
     // Migrate users table to add emailDisabled column if needed
     this.migrateEmailDisabledSchema();
+
+    // Migrate users table to add primaryRoleId column if needed
+    this.migratePrimaryRoleIdSchema();
   }
 
   /**
@@ -606,6 +609,20 @@ export class MainDatabase implements IMainDatabase {
     }
   }
 
+  private migratePrimaryRoleIdSchema(): void {
+    try {
+      const tableInfo = this.db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+      const hasCol = tableInfo.some(col => col.name === 'primaryRoleId');
+      if (!hasCol) {
+        console.log('[MainDatabase] Adding primaryRoleId column to users table...');
+        this.db.exec(`ALTER TABLE users ADD COLUMN primaryRoleId TEXT;`);
+        console.log('[MainDatabase] primaryRoleId column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during primaryRoleId schema migration:', error);
+    }
+  }
+
   close(): void {
     this.db.close();
   }
@@ -645,6 +662,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: string | null;
       monthlySpendLimitUsd: number | null;
       creditBalanceUsd: number;
+      primaryRoleId: string | null;
       emailDisabled: string | null;
       createdAt: string;
       updatedAt: string;
@@ -663,6 +681,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: row.timezone || undefined,
       monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
+      primaryRoleId: row.primaryRoleId || undefined,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
@@ -820,6 +839,10 @@ export class MainDatabase implements IMainDatabase {
     if (updates.emailDisabled !== undefined) {
       fields.push('emailDisabled = ?');
       values.push(updates.emailDisabled ?? null);
+    }
+    if (updates.primaryRoleId !== undefined) {
+      fields.push('primaryRoleId = ?');
+      values.push(updates.primaryRoleId || null);
     }
 
     values.push(id);

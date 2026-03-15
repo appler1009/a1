@@ -94,7 +94,7 @@ export abstract class BaseBot {
       }
 
       const roles = await mainDb.getUserRoles(appUser.id);
-      const defaultRoleId = roles.length > 0 ? roles[0].id : null;
+      const defaultRoleId = appUser.primaryRoleId || (roles.length > 0 ? roles[0].id : null);
 
       session = {
         appUserId: appUser.id,
