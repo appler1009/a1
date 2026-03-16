@@ -7,14 +7,14 @@ function AccountSettings() {
   const { user } = useAuthStore();
   const { roles } = useRolesStore();
   const [displayName, setDisplayName] = React.useState(user?.name || '');
-  const [primaryRoleId, setPrimaryRoleId] = React.useState(user?.primaryRoleId || '');
+  const [primaryRoleId, setPrimaryRoleId] = React.useState(user?.primaryRoleId || roles[0]?.id || '');
   const [loading, setLoading] = React.useState(false);
   const [savedMessage, setSavedMessage] = React.useState('');
 
   React.useEffect(() => {
     setDisplayName(user?.name || '');
-    setPrimaryRoleId(user?.primaryRoleId || '');
-  }, [user?.name, user?.primaryRoleId]);
+    setPrimaryRoleId(user?.primaryRoleId || roles[0]?.id || '');
+  }, [user?.name, user?.primaryRoleId, roles]);
 
   const handleSave = async () => {
     setLoading(true);
@@ -84,7 +84,6 @@ function AccountSettings() {
               onChange={(e) => setPrimaryRoleId(e.target.value)}
               className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
             >
-              <option value="">No default</option>
               {roles.map((role) => (
                 <option key={role.id} value={role.id}>
                   {role.name}
