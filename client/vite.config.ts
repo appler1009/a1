@@ -103,18 +103,18 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: parseInt(process.env.E2E_CLIENT_PORT || '5173', 10),
     host: '127.0.0.1',
-    strictPort: false,
+    strictPort: !!process.env.E2E_CLIENT_PORT,
     cors: true,
     hmr: {
       host: 'localhost',
-      port: 5173,
+      port: parseInt(process.env.E2E_CLIENT_PORT || '5173', 10),
       protocol: 'ws',
     },
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: `http://localhost:${process.env.E2E_SERVER_PORT || '3000'}`,
         changeOrigin: true,
         ws: true,
       },

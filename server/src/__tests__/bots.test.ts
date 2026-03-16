@@ -131,6 +131,24 @@ describe('BaseBot.processMessage (unlinked user)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// BotSession — pinnedRoleMessageId
+// ---------------------------------------------------------------------------
+
+describe('BotSession.pinnedRoleMessageId', () => {
+  it('is optional and can be stored on a session', () => {
+    const bot = new TestBot();
+    const sessions: Map<string, any> = (bot as any).sessions;
+    sessions.set('tg-1', { appUserId: 'u1', sessionId: 's1', currentRoleId: 'r1' });
+
+    const session = sessions.get('tg-1');
+    expect(session.pinnedRoleMessageId).toBeUndefined();
+
+    session.pinnedRoleMessageId = 42;
+    expect(sessions.get('tg-1').pinnedRoleMessageId).toBe(42);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // notifyScheduledJobCompletion
 // ---------------------------------------------------------------------------
 

@@ -6,6 +6,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "dev": "NODE_ENV=development bun --watch src/index.ts",
+    "dev:e2e": "bun --watch src/index.ts",
     "build": "tsc -b",
     "start": "NODE_ENV=production bun dist/index.js",
     "start:dev": "NODE_ENV=development bun dist/index.js",
