@@ -63,9 +63,12 @@
   }
 }
 
-/* Safe area inset for devices with notch / Dynamic Island */
+/* Safe area insets for devices with notch / Dynamic Island / browser chrome */
 .safe-top {
   padding-top: env(safe-area-inset-top);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Slightly smaller base font on mobile so text isn't too large on small screens */
