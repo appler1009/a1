@@ -1,4 +1,4 @@
-import { test as base, request as baseRequest, type BrowserContext } from '@playwright/test';
+import { test as base, request as baseRequest, devices, type BrowserContext } from '@playwright/test';
 
 const SERVER_URL = process.env.API_URL || 'http://localhost:5173';
 
@@ -7,6 +7,8 @@ type StorageState = Awaited<ReturnType<BrowserContext['storageState']>>;
 type TestFixtures = {
   /** A Page that is already authenticated and has a role selected. */
   authenticatedPage: import('@playwright/test').Page;
+  /** A Page authenticated with iPhone SE device emulation (touch, Safari UA, 375×667). */
+  mobileAuthenticatedPage: import('@playwright/test').Page;
   /** The email of this worker's test user. */
   testEmail: string;
 };
@@ -134,6 +136,38 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     // Wait for the initial message fetch to finish so the store is stable
     // before the test interacts. Without this, addMessage() can race with
     // fetchMessages() completing and overwriting the store.
+    await messagesLoaded;
+
+    await use(page);
+    await context.close();
+  },
+
+  /**
+   * Like authenticatedPage but emulates an iPhone SE:
+   * 375×667 viewport, touch enabled, Safari user-agent, deviceScaleFactor 2.
+   */
+  mobileAuthenticatedPage: async ({ browser, workerAuth }, use) => {
+    const context = await browser.newContext({
+      ...devices['iPhone SE'],
+      storageState: workerAuth.storageState,
+    });
+    const page = await context.newPage();
+
+    const messagesLoaded = page
+      .waitForResponse(
+        (resp) =>
+          resp.url().includes('/api/messages?') &&
+          resp.request().method() === 'GET',
+        { timeout: 15000 },
+      )
+      .catch(() => null);
+
+    await page.goto('/');
+
+    await page
+      .getByPlaceholder('Type a message...')
+      .waitFor({ state: 'visible', timeout: 15000 });
+
     await messagesLoaded;
 
     await use(page);

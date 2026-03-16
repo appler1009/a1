@@ -1,99 +1,178 @@
+/**
+ * Mobile E2E tests — iPhone SE emulation (375×667, touch, Safari UA).
+ *
+ * Uses the `mobileAuthenticatedPage` fixture which creates a browser context
+ * via Playwright's built-in `devices['iPhone SE']`, giving us the correct
+ * viewport, deviceScaleFactor, touch support, and user-agent automatically.
+ */
 import { test, expect } from './fixtures';
 
-// iPhone SE viewport
-const MOBILE_VIEWPORT = { width: 375, height: 667 };
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-test.describe('Mobile layout', () => {
-  test.beforeEach(async ({ authenticatedPage: page }) => {
-    await page.setViewportSize(MOBILE_VIEWPORT);
+/** Open the sidebar by tapping the hamburger button. */
+async function openSidebar(page: import('@playwright/test').Page) {
+  await page.getByTitle('Open sidebar').click();
+  // Wait until the sidebar's "Create role" button enters the viewport
+  await expect(page.getByTitle('Create role')).toBeInViewport();
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+test.describe('Mobile layout — iPhone SE', () => {
+  test('shows hamburger button; sidebar is off-screen initially', async ({
+    mobileAuthenticatedPage: page,
+  }) => {
+    await expect(page.getByTitle('Open sidebar')).toBeVisible();
+    // Sidebar's "Create role" button exists in DOM but must not be in viewport
+    await expect(page.getByTitle('Create role')).not.toBeInViewport();
   });
 
-  test('sidebar opens and closes via hamburger button', async ({ authenticatedPage: page }) => {
-    // On mobile, sidebar should be hidden initially
-    const sidebar = page.locator('[class*="translate-x-full"]');
-    await expect(sidebar).toBeVisible();
+  test('chat input and send button are visible without scrolling', async ({
+    mobileAuthenticatedPage: page,
+  }) => {
+    await expect(page.getByPlaceholder('Type a message...')).toBeInViewport();
+    await expect(page.getByRole('button', { name: /send/i })).toBeInViewport();
+  });
 
-    // Open sidebar via hamburger
-    await page.getByTitle('Open sidebar').click();
-    await expect(page.locator('[class*="translate-x-0"]')).toBeVisible();
-
-    // Backdrop should appear
+  test('sidebar opens via hamburger and shows role list', async ({
+    mobileAuthenticatedPage: page,
+  }) => {
+    await openSidebar(page);
+    await expect(page.getByRole('button', { name: /test role/i }).first()).toBeInViewport();
+    // Backdrop overlay should appear
     await expect(page.locator('.fixed.inset-0.bg-black\\/50')).toBeVisible();
-
-    // Close by clicking backdrop
-    await page.locator('.fixed.inset-0.bg-black\\/50').click();
-    await expect(page.locator('[class*="translate-x-full"]')).toBeVisible();
   });
 
-  test('Memory dialog appears above sidebar (not behind it)', async ({ authenticatedPage: page }) => {
-    // Open sidebar
-    await page.getByTitle('Open sidebar').click();
-    await expect(page.locator('[class*="translate-x-0"]')).toBeVisible();
-
-    // Expand first role's sub-menu
-    await page.locator('button[title="Role options"]').first().click();
-
-    // Click "View Memory"
-    await page.getByRole('button', { name: /view memory/i }).click();
-
-    // Sidebar should close
-    await expect(page.locator('[class*="translate-x-full"]')).toBeVisible();
-
-    // Memory dialog should be visible (heading includes "Memory")
-    await expect(page.getByRole('heading', { name: /— memory$/i })).toBeVisible();
-  });
-
-  test('Role Description dialog appears above sidebar (not behind it)', async ({
-    authenticatedPage: page,
+  test('sidebar closes by tapping the backdrop', async ({
+    mobileAuthenticatedPage: page,
   }) => {
-    // Open sidebar
-    await page.getByTitle('Open sidebar').click();
-    await expect(page.locator('[class*="translate-x-0"]')).toBeVisible();
-
-    // Expand first role's sub-menu
-    await page.locator('button[title="Role options"]').first().click();
-
-    // Click "Role Description"
-    await page.getByRole('button', { name: /role description/i }).click();
-
-    // Sidebar should close
-    await expect(page.locator('[class*="translate-x-full"]')).toBeVisible();
-
-    // Role Description dialog should be visible
-    await expect(page.getByRole('heading', { name: /role description/i })).toBeVisible();
+    await openSidebar(page);
+    // Dispatch click directly on backdrop (force bypasses hit-test on fixed overlay)
+    await page.locator('.fixed.inset-0.bg-black\\/50').click({ force: true });
+    await expect(page.getByTitle('Create role')).not.toBeInViewport();
   });
 
-  test('Scheduled Jobs dialog appears above sidebar (not behind it)', async ({
-    authenticatedPage: page,
+  test('switching role closes the sidebar', async ({
+    mobileAuthenticatedPage: page,
   }) => {
-    // Open sidebar
-    await page.getByTitle('Open sidebar').click();
-    await expect(page.locator('[class*="translate-x-0"]')).toBeVisible();
-
-    // Click Scheduled button
-    await page.getByRole('button', { name: /scheduled/i }).click();
-
-    // Sidebar should close
-    await expect(page.locator('[class*="translate-x-full"]')).toBeVisible();
-
-    // Scheduled Jobs dialog should be visible
-    await expect(page.getByRole('heading', { name: /scheduled jobs/i })).toBeVisible();
+    await openSidebar(page);
+    await page.getByRole('button', { name: /test role/i }).first().click();
+    // After switching, sidebar should slide away
+    await expect(page.getByTitle('Create role')).not.toBeInViewport();
+    // Chat input is back in view
+    await expect(page.getByPlaceholder('Type a message...')).toBeInViewport();
   });
 
-  test('Settings dialog appears above sidebar (not behind it)', async ({
-    authenticatedPage: page,
+  test('Settings dialog opens full-screen and sidebar closes', async ({
+    mobileAuthenticatedPage: page,
   }) => {
-    // Open sidebar
-    await page.getByTitle('Open sidebar').click();
-    await expect(page.locator('[class*="translate-x-0"]')).toBeVisible();
-
-    // Click Settings button
+    await openSidebar(page);
     await page.getByTitle('Settings').click();
 
     // Sidebar should close
-    await expect(page.locator('[class*="translate-x-full"]')).toBeVisible();
+    await expect(page.getByTitle('Create role')).not.toBeInViewport();
 
-    // Settings dialog should be visible
+    // Dialog heading is visible
+    const heading = page.getByRole('heading', { name: /settings/i });
+    await expect(heading).toBeVisible();
+
+    // Dialog fills the viewport (full-screen on mobile)
+    const viewport = page.viewportSize()!;
+    const box = await heading.locator('xpath=ancestor::div[contains(@class,"bg-background")]').first().boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeGreaterThan(viewport.width * 0.9);
+    expect(box!.height).toBeGreaterThan(viewport.height * 0.9);
+  });
+
+  test('Scheduled Jobs dialog opens full-screen and sidebar closes', async ({
+    mobileAuthenticatedPage: page,
+  }) => {
+    await openSidebar(page);
+    await page.getByRole('button', { name: /scheduled/i }).click();
+
+    await expect(page.getByTitle('Create role')).not.toBeInViewport();
+
+    const heading = page.getByRole('heading', { name: /scheduled jobs/i });
+    await expect(heading).toBeVisible();
+
+    const viewport = page.viewportSize()!;
+    const box = await heading.locator('xpath=ancestor::div[contains(@class,"bg-card")]').first().boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeGreaterThan(viewport.width * 0.9);
+    expect(box!.height).toBeGreaterThan(viewport.height * 0.9);
+  });
+
+  test('Memory dialog opens full-screen and sidebar closes', async ({
+    mobileAuthenticatedPage: page,
+  }) => {
+    await openSidebar(page);
+    await page.locator('button[title="Role options"]').first().click();
+    await page.getByRole('button', { name: /view memory/i }).click();
+
+    await expect(page.getByTitle('Create role')).not.toBeInViewport();
+
+    const heading = page.getByRole('heading', { name: /— memory$/i });
+    await expect(heading).toBeVisible();
+
+    const viewport = page.viewportSize()!;
+    const box = await heading.locator('xpath=ancestor::div[contains(@class,"bg-card")]').first().boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeGreaterThan(viewport.width * 0.9);
+    expect(box!.height).toBeGreaterThan(viewport.height * 0.9);
+  });
+
+  test('Role Description dialog opens full-screen and sidebar closes', async ({
+    mobileAuthenticatedPage: page,
+  }) => {
+    await openSidebar(page);
+    await page.locator('button[title="Role options"]').first().click();
+    await page.getByRole('button', { name: /role description/i }).click();
+
+    await expect(page.getByTitle('Create role')).not.toBeInViewport();
+
+    const heading = page.getByRole('heading', { name: /role description/i });
+    await expect(heading).toBeVisible();
+
+    const viewport = page.viewportSize()!;
+    const box = await heading.locator('xpath=ancestor::div[contains(@class,"bg-card")]').first().boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeGreaterThan(viewport.width * 0.9);
+    expect(box!.height).toBeGreaterThan(viewport.height * 0.9);
+  });
+
+  test('can create a role on mobile', async ({
+    mobileAuthenticatedPage: page,
+  }) => {
+    await openSidebar(page);
+    await page.getByTitle('Create role').click();
+
+    // Dialog is full-screen — heading should be visible
+    await expect(page.getByRole('heading', { name: /create new role/i })).toBeVisible();
+
+    await page.getByLabel(/role name/i).fill('Mobile Role');
+    await page.getByRole('button', { name: 'Create Role', exact: true }).click();
+
+    // Dialog closes; sidebar stays open after role creation — new role visible directly
+    await expect(page.getByRole('heading', { name: /create new role/i })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: /mobile role/i }).first()).toBeInViewport();
+  });
+
+  test('Settings tab bar is horizontally scrollable', async ({
+    mobileAuthenticatedPage: page,
+  }) => {
+    await openSidebar(page);
+    await page.getByTitle('Settings').click();
     await expect(page.getByRole('heading', { name: /settings/i })).toBeVisible();
+
+    // The tab bar container must have scrollable overflow
+    const isScrollable = await page.evaluate(() => {
+      const tabBar = document.querySelector('[class*="overflow-x-auto"]');
+      return tabBar ? tabBar.scrollWidth > tabBar.clientWidth : false;
+    });
+    expect(isScrollable).toBe(true);
   });
 });
