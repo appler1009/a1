@@ -56,7 +56,10 @@ test.describe('Mobile layout', () => {
     // Click "Role Description"
     await page.getByRole('button', { name: /role description/i }).click();
 
-    // Role Description dialog should be visible (sidebar can remain open for this one)
+    // Sidebar should close
+    await expect(page.locator('[class*="translate-x-full"]')).toBeVisible();
+
+    // Role Description dialog should be visible
     await expect(page.getByRole('heading', { name: /role description/i })).toBeVisible();
   });
 

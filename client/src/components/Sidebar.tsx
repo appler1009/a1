@@ -204,7 +204,7 @@ export function Sidebar() {
                       View Memory
                     </button>
                     <button
-                      onClick={() => setDescriptionDialogRole(role)}
+                      onClick={() => { setMobileSidebarOpen(false); setDescriptionDialogRole(role); }}
                       className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left text-xs text-muted-foreground hover:bg-muted transition-colors"
                     >
                       <FileText className="w-3 h-3" />
