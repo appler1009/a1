@@ -661,12 +661,12 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 mb-5 border-b border-border">
+      <div className="flex gap-1 mb-5 border-b border-border overflow-x-auto scrollbar-none">
         {(['account', 'billing', 'models', 'features', 'region', 'bots', 'about'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 text-sm font-medium capitalize rounded-t transition-colors ${
+            className={`px-4 py-2 text-sm font-medium capitalize rounded-t transition-colors whitespace-nowrap shrink-0 ${
               activeTab === tab
                 ? 'border-b-2 border-primary text-foreground -mb-px'
                 : 'text-muted-foreground hover:text-foreground'
