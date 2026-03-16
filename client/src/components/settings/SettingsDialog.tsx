@@ -661,7 +661,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 mb-5 border-b border-border overflow-x-auto scrollbar-none">
+      <div className="flex gap-1 mb-5 border-b border-border overflow-x-auto overflow-y-hidden scrollbar-none">
         {(['account', 'billing', 'models', 'features', 'region', 'bots', 'about'] as const).map((tab) => (
           <button
             key={tab}
