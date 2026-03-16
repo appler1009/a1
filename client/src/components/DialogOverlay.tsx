@@ -21,7 +21,7 @@ export function DialogOverlay({ onClose, children, className = 'flex items-cente
 
   return (
     <div
-      className={`fixed inset-0 bg-black/50 backdrop-blur-sm z-50 ${className}`}
+      className={`fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center max-sm:bg-transparent max-sm:[&>*]:absolute max-sm:[&>*]:inset-0 max-sm:[&>*]:!w-full max-sm:[&>*]:!h-full max-sm:[&>*]:!max-w-none max-sm:[&>*]:!max-h-none max-sm:[&>*]:!rounded-none ${className}`}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       {children}
