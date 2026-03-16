@@ -10,6 +10,10 @@ import { OnboardingPane } from './components/panes/OnboardingPane';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTheme } from './hooks/useTheme';
 import { DialogOverlay } from './components/DialogOverlay';
+import { MemoryOverviewDialog } from './components/MemoryOverviewDialog';
+import { RoleDescriptionDialog } from './components/RoleDescriptionDialog';
+import { ScheduledJobsDialog } from './components/ScheduledJobsDialog';
+import { apiFetch } from './lib/api';
 
 // Lazy-load route-only pages to keep the main bundle lean
 const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
@@ -21,8 +25,25 @@ const OAuthCallbackPage = lazy(() => import('./pages/OAuthCallbackPage').then(m 
 function MainApp() {
   const isMobile = useIsMobile();
   const { user } = useAuthStore();
-  const { showSettings, setShowSettings, viewerFile, setViewerFile, mobileSidebarOpen, setMobileSidebarOpen } = useUIStore();
+  const { showSettings, setShowSettings, viewerFile, setViewerFile, mobileSidebarOpen, setMobileSidebarOpen, showScheduledJobs, setShowScheduledJobs, memoryDialogRole, setMemoryDialogRole, descriptionDialogRole, setDescriptionDialogRole } = useUIStore();
   const { currentRole, rolesLoaded } = useRolesStore();
+
+  const handleSaveDescription = async (roleId: string, text: string) => {
+    try {
+      const response = await apiFetch(`/api/roles/${roleId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ jobDesc: text.trim() || null }),
+      });
+      if (!response.ok) throw new Error('Failed to save description');
+      const data = await response.json();
+      if (data.success) {
+        const { updateRole } = useRolesStore.getState();
+        updateRole(roleId, { jobDesc: text.trim() || undefined });
+      }
+    } catch (error) {
+      console.error('[App] Failed to save description:', error);
+    }
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -95,6 +116,20 @@ function MainApp() {
           />
         </DialogOverlay>
       )}
+
+      <MemoryOverviewDialog
+        role={memoryDialogRole}
+        onClose={() => setMemoryDialogRole(null)}
+      />
+      <RoleDescriptionDialog
+        role={descriptionDialogRole}
+        onClose={() => setDescriptionDialogRole(null)}
+        onSave={handleSaveDescription}
+      />
+      <ScheduledJobsDialog
+        open={showScheduledJobs}
+        onClose={() => setShowScheduledJobs(false)}
+      />
     </div>
   );
 }

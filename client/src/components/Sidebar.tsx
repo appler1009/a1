@@ -15,9 +15,6 @@ import {
 import { useTheme } from '../hooks/useTheme';
 import { useAuthStore, useRolesStore, useUIStore, useEnvironmentStore } from '../store';
 import { CreateRoleDialog } from './CreateRoleDialog';
-import { RoleDescriptionDialog } from './RoleDescriptionDialog';
-import { MemoryOverviewDialog } from './MemoryOverviewDialog';
-import { ScheduledJobsDialog } from './ScheduledJobsDialog';
 import { LoadingOverlay } from './LoadingOverlay';
 import { apiFetch } from '../lib/api';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -26,14 +23,12 @@ export function Sidebar() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [flashRoleId, setFlashRoleId] = useState<string | null>(null);
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
-  const [memoryDialogRole, setMemoryDialogRole] = useState<{ id: string; name: string } | null>(null);
-  const [descriptionDialogRole, setDescriptionDialogRole] = useState<{ id: string; name: string; jobDesc?: string } | null>(null);
 
   const isMobile = useIsMobile();
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { user, currentGroup, groups, setCurrentGroup, logout } = useAuthStore();
   const { roles, currentRole, switchRole, addRole } = useRolesStore();
-  const { sidebarOpen, toggleSidebar, mobileSidebarOpen, setMobileSidebarOpen, setShowSettings, showScheduledJobs, setShowScheduledJobs, roleSwitching, setRoleSwitching } = useUIStore();
+  const { sidebarOpen, toggleSidebar, mobileSidebarOpen, setMobileSidebarOpen, setShowSettings, setShowScheduledJobs, roleSwitching, setRoleSwitching, setMemoryDialogRole, setDescriptionDialogRole } = useUIStore();
   const environment = useEnvironmentStore((state) => state.environment);
 
   useEffect(() => {
@@ -84,23 +79,6 @@ export function Sidebar() {
       const message = error instanceof Error ? error.message : 'Failed to create role';
       console.error('[Sidebar] Failed to create role:', message);
       throw error;
-    }
-  };
-
-  const handleSaveDescription = async (roleId: string, text: string) => {
-    try {
-      const response = await apiFetch(`/api/roles/${roleId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ jobDesc: text.trim() || null }),
-      });
-      if (!response.ok) throw new Error('Failed to save description');
-      const data = await response.json();
-      if (data.success) {
-        const { updateRole } = useRolesStore.getState();
-        updateRole(roleId, { jobDesc: text.trim() || undefined });
-      }
-    } catch (error) {
-      console.error('[Sidebar] Failed to save description:', error);
     }
   };
 
@@ -353,19 +331,6 @@ export function Sidebar() {
         isOpen={isCreateDialogOpen}
         onClose={() => setIsCreateDialogOpen(false)}
         onCreateRole={handleCreateRole}
-      />
-      <MemoryOverviewDialog
-        role={memoryDialogRole}
-        onClose={() => setMemoryDialogRole(null)}
-      />
-      <RoleDescriptionDialog
-        role={descriptionDialogRole}
-        onClose={() => setDescriptionDialogRole(null)}
-        onSave={handleSaveDescription}
-      />
-      <ScheduledJobsDialog
-        open={showScheduledJobs}
-        onClose={() => setShowScheduledJobs(false)}
       />
     </div>
     </>

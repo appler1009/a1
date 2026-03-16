@@ -45,6 +45,12 @@ export const useEnvironmentStore = create<EnvironmentState>()((set) => ({
   },
 }));
 
+export interface RoleRef {
+  id: string;
+  name: string;
+  jobDesc?: string;
+}
+
 // UI Store
 interface UIState {
   sidebarOpen: boolean;
@@ -54,6 +60,8 @@ interface UIState {
   showSettings: boolean;
   showScheduledJobs: boolean;
   roleSwitching: boolean;
+  memoryDialogRole: RoleRef | null;
+  descriptionDialogRole: RoleRef | null;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setMobileSidebarOpen: (open: boolean) => void;
@@ -62,6 +70,8 @@ interface UIState {
   setShowSettings: (show: boolean) => void;
   setShowScheduledJobs: (show: boolean) => void;
   setRoleSwitching: (switching: boolean) => void;
+  setMemoryDialogRole: (role: RoleRef | null) => void;
+  setDescriptionDialogRole: (role: RoleRef | null) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -74,6 +84,8 @@ export const useUIStore = create<UIState>()(
       showSettings: false,
       showScheduledJobs: false,
       roleSwitching: false,
+      memoryDialogRole: null,
+      descriptionDialogRole: null,
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
       setMobileSidebarOpen: (open) => set({ mobileSidebarOpen: open }),
@@ -82,6 +94,8 @@ export const useUIStore = create<UIState>()(
       setShowSettings: (show) => set({ showSettings: show }),
       setShowScheduledJobs: (show) => set({ showScheduledJobs: show }),
       setRoleSwitching: (switching) => set({ roleSwitching: switching }),
+      setMemoryDialogRole: (role) => set({ memoryDialogRole: role }),
+      setDescriptionDialogRole: (role) => set({ descriptionDialogRole: role }),
     }),
     {
       name: 'ui-storage',
