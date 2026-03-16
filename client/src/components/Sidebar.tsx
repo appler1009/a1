@@ -219,7 +219,7 @@ export function Sidebar() {
                 {(isMobile || sidebarOpen) && expandedRoleId === role.id && (
                   <div className="ml-3 mt-0.5 pl-2 border-l border-border">
                     <button
-                      onClick={() => setMemoryDialogRole(role)}
+                      onClick={() => { setMobileSidebarOpen(false); setMemoryDialogRole(role); }}
                       className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left text-xs text-muted-foreground hover:bg-muted transition-colors"
                     >
                       <Brain className="w-3 h-3" />
@@ -272,7 +272,7 @@ export function Sidebar() {
 
         <div className="flex flex-col gap-1">
           <button
-            onClick={() => setShowScheduledJobs(true)}
+            onClick={() => { setMobileSidebarOpen(false); setShowScheduledJobs(true); }}
             className="p-2 hover:bg-muted rounded-lg flex items-center gap-2 text-sm"
             title="Scheduled Jobs"
           >
@@ -330,7 +330,7 @@ export function Sidebar() {
             </button>
           )}
           <button
-            onClick={() => setShowSettings(true)}
+            onClick={() => { setMobileSidebarOpen(false); setShowSettings(true); }}
             className="p-2 hover:bg-muted rounded-lg flex items-center gap-2 text-sm"
             title="Settings"
           >

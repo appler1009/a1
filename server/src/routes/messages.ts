@@ -752,7 +752,7 @@ ${accountList}
 ## TOOL USAGE
 **ALWAYS prefer MCP tools over your own knowledge or assumptions.**
 - Before answering any question about real-world data (emails, files, calendar events, weather, stocks, memory, web content, etc.), check whether a tool can fetch or confirm the answer. Use the tool first, then respond.
-- If you are unsure which tool to use, call `search_tool` (meta-mcp-search) to discover the right one — do not skip this step.
+- If you are unsure which tool to use, call \`search_tool\` (meta-mcp-search) to discover the right one — do not skip this step.
 - Never say "I don't have access to X" if a tool might provide it. Attempt the tool call first.
 - Do not rely on your training knowledge for anything that is likely to change over time or that a tool can supply more accurately.
 
