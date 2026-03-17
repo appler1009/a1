@@ -46,6 +46,13 @@ function AccountSettings() {
   };
 
   return (
+    <div className="space-y-3">
+      {user?.sandboxUser && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-400/10 border border-amber-400/30 text-amber-700">
+          <span className="text-sm leading-none">⚠</span>
+          <p className="text-xs font-semibold">Sandbox account</p>
+        </div>
+      )}
     <div className="p-4 border border-border rounded-lg bg-muted/20">
       <div className="space-y-3">
         <div>
@@ -109,6 +116,7 @@ function AccountSettings() {
         )}
       </div>
 
+    </div>
     </div>
   );
 }

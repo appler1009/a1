@@ -13,6 +13,7 @@ import { apiFetch } from '../../lib/api';
 interface BalanceData {
   creditBalanceUsd: number;
   publishableKey: string;
+  stripeMode: 'live' | 'test';
 }
 
 interface Payment {
@@ -399,7 +400,14 @@ export function BillingSettings() {
         </div>
       ) : (
         <div>
-          <p className="text-xs font-medium text-muted-foreground mb-2">Add Credits</p>
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-xs font-medium text-muted-foreground">Add Credits</p>
+            {balance.stripeMode === 'test' && (
+              <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-amber-400/20 text-amber-700 border border-amber-400/40 leading-none">
+                Sandbox
+              </span>
+            )}
+          </div>
           {checkoutError && (
             <p className="mb-2 text-xs text-red-600 bg-red-500/10 px-3 py-2 rounded-lg">
               {checkoutError}

@@ -23,6 +23,21 @@ beforeEach(() => {
   vi.mocked(useRolesStore).mockReturnValue({ roles: mockRoles } as any);
 });
 
+describe('AccountSettings — sandbox banner', () => {
+  it('does not show the banner for regular users', () => {
+    render(<AccountSettings />);
+    expect(screen.queryByText('Sandbox account')).toBeNull();
+  });
+
+  it('shows the sandbox banner when user.sandboxUser is true', () => {
+    vi.mocked(useAuthStore).mockReturnValue({
+      user: { id: 'u1', email: 'a@b.com', name: 'Alice', sandboxUser: true },
+    } as any);
+    render(<AccountSettings />);
+    expect(screen.getByText('Sandbox account')).toBeTruthy();
+  });
+});
+
 describe('AccountSettings — primary role selector', () => {
   it('does not show a "No default" option', () => {
     render(<AccountSettings />);

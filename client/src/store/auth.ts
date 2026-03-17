@@ -13,6 +13,7 @@ export interface User {
   timezone?: string;
   primaryRoleId?: string;
   creditBalanceUsd?: number;
+  sandboxUser?: boolean;
   createdAt: string;
 }
 
