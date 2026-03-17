@@ -61,7 +61,6 @@ function toUser(item: Record<string, unknown>): User {
     telegramUserId: (item.telegramUserId as string) || undefined,
     locale: (item.locale as string) || undefined,
     timezone: (item.timezone as string) || undefined,
-    monthlySpendLimitUsd: item.monthlySpendLimitUsd !== undefined ? (item.monthlySpendLimitUsd as number) : undefined,
     creditBalanceUsd: item.creditBalanceUsd !== undefined ? (item.creditBalanceUsd as number) : 0,
     primaryRoleId: (item.primaryRoleId as string) || undefined,
     emailDisabled: (item.emailDisabled as 'bounce' | 'complaint') || undefined,
@@ -337,7 +336,6 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     if (updates.telegramUserId !== undefined) { sets.push('telegramUserId = :telegramUserId'); values[':telegramUserId'] = updates.telegramUserId ?? null; }
     if (updates.locale !== undefined) { sets.push('locale = :locale'); values[':locale'] = updates.locale ?? null; }
     if (updates.timezone !== undefined) { sets.push('timezone = :timezone'); values[':timezone'] = updates.timezone ?? null; }
-    if (updates.monthlySpendLimitUsd !== undefined) { sets.push('monthlySpendLimitUsd = :monthlySpendLimitUsd'); values[':monthlySpendLimitUsd'] = updates.monthlySpendLimitUsd ?? null; }
     if (updates.emailDisabled !== undefined) { sets.push('emailDisabled = :emailDisabled'); values[':emailDisabled'] = updates.emailDisabled ?? null; }
     if (updates.primaryRoleId !== undefined) { sets.push('primaryRoleId = :primaryRoleId'); values[':primaryRoleId'] = updates.primaryRoleId ?? null; }
 

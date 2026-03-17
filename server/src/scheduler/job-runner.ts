@@ -5,7 +5,7 @@ import type { LLMMessage } from '@local-agent/shared';
 import { mcpManager } from '../mcp/index.js';
 import { updateToolManifest } from '../mcp/in-process/meta-mcp-search.js';
 import { notifyScheduledJobCompletion } from '../discord/bot.js';
-import { estimateCostUsd, DEFAULT_MONTHLY_SPEND_LIMIT_USD } from '../ai/cost.js';
+import { getByokRouter } from '../utils/byok.js';
 
 // Tools never surfaced to a scheduled job runner via search_tool
 const JOB_RUNNER_EXCLUDED_TOOLS = ['schedule_task', 'list_scheduled_jobs', 'list_roles', 'switch_role'];
@@ -65,7 +65,8 @@ export class JobRunner {
     ) => Promise<{ text: string }>,
   ) {}
 
-  async run(job: ScheduledJob): Promise<void> {
+  async run(job: ScheduledJob, llmRouter?: LLMRouter): Promise<void> {
+    const router = llmRouter ?? this.llmRouter;
     const role = await this.db.getRole(job.roleId);
     const systemPrompt = [
       'You are an autonomous AI agent executing a scheduled background task.',
@@ -85,7 +86,7 @@ export class JobRunner {
 
     // Phase 1: search_tool + memory base tools
     const phase1Defs = [SEARCH_TOOL_DEF, ...MEMORY_BASE_TOOLS];
-    let currentTools = this.llmRouter.convertMCPToolsToOpenAI(phase1Defs);
+    let currentTools = router.convertMCPToolsToOpenAI(phase1Defs);
     let hasLoadedPhase2Tools = false;
     console.log(`[JobRunner] Job ${job.id} — Phase 1 tools: ${phase1Defs.map(t => t.name).join(', ')}`);
 
@@ -100,7 +101,7 @@ export class JobRunner {
 
     for (let i = 0; i < JobRunner.MAX_ITERATIONS; i++) {
       console.log(`[JobRunner] Job ${job.id} — iteration ${i + 1}/${JobRunner.MAX_ITERATIONS}`);
-      const response = await this.llmRouter.complete({ messages, tools: currentTools, userId: job.userId, source: 'scheduler' });
+      const response = await router.complete({ messages, tools: currentTools, userId: job.userId, source: 'scheduler' });
       const toolCalls = response.toolCalls || [];
 
       if (response.content) {
@@ -155,7 +156,7 @@ export class JobRunner {
               }
             }
             hasLoadedPhase2Tools = true;
-            currentTools = this.llmRouter.convertMCPToolsToOpenAI(phase2Defs);
+            currentTools = router.convertMCPToolsToOpenAI(phase2Defs);
             console.log(`[JobRunner] Job ${job.id} — Phase 2 tools: ${phase2Defs.map(t => t.name).join(', ')}`);
           }
 
@@ -213,25 +214,22 @@ export class JobRunner {
   async execute(job: ScheduledJob): Promise<void> {
     console.log(`[JobRunner] Running job ${job.id}: ${job.description.slice(0, 60)}`);
 
-    // Check monthly spend limit — BYOK users are exempt (they use their own API key)
-    const [user, byokCredentials] = await Promise.all([
+    // Resolve BYOK router for this user — falls back to null (system router used below)
+    const [user, byokRouter] = await Promise.all([
       this.db.getUser(job.userId),
-      this.db.listServiceCredentials(job.userId, 'byok'),
+      getByokRouter(job.userId),
     ]);
-    const hasByok = byokCredentials.length > 0;
-    const limitUsd = user?.monthlySpendLimitUsd ?? DEFAULT_MONTHLY_SPEND_LIMIT_USD;
-    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    const monthlyUsage = await this.db.getTokenUsageByUser(job.userId, { from: monthStart });
-    const spentUsd = estimateCostUsd(monthlyUsage);
-    if (!hasByok && spentUsd >= limitUsd) {
-      console.warn(`[JobRunner] Job ${job.id} skipped — spend limit reached ($${spentUsd.toFixed(4)} / $${limitUsd.toFixed(2)})`);
+    const hasByok = byokRouter !== null;
+    const hasCreditBalance = (user?.creditBalanceUsd ?? 0) >= 0.001;
+    if (!hasByok && !hasCreditBalance) {
+      console.warn(`[JobRunner] Job ${job.id} skipped — insufficient credits ($${(user?.creditBalanceUsd ?? 0).toFixed(4)} remaining)`);
       await this.db.saveMessage({
         id: uuidv4(),
         userId: job.userId,
         roleId: job.roleId,
         groupId: null,
         from: 'system' as const,
-        content: `**Scheduled task skipped:** You've reached your monthly AI usage limit of $${limitUsd.toFixed(2)}. Your estimated spend this month is $${spentUsd.toFixed(4)}. The limit resets on the 1st of next month. Tip: you can bring your own API key under Settings → Models to bypass this limit.`,
+        content: `**Scheduled task skipped:** Your credit balance is empty ($${(user?.creditBalanceUsd ?? 0).toFixed(4)} remaining). Please top up your account under Settings → Billing to continue.`,
         createdAt: new Date().toISOString(),
       });
       return;
@@ -239,7 +237,7 @@ export class JobRunner {
 
     await this.db.updateScheduledJobStatus(job.id, { status: 'running', holdUntil: null });
     try {
-      await this.run(job);
+      await this.run(job, byokRouter ?? undefined);
       const status = job.scheduleType === 'once' ? 'completed' : 'pending';
       await this.db.updateScheduledJobStatus(job.id, {
         status,

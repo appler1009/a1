@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'crypto';
 
 // ---------------------------------------------------------------------------
@@ -17,8 +17,15 @@ interface ScheduledJob {
   lastRunAt: string | null; // ISO 8601
 }
 
+interface UserByokConfig {
+  provider: 'anthropic' | 'openai' | 'grok';
+  apiKey: string;
+  model: string;
+}
+
 interface UserMeta {
   overSpendLimit: boolean;
+  byokConfig?: UserByokConfig;
 }
 
 interface PendingJobsResponse {
@@ -71,6 +78,7 @@ const EVALUATOR_MODEL = process.env.EVALUATOR_MODEL || PROVIDER_DEFAULTS[LLM_PRO
 
 const TABLE_PREFIX = (process.env.DYNAMODB_TABLE_PREFIX ?? '').trim();
 const TOKEN_USAGE_TABLE = `${TABLE_PREFIX}token_usage`;
+const USERS_TABLE = `${TABLE_PREFIX}users`;
 
 // ---------------------------------------------------------------------------
 // DynamoDB client (lazy-initialised)
@@ -88,7 +96,7 @@ function getDynamoClient(): DynamoDBDocumentClient {
   return dynamoClient;
 }
 
-async function recordTokenUsage(userId: string, usage: TokenUsage): Promise<void> {
+async function recordTokenUsage(userId: string, usage: TokenUsage, byok?: UserByokConfig): Promise<void> {
   try {
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -98,8 +106,8 @@ async function recordTokenUsage(userId: string, usage: TokenUsage): Promise<void
         userId,
         sk: `${now}#${id}`,
         id,
-        model: EVALUATOR_MODEL,
-        provider: LLM_PROVIDER,
+        model: byok?.model ?? EVALUATOR_MODEL,
+        provider: byok ? `byok:${byok.provider}` : LLM_PROVIDER,
         promptTokens: usage.promptTokens,
         completionTokens: usage.completionTokens,
         totalTokens: usage.totalTokens,
@@ -114,16 +122,34 @@ async function recordTokenUsage(userId: string, usage: TokenUsage): Promise<void
   }
 }
 
+async function fetchUserCreditBalance(userId: string): Promise<number | undefined> {
+  try {
+    const result = await getDynamoClient().send(new GetCommand({
+      TableName: USERS_TABLE,
+      Key: { userId },
+      ProjectionExpression: 'creditBalanceUsd',
+    }));
+    if (!result.Item) return undefined;
+    return typeof result.Item.creditBalanceUsd === 'number' ? result.Item.creditBalanceUsd : 0;
+  } catch (err) {
+    console.error('[SpendLimit] Failed to fetch credit balance for user', userId, err);
+    return undefined;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // LLM provider abstraction
 // The evaluator only needs a single text completion — no tools, no streaming.
 // ---------------------------------------------------------------------------
 
-async function llmComplete(prompt: string): Promise<LLMResult> {
-  if (LLM_PROVIDER === 'anthropic') {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+async function llmComplete(prompt: string, byok?: UserByokConfig): Promise<LLMResult> {
+  const provider = byok?.provider ?? LLM_PROVIDER;
+  const model = byok?.model ?? EVALUATOR_MODEL;
+
+  if (provider === 'anthropic') {
+    const client = new Anthropic({ apiKey: byok?.apiKey ?? process.env.ANTHROPIC_API_KEY! });
     const res = await client.messages.create({
-      model: EVALUATOR_MODEL,
+      model,
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -140,13 +166,13 @@ async function llmComplete(prompt: string): Promise<LLMResult> {
     };
   }
 
-  if (LLM_PROVIDER === 'grok') {
+  if (provider === 'grok') {
     const client = new OpenAI({
-      apiKey: process.env.GROK_API_KEY!,
+      apiKey: byok?.apiKey ?? process.env.GROK_API_KEY!,
       baseURL: 'https://api.x.ai/v1',
     });
     const res = await client.chat.completions.create({
-      model: EVALUATOR_MODEL,
+      model,
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -164,10 +190,10 @@ async function llmComplete(prompt: string): Promise<LLMResult> {
     };
   }
 
-  if (LLM_PROVIDER === 'openai') {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+  if (provider === 'openai') {
+    const client = new OpenAI({ apiKey: byok?.apiKey ?? process.env.OPENAI_API_KEY! });
     const res = await client.chat.completions.create({
-      model: EVALUATOR_MODEL,
+      model,
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -185,7 +211,7 @@ async function llmComplete(prompt: string): Promise<LLMResult> {
     };
   }
 
-  throw new Error(`Unknown LLM_PROVIDER: ${LLM_PROVIDER}`);
+  throw new Error(`Unknown provider: ${provider}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -285,11 +311,14 @@ export function parseEvaluatorResponse(text: string): EvaluatorResult {
 async function evaluateRecurringJobsForUser(
   userId: string,
   jobs: ScheduledJob[],
+  byok?: UserByokConfig,
 ): Promise<EvaluatorResult> {
   const prompt = buildEvaluatorPrompt(jobs);
+  const effectiveProvider = byok?.provider ?? LLM_PROVIDER;
+  const effectiveModel = byok?.model ?? EVALUATOR_MODEL;
 
   console.log(
-    `[Evaluator] Evaluating ${jobs.length} job(s) for user ${userId} | provider=${LLM_PROVIDER} model=${EVALUATOR_MODEL}`,
+    `[Evaluator] Evaluating ${jobs.length} job(s) for user ${userId} | provider=${effectiveProvider} model=${effectiveModel}${byok ? ' (BYOK)' : ''}`,
   );
   console.log(`[Evaluator] Jobs to evaluate for user ${userId}:`);
   for (const job of jobs) {
@@ -299,12 +328,12 @@ async function evaluateRecurringJobsForUser(
   }
   console.log(`[Evaluator] Prompt for user ${userId}:\n${prompt}`);
 
-  const { text, usage } = await llmComplete(prompt);
+  const { text, usage } = await llmComplete(prompt, byok);
 
   console.log(`[Evaluator] Raw response for user ${userId}:\n${text}`);
 
   // Record token usage attributed to this user
-  await recordTokenUsage(userId, usage);
+  await recordTokenUsage(userId, usage, byok);
   console.log(
     `[TokenUsage] user=${userId} prompt=${usage.promptTokens} completion=${usage.completionTokens} cached=${usage.cachedInputTokens} cacheCreation=${usage.cacheCreationTokens} total=${usage.totalTokens}`,
   );
@@ -350,7 +379,7 @@ async function evaluateRecurringJobs(jobs: ScheduledJob[], userMeta: Record<stri
   const reasoning: Record<string, string> = {};
 
   for (const [userId, userJobs] of jobsByUser) {
-    const result = await evaluateRecurringJobsForUser(userId, userJobs);
+    const result = await evaluateRecurringJobsForUser(userId, userJobs, userMeta[userId]?.byokConfig);
     run.push(...result.run);
     hold.push(...result.hold);
     Object.assign(reasoning, result.reasoning);
@@ -376,6 +405,22 @@ export const handler = async (): Promise<void> => {
     console.log('[SchedulerLambda] Nothing to do');
     return;
   }
+
+  // 1b. Re-resolve overSpendLimit using creditBalanceUsd from DynamoDB (authoritative source)
+  const allUserIds = [...new Set([...onceJobs, ...recurringJobs].map(j => j.userId))];
+  await Promise.all(allUserIds.map(async (userId) => {
+    const meta = userMeta[userId];
+    if (!meta) return;
+    const creditBalance = await fetchUserCreditBalance(userId);
+    if (creditBalance === undefined) return;
+    const wasOver = meta.overSpendLimit;
+    meta.overSpendLimit = creditBalance < 0.001;
+    if (wasOver !== meta.overSpendLimit) {
+      console.log(
+        `[SpendLimit] user=${userId} re-evaluated from DynamoDB: creditBalance=$${creditBalance.toFixed(4)}, overLimit=${meta.overSpendLimit}`,
+      );
+    }
+  }));
 
   const run: string[] = [];
   const hold: Array<{ id: string; until: string }> = [];

@@ -682,7 +682,6 @@ export class MainDatabase implements IMainDatabase {
       telegramUserId: string | null;
       locale: string | null;
       timezone: string | null;
-      monthlySpendLimitUsd: number | null;
       creditBalanceUsd: number;
       primaryRoleId: string | null;
       emailDisabled: string | null;
@@ -702,7 +701,6 @@ export class MainDatabase implements IMainDatabase {
       whatsappUserId: (row as any).whatsappUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
-      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       primaryRoleId: row.primaryRoleId || undefined,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
@@ -721,7 +719,6 @@ export class MainDatabase implements IMainDatabase {
       telegramUserId: string | null;
       locale: string | null;
       timezone: string | null;
-      monthlySpendLimitUsd: number | null;
       creditBalanceUsd: number;
       emailDisabled: string | null;
       createdAt: string;
@@ -740,7 +737,6 @@ export class MainDatabase implements IMainDatabase {
       whatsappUserId: (row as any).whatsappUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
-      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
       createdAt: new Date(row.createdAt),
@@ -758,7 +754,6 @@ export class MainDatabase implements IMainDatabase {
       telegramUserId: string | null;
       locale: string | null;
       timezone: string | null;
-      monthlySpendLimitUsd: number | null;
       creditBalanceUsd: number;
       emailDisabled: string | null;
       createdAt: string;
@@ -777,7 +772,6 @@ export class MainDatabase implements IMainDatabase {
       whatsappUserId: (row as any).whatsappUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
-      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
       createdAt: new Date(row.createdAt),
@@ -795,7 +789,6 @@ export class MainDatabase implements IMainDatabase {
       telegramUserId: string | null;
       locale: string | null;
       timezone: string | null;
-      monthlySpendLimitUsd: number | null;
       creditBalanceUsd: number;
       emailDisabled: string | null;
       createdAt: string;
@@ -814,7 +807,6 @@ export class MainDatabase implements IMainDatabase {
       whatsappUserId: (row as any).whatsappUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
-      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
       createdAt: new Date(row.createdAt),
@@ -832,7 +824,6 @@ export class MainDatabase implements IMainDatabase {
       telegramUserId: string | null;
       locale: string | null;
       timezone: string | null;
-      monthlySpendLimitUsd: number | null;
       creditBalanceUsd: number;
       emailDisabled: string | null;
       createdAt: string;
@@ -851,7 +842,6 @@ export class MainDatabase implements IMainDatabase {
       whatsappUserId: (row as any).whatsappUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
-      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
       createdAt: new Date(row.createdAt),
@@ -899,10 +889,6 @@ export class MainDatabase implements IMainDatabase {
       fields.push('timezone = ?');
       values.push(updates.timezone || null);
     }
-    if (updates.monthlySpendLimitUsd !== undefined) {
-      fields.push('monthlySpendLimitUsd = ?');
-      values.push(updates.monthlySpendLimitUsd ?? null);
-    }
     if (updates.emailDisabled !== undefined) {
       fields.push('emailDisabled = ?');
       values.push(updates.emailDisabled ?? null);
@@ -939,7 +925,6 @@ export class MainDatabase implements IMainDatabase {
       telegramUserId: string | null;
       locale: string | null;
       timezone: string | null;
-      monthlySpendLimitUsd: number | null;
       creditBalanceUsd: number;
       emailDisabled: string | null;
       createdAt: string;
@@ -956,7 +941,6 @@ export class MainDatabase implements IMainDatabase {
       whatsappUserId: (row as any).whatsappUserId || undefined,
       locale: row.locale || undefined,
       timezone: row.timezone || undefined,
-      monthlySpendLimitUsd: row.monthlySpendLimitUsd ?? undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
       createdAt: new Date(row.createdAt),

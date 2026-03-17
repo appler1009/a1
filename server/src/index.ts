@@ -26,7 +26,7 @@ import type { User, Session } from '@local-agent/shared';
 import { createStorage, autoMigrate, getMainDatabase, createTempStorage } from './storage/index.js';
 import type { IMainDatabase } from './storage/index.js';
 import { createLLMRouter } from './ai/router.js';
-import { estimateCostUsd, DEFAULT_MONTHLY_SPEND_LIMIT_USD, calculateCost, PRICING_MARGIN } from './ai/cost.js';
+import { calculateCost, PRICING_MARGIN } from './ai/cost.js';
 import { mcpManager } from './mcp/index.js';
 import { authRoutes } from './api/auth.js';
 import { smtpImapRoutes } from './api/smtp-imap.js';
@@ -194,18 +194,23 @@ fastify.get('/internal/scheduler/pending', async (request, reply) => {
 
   // Build per-user spend metadata so the lambda can skip over-limit users
   const allUserIds = [...new Set([...onceJobs, ...recurringJobs].map(j => j.userId))];
-  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  const userMeta: Record<string, { overSpendLimit: boolean }> = {};
+  const BYOK_PROVIDER_MAP: Record<string, 'anthropic' | 'openai' | 'grok'> = { anthropic: 'anthropic', openai: 'openai', xai: 'grok' };
+  const userMeta: Record<string, { overSpendLimit: boolean; byokConfig?: { provider: 'anthropic' | 'openai' | 'grok'; apiKey: string; model: string } }> = {};
   await Promise.all(allUserIds.map(async (userId) => {
-    const [user, byokCredentials, monthlyUsage] = await Promise.all([
+    const [user, byokCredentials] = await Promise.all([
       mainDb.getUser(userId),
       mainDb.listServiceCredentials(userId, 'byok'),
-      mainDb.getTokenUsageByUser(userId, { from: monthStart }),
     ]);
-    const hasByok = byokCredentials.length > 0;
-    const limitUsd = user?.monthlySpendLimitUsd ?? DEFAULT_MONTHLY_SPEND_LIMIT_USD;
-    const spentUsd = estimateCostUsd(monthlyUsage);
-    userMeta[userId] = { overSpendLimit: !hasByok && spentUsd >= limitUsd };
+    const activeByok = byokCredentials.find(e => e.credentials.enabled === true);
+    const hasByok = activeByok !== undefined;
+    const hasCreditBalance = (user?.creditBalanceUsd ?? 0) >= 0.001;
+    const byokProvider = activeByok ? BYOK_PROVIDER_MAP[activeByok.accountEmail] : undefined;
+    const byokConfig = activeByok && byokProvider ? {
+      provider: byokProvider,
+      apiKey: activeByok.credentials.apiKey as string,
+      model: activeByok.credentials.model as string,
+    } : undefined;
+    userMeta[userId] = { overSpendLimit: !hasByok && !hasCreditBalance, byokConfig };
   }));
 
   const mapJob = (j: typeof onceJobs[number]) => ({

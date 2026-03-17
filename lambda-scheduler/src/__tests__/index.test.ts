@@ -15,10 +15,13 @@ process.env.LLM_PROVIDER = 'anthropic';
 // can be referenced inside class/function bodies
 // ---------------------------------------------------------------------------
 
-const { mockMessagesCreate, mockChatCompletionsCreate, mockDynamoSend, MockPutCommand } =
+const { mockMessagesCreate, mockChatCompletionsCreate, mockDynamoSend, MockPutCommand, MockGetCommand, mockAnthropicConstructor } =
   vi.hoisted(() => {
     // PutCommand must be a real constructor (used with `new`) that captures its argument
     function MockPutCommandFn(this: { input: unknown }, input: unknown) {
+      this.input = input;
+    }
+    function MockGetCommandFn(this: { input: unknown }, input: unknown) {
       this.input = input;
     }
     return {
@@ -26,6 +29,8 @@ const { mockMessagesCreate, mockChatCompletionsCreate, mockDynamoSend, MockPutCo
       mockChatCompletionsCreate: vi.fn(),
       mockDynamoSend: vi.fn(),
       MockPutCommand: vi.fn(MockPutCommandFn as any),
+      MockGetCommand: vi.fn(MockGetCommandFn as any),
+      mockAnthropicConstructor: vi.fn(),
     };
   });
 
@@ -35,6 +40,9 @@ const { mockMessagesCreate, mockChatCompletionsCreate, mockDynamoSend, MockPutCo
 
 vi.mock('@anthropic-ai/sdk', () => ({
   default: class {
+    constructor(opts: { apiKey: string }) {
+      mockAnthropicConstructor(opts);
+    }
     messages = { create: mockMessagesCreate };
   },
 }));
@@ -54,6 +62,7 @@ vi.mock('@aws-sdk/lib-dynamodb', () => ({
     from: vi.fn().mockReturnValue({ send: mockDynamoSend }),
   },
   PutCommand: MockPutCommand,
+  GetCommand: MockGetCommand,
 }));
 
 // ---------------------------------------------------------------------------
@@ -416,5 +425,252 @@ describe('handler', () => {
 
     const [putCmdArg] = MockPutCommand.mock.calls[0];
     expect(putCmdArg.TableName).toBe('token_usage'); // no prefix in tests
+  });
+
+  // -------------------------------------------------------------------------
+  // Credit balance DynamoDB re-evaluation tests
+  // -------------------------------------------------------------------------
+
+  it('overrides overSpendLimit to false when DynamoDB returns creditBalanceUsd: 5.0', async () => {
+    // backend flags user as over-limit, but DynamoDB says they have $5.00
+    mockDynamoSend.mockImplementation((cmd: any) => {
+      if (cmd instanceof MockGetCommand) {
+        return Promise.resolve({ Item: { creditBalanceUsd: 5.0 } });
+      }
+      return Promise.resolve({});
+    });
+    mockMessagesCreate.mockResolvedValue(
+      makeAnthropicResponse(JSON.stringify({ run: ['rec-1'], hold: [] })),
+    );
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          onceJobs: [],
+          recurringJobs: [makeJob({ id: 'rec-1', userId: 'user-A' })],
+          userMeta: { 'user-A': { overSpendLimit: true } },
+        }),
+        text: async () => '',
+      } as any)
+      .mockResolvedValueOnce({ ok: true, text: async () => '' } as any);
+    global.fetch = fetchMock;
+
+    await handler();
+
+    // LLM was called — job was NOT skipped despite backend's overSpendLimit flag
+    expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+    // Dispatch was sent
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps job skipped when DynamoDB returns creditBalanceUsd: 0.0', async () => {
+    mockDynamoSend.mockImplementation((cmd: any) => {
+      if (cmd instanceof MockGetCommand) {
+        return Promise.resolve({ Item: { creditBalanceUsd: 0.0 } });
+      }
+      return Promise.resolve({});
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        onceJobs: [],
+        recurringJobs: [makeJob({ id: 'rec-1', userId: 'user-A' })],
+        userMeta: { 'user-A': { overSpendLimit: true } },
+      }),
+      text: async () => '',
+    } as any);
+    global.fetch = fetchMock;
+
+    await handler();
+
+    // LLM not called — job is still skipped (balance 0 => still over limit)
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+    // No dispatch (run and hold are both empty)
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls through and keeps backend overSpendLimit when DynamoDB GetCommand fails', async () => {
+    mockDynamoSend.mockImplementation((cmd: any) => {
+      if (cmd instanceof MockGetCommand) {
+        return Promise.reject(new Error('DynamoDB read unavailable'));
+      }
+      return Promise.resolve({});
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        onceJobs: [],
+        recurringJobs: [makeJob({ id: 'rec-1', userId: 'user-A' })],
+        userMeta: { 'user-A': { overSpendLimit: true } },
+      }),
+      text: async () => '',
+    } as any);
+    global.fetch = fetchMock;
+
+    // Should not throw
+    await expect(handler()).resolves.toBeUndefined();
+
+    // Backend said overSpendLimit=true and DynamoDB failed → job still skipped
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BYOK — Bring-Your-Own-Key evaluator tests
+// ---------------------------------------------------------------------------
+
+describe('BYOK evaluator', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default: GetCommand returns no item (no credit balance lookup needed here)
+    mockDynamoSend.mockImplementation((cmd: any) => {
+      if (cmd instanceof MockGetCommand) {
+        return Promise.resolve({ Item: undefined });
+      }
+      return Promise.resolve({});
+    });
+  });
+
+  function makeOpenAIResponse(text: string, promptTokens = 100, completionTokens = 50) {
+    return {
+      choices: [{ message: { content: text } }],
+      usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens },
+    };
+  }
+
+  it('instantiates Anthropic client with BYOK apiKey when byokConfig is provided', async () => {
+    const llmResponse = JSON.stringify({ run: [], hold: [] });
+    mockMessagesCreate.mockResolvedValue(makeAnthropicResponse(llmResponse));
+
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          onceJobs: [],
+          recurringJobs: [makeJob({ userId: 'user-A' })],
+          userMeta: {
+            'user-A': {
+              overSpendLimit: false,
+              byokConfig: { provider: 'anthropic', apiKey: 'byok-key', model: 'claude-haiku-4-5' },
+            },
+          },
+        }),
+        text: async () => '',
+      } as any)
+      .mockResolvedValueOnce({ ok: true, text: async () => '' } as any);
+
+    await handler();
+
+    // Verify Anthropic was called (one LLM call for user-A)
+    expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+    // The constructor should have been called with the BYOK key, not the env key
+    const constructorCall = mockAnthropicConstructor.mock.calls[0][0];
+    expect(constructorCall.apiKey).toBe('byok-key');
+    expect(constructorCall.apiKey).not.toBe('test-anthropic-key');
+  });
+
+  it('records token usage with provider byok:anthropic and byok model', async () => {
+    const llmResponse = JSON.stringify({ run: [], hold: [] });
+    mockMessagesCreate.mockResolvedValue(makeAnthropicResponse(llmResponse, 80, 40));
+
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          onceJobs: [],
+          recurringJobs: [makeJob({ userId: 'user-A' })],
+          userMeta: {
+            'user-A': {
+              overSpendLimit: false,
+              byokConfig: { provider: 'anthropic', apiKey: 'byok-key', model: 'claude-haiku-4-5' },
+            },
+          },
+        }),
+        text: async () => '',
+      } as any)
+      .mockResolvedValueOnce({ ok: true, text: async () => '' } as any);
+
+    await handler();
+
+    // Find the PutCommand call (token usage write)
+    const putCalls = MockPutCommand.mock.calls;
+    expect(putCalls.length).toBeGreaterThan(0);
+    const item = putCalls[0][0].Item;
+    expect(item.provider).toBe('byok:anthropic');
+    expect(item.model).toBe('claude-haiku-4-5');
+    expect(item.userId).toBe('user-A');
+  });
+
+  it('calls OpenAI client when byokConfig uses openai provider', async () => {
+    const llmResponse = JSON.stringify({ run: [], hold: [] });
+    mockChatCompletionsCreate.mockResolvedValue(makeOpenAIResponse(llmResponse));
+
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          onceJobs: [],
+          recurringJobs: [makeJob({ userId: 'user-A' })],
+          userMeta: {
+            'user-A': {
+              overSpendLimit: false,
+              byokConfig: { provider: 'openai', apiKey: 'byok-openai-key', model: 'gpt-4o-mini' },
+            },
+          },
+        }),
+        text: async () => '',
+      } as any)
+      .mockResolvedValueOnce({ ok: true, text: async () => '' } as any);
+
+    await handler();
+
+    // OpenAI completions API was used, Anthropic was not
+    expect(mockChatCompletionsCreate).toHaveBeenCalledTimes(1);
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+
+    // Token usage recorded with byok:openai provider
+    const putCalls = MockPutCommand.mock.calls;
+    expect(putCalls.length).toBeGreaterThan(0);
+    const item = putCalls[0][0].Item;
+    expect(item.provider).toBe('byok:openai');
+    expect(item.model).toBe('gpt-4o-mini');
+  });
+
+  it('calls OpenAI client with x.ai baseURL when byokConfig uses grok provider', async () => {
+    const llmResponse = JSON.stringify({ run: [], hold: [] });
+    mockChatCompletionsCreate.mockResolvedValue(makeOpenAIResponse(llmResponse));
+
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          onceJobs: [],
+          recurringJobs: [makeJob({ userId: 'user-A' })],
+          userMeta: {
+            'user-A': {
+              overSpendLimit: false,
+              byokConfig: { provider: 'grok', apiKey: 'byok-grok-key', model: 'grok-4-fast' },
+            },
+          },
+        }),
+        text: async () => '',
+      } as any)
+      .mockResolvedValueOnce({ ok: true, text: async () => '' } as any);
+
+    await handler();
+
+    // OpenAI completions API used (grok uses OpenAI-compatible API), Anthropic was not
+    expect(mockChatCompletionsCreate).toHaveBeenCalledTimes(1);
+    expect(mockMessagesCreate).not.toHaveBeenCalled();
+
+    // Token usage recorded with byok:grok provider
+    const putCalls = MockPutCommand.mock.calls;
+    expect(putCalls.length).toBeGreaterThan(0);
+    const item = putCalls[0][0].Item;
+    expect(item.provider).toBe('byok:grok');
+    expect(item.model).toBe('grok-4-fast');
   });
 });
