@@ -5,11 +5,12 @@ import { DialogOverlay } from './DialogOverlay';
 interface CreateRoleDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateRole: (name: string) => Promise<void>;
+  onCreateRole: (name: string, jobDesc?: string) => Promise<void>;
 }
 
 export function CreateRoleDialog({ isOpen, onClose, onCreateRole }: CreateRoleDialogProps) {
   const [name, setName] = useState('');
+  const [jobDesc, setJobDesc] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -25,8 +26,9 @@ export function CreateRoleDialog({ isOpen, onClose, onCreateRole }: CreateRoleDi
     setError('');
 
     try {
-      await onCreateRole(name.trim());
+      await onCreateRole(name.trim(), jobDesc.trim() || undefined);
       setName('');
+      setJobDesc('');
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create role');
@@ -69,6 +71,24 @@ export function CreateRoleDialog({ isOpen, onClose, onCreateRole }: CreateRoleDi
               placeholder="Enter role name..."
               className="w-full bg-muted rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
               autoFocus
+              disabled={isLoading}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="role-desc" className="block text-sm font-medium mb-1">
+              Role Description <span className="text-muted-foreground font-normal">(optional)</span>
+            </label>
+            <p className="text-xs text-muted-foreground mb-2">
+              Describe your responsibilities, context, or goals for this role.
+            </p>
+            <textarea
+              id="role-desc"
+              value={jobDesc}
+              onChange={(e) => setJobDesc(e.target.value)}
+              placeholder="e.g. I'm a product manager working on a B2B SaaS platform, focused on roadmap planning and stakeholder communication."
+              rows={3}
+              className="w-full bg-muted rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none"
               disabled={isLoading}
             />
           </div>

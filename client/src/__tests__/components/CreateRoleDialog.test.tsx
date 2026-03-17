@@ -42,7 +42,7 @@ describe('CreateRoleDialog', () => {
     render(<CreateRoleDialog isOpen onClose={vi.fn()} onCreateRole={onCreateRole} />);
     await user.type(screen.getByLabelText(/role name/i), '  Developer  ');
     await user.click(screen.getByRole('button', { name: /create role/i }));
-    await waitFor(() => expect(onCreateRole).toHaveBeenCalledWith('Developer'));
+    await waitFor(() => expect(onCreateRole).toHaveBeenCalledWith('Developer', undefined));
   });
 
   it('calls onClose after successful creation', async () => {

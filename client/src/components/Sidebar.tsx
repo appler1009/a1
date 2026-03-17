@@ -52,13 +52,14 @@ export function Sidebar() {
     }
   };
 
-  const handleCreateRole = async (name: string) => {
+  const handleCreateRole = async (name: string, jobDesc?: string) => {
     try {
       const response = await apiFetch('/api/roles', {
         method: 'POST',
         body: JSON.stringify({
           name,
           groupId: currentGroup?.id || undefined,
+          jobDesc: jobDesc || undefined,
         }),
       });
 

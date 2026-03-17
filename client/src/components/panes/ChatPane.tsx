@@ -929,7 +929,7 @@ export function ChatPane() {
       )}
 
       {/* Input */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-border safe-bottom">
+      <form onSubmit={handleSubmit} className="p-4 border-t border-border">
         <div className="flex gap-2">
           <textarea
             ref={inputRef}
@@ -951,6 +951,7 @@ export function ChatPane() {
           </button>
         </div>
       </form>
+      <div className="safe-bottom" />
     </div>
   );
 }

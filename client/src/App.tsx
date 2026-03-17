@@ -104,6 +104,7 @@ function MainApp() {
 
       {isMobile && mobileSidebarOpen && (
         <div
+          data-testid="mobile-sidebar-backdrop"
           className="fixed inset-0 bg-black/50 z-[50]"
           onClick={() => setMobileSidebarOpen(false)}
         />

@@ -44,15 +44,15 @@ test.describe('Mobile layout — iPhone SE', () => {
     await openSidebar(page);
     await expect(page.getByRole('button', { name: /test role/i }).first()).toBeInViewport();
     // Backdrop overlay should appear
-    await expect(page.locator('.fixed.inset-0.bg-black\\/50')).toBeVisible();
+    await expect(page.getByTestId('mobile-sidebar-backdrop')).toBeVisible();
   });
 
   test('sidebar closes by tapping the backdrop', async ({
     mobileAuthenticatedPage: page,
   }) => {
     await openSidebar(page);
-    // Dispatch click directly on backdrop (force bypasses hit-test on fixed overlay)
-    await page.locator('.fixed.inset-0.bg-black\\/50').click({ force: true });
+    // Dispatch click on backdrop via JS — avoids z-index hit-test issues in Playwright
+    await page.getByTestId('mobile-sidebar-backdrop').dispatchEvent('click');
     await expect(page.getByTitle('Create role')).not.toBeInViewport();
   });
 

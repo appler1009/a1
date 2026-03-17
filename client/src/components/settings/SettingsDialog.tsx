@@ -6,7 +6,6 @@ import { BYOKSettings } from './BYOKSettings';
 import { TokenUsageSettings } from './TokenUsageSettings';
 import { DiscordSettings } from './DiscordSettings';
 import { TelegramSettings } from './TelegramSettings';
-import { WhatsAppSettings } from './WhatsAppSettings';
 import { LocaleTimezoneSettings } from './LocaleTimezoneSettings';
 import { BillingSettings } from './BillingSettings';
 
@@ -882,10 +881,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 <h3 className="text-sm font-semibold mb-3">Telegram</h3>
                 <TelegramSettings onUpdate={fetchServers} />
               </div>
-              <div>
-                <h3 className="text-sm font-semibold mb-3">WhatsApp</h3>
-                <WhatsAppSettings onUpdate={fetchServers} />
-              </div>
             </div>
           )}
 
@@ -896,7 +891,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 <h3 className="text-sm font-semibold mb-3">Version</h3>
                 <div className="flex items-center gap-3">
                   <span className="font-mono text-sm bg-muted px-2 py-1 rounded select-all">{import.meta.env.COMMIT_HASH || 'unknown'}</span>
-                  <span className="text-xs text-muted-foreground">build commit</span>
                 </div>
               </div>
 
