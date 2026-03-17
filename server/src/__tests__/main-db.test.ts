@@ -127,6 +127,32 @@ describe('Users', () => {
     await db.updateUser(user.id, { telegramUserId: '' });
     expect((await db.getUser(user.id))?.telegramUserId).toBeUndefined();
   });
+
+  it('sandboxUser defaults to falsy for new users', async () => {
+    const user = await db.createUser('sandbox-new@example.com');
+    expect((await db.getUser(user.id))?.sandboxUser).toBeFalsy();
+  });
+
+  it('can enable sandboxUser flag', async () => {
+    const user = await db.createUser('sandbox-enable@example.com');
+    await db.updateUser(user.id, { sandboxUser: true } as any);
+    expect((await db.getUser(user.id))?.sandboxUser).toBe(true);
+  });
+
+  it('can disable sandboxUser flag after enabling it', async () => {
+    const user = await db.createUser('sandbox-toggle@example.com');
+    await db.updateUser(user.id, { sandboxUser: true } as any);
+    await db.updateUser(user.id, { sandboxUser: false } as any);
+    expect((await db.getUser(user.id))?.sandboxUser).toBeFalsy();
+  });
+
+  it('sandboxUser flag is included in getAllUsers results', async () => {
+    const user = await db.createUser('sandbox-all@example.com');
+    await db.updateUser(user.id, { sandboxUser: true } as any);
+    const all = await db.getAllUsers();
+    const found = all.find(u => u.id === user.id);
+    expect(found?.sandboxUser).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

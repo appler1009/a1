@@ -169,6 +169,28 @@ These enable users to link external services after logging in — they are not l
 
 See [docs/whatsapp-integration.md](./docs/whatsapp-integration.md) for step-by-step setup instructions.
 
+### Billing
+
+A1 includes an optional pay-as-you-go credit system powered by Stripe. Users top up their balance via the **Settings → Billing** panel; credits are deducted automatically as they use the platform LLM. BYOK users are exempt.
+
+| Variable | Description |
+|---|---|
+| `STRIPE_SECRET_KEY` | Live secret key (`sk_live_…`) from the Stripe dashboard |
+| `STRIPE_PUBLISHABLE_KEY` | Live publishable key (`pk_live_…`) — sent to the browser |
+| `STRIPE_WEBHOOK_SECRET` | Signing secret for the live webhook endpoint (`whsec_…`) |
+
+**Webhook setup:** In the Stripe dashboard create a webhook endpoint pointing to:
+
+```
+https://your-domain.com/api/billing/webhook
+```
+
+Subscribe to `payment_intent.succeeded` and `payment_intent.payment_failed`.
+
+Billing is disabled when `STRIPE_SECRET_KEY` is unset — the billing tab is still visible but returns a 503 on payment attempts.
+
+> For testing with specific users without real charges, see [docs/sandbox.md](./docs/sandbox.md).
+
 ### MCP
 
 | Variable | Description | Default |

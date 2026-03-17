@@ -29,6 +29,11 @@ export interface AppConfig {
     webhookSecret: string;
     publishableKey: string;
   };
+  stripeTest: {
+    secretKey: string;
+    webhookSecret: string;
+    publishableKey: string;
+  };
 }
 
 // Mutable singleton — populated by initConfig() before any request handlers run
@@ -100,6 +105,11 @@ export function initConfig(): void {
       secretKey: process.env.STRIPE_SECRET_KEY || '',
       webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
       publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+    },
+    stripeTest: {
+      secretKey: process.env.STRIPE_TEST_SECRET_KEY || '',
+      webhookSecret: process.env.STRIPE_TEST_WEBHOOK_SECRET || '',
+      publishableKey: process.env.STRIPE_TEST_PUBLISHABLE_KEY || '',
     },
   };
 }

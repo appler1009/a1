@@ -1,18 +1,37 @@
 import Stripe from 'stripe';
 import { config } from '../config/index.js';
 
-let stripeInstance: Stripe | null = null;
+export type StripeMode = 'live' | 'test';
 
-export function getStripe(): Stripe {
-  if (!stripeInstance) {
+let liveInstance: Stripe | null = null;
+let testInstance: Stripe | null = null;
+
+export function getStripe(mode: StripeMode = 'live'): Stripe {
+  if (mode === 'test') {
+    if (!testInstance) {
+      if (!config.stripeTest.secretKey) {
+        throw new Error('STRIPE_TEST_SECRET_KEY is not configured');
+      }
+      testInstance = new Stripe(config.stripeTest.secretKey, {
+        apiVersion: '2026-02-25.clover',
+      });
+    }
+    return testInstance;
+  }
+
+  if (!liveInstance) {
     if (!config.stripe.secretKey) {
       throw new Error('STRIPE_SECRET_KEY is not configured');
     }
-    stripeInstance = new Stripe(config.stripe.secretKey, {
+    liveInstance = new Stripe(config.stripe.secretKey, {
       apiVersion: '2026-02-25.clover',
     });
   }
-  return stripeInstance;
+  return liveInstance;
+}
+
+export function getStripeConfig(mode: StripeMode = 'live') {
+  return mode === 'test' ? config.stripeTest : config.stripe;
 }
 
 /** Allowed top-up amounts in cents */
@@ -25,9 +44,10 @@ export function centsToUsd(cents: number): number {
 
 export async function createTopUpPaymentIntent(
   userId: string,
-  amountCents: TopUpAmountCents
+  amountCents: TopUpAmountCents,
+  mode: StripeMode = 'live'
 ): Promise<Stripe.PaymentIntent> {
-  const stripe = getStripe();
+  const stripe = getStripe(mode);
   return stripe.paymentIntents.create({
     amount: amountCents,
     currency: 'usd',
@@ -38,11 +58,15 @@ export async function createTopUpPaymentIntent(
 
 export async function constructWebhookEvent(
   rawBody: Buffer,
-  signature: string
+  signature: string,
+  mode: StripeMode = 'live'
 ): Promise<Stripe.Event> {
-  const stripe = getStripe();
-  if (!config.stripe.webhookSecret) {
-    throw new Error('STRIPE_WEBHOOK_SECRET is not configured');
+  const stripe = getStripe(mode);
+  const stripeConfig = getStripeConfig(mode);
+  if (!stripeConfig.webhookSecret) {
+    throw new Error(
+      mode === 'test' ? 'STRIPE_TEST_WEBHOOK_SECRET is not configured' : 'STRIPE_WEBHOOK_SECRET is not configured'
+    );
   }
-  return stripe.webhooks.constructEventAsync(rawBody, signature, config.stripe.webhookSecret);
+  return stripe.webhooks.constructEventAsync(rawBody, signature, stripeConfig.webhookSecret);
 }

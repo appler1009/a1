@@ -6,7 +6,9 @@ import {
   constructWebhookEvent,
   centsToUsd,
   TOPUP_AMOUNTS_CENTS,
+  getStripeConfig,
   type TopUpAmountCents,
+  type StripeMode,
 } from '../stripe/service.js';
 
 /**
@@ -29,13 +31,16 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     const mainDb = await getMainDatabase(config.storage.root);
-    const creditBalanceUsd = await mainDb.getUserCreditBalance(request.user.id);
+    const user = await mainDb.getUser(request.user.id);
+    const creditBalanceUsd = user?.creditBalanceUsd ?? 0;
+    const mode: StripeMode = user?.sandboxUser ? 'test' : 'live';
 
     return reply.send({
       success: true,
       data: {
         creditBalanceUsd,
-        publishableKey: config.stripe.publishableKey,
+        publishableKey: getStripeConfig(mode).publishableKey,
+        stripeMode: mode,
       },
     });
   });
@@ -62,7 +67,12 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
       });
     }
 
-    if (!config.stripe.secretKey) {
+    const mainDb = await getMainDatabase(config.storage.root);
+    const user = await mainDb.getUser(request.user.id);
+    const mode: StripeMode = user?.sandboxUser ? 'test' : 'live';
+    const stripeConfig = getStripeConfig(mode);
+
+    if (!stripeConfig.secretKey) {
       return reply.code(503).send({
         success: false,
         error: { message: 'Billing is not configured on this server' },
@@ -72,10 +82,10 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       const intent = await createTopUpPaymentIntent(
         request.user.id,
-        amountCents as TopUpAmountCents
+        amountCents as TopUpAmountCents,
+        mode
       );
 
-      const mainDb = await getMainDatabase(config.storage.root);
       await mainDb.createStripePayment({
         userId: request.user.id,
         stripePaymentIntentId: intent.id,
@@ -151,6 +161,79 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
       })),
     });
   });
+
+}
+
+/**
+ * Shared webhook handler logic — verifies and processes a Stripe event.
+ */
+async function handleWebhookEvent(
+  fastify: FastifyInstance,
+  rawBody: Buffer,
+  signature: string,
+  mode: StripeMode
+) {
+  let event;
+  try {
+    event = await constructWebhookEvent(rawBody, signature, mode);
+  } catch (err) {
+    fastify.log.warn(err, `[Billing] Webhook signature verification failed (mode=${mode})`);
+    return { status: 400, body: { error: 'Webhook signature verification failed' } };
+  }
+
+  if (event.type === 'payment_intent.succeeded') {
+    const intent = event.data.object as {
+      id: string;
+      metadata: { userId?: string; amountCents?: string };
+    };
+
+    const userId = intent.metadata?.userId;
+    const amountCents = parseInt(intent.metadata?.amountCents ?? '0', 10);
+
+    if (!userId || !amountCents) {
+      fastify.log.warn({ intentId: intent.id }, '[Billing] Webhook: missing userId or amountCents in metadata');
+      return { status: 200, body: { received: true } };
+    }
+
+    const amountUsd = centsToUsd(amountCents);
+
+    try {
+      const mainDb = await getMainDatabase(config.storage.root);
+
+      // Guard against double-crediting (idempotency)
+      const existing = await mainDb.getStripePaymentByIntentId(intent.id);
+      if (existing?.status === 'succeeded') {
+        fastify.log.info({ intentId: intent.id }, '[Billing] Webhook: already processed, skipping');
+        return { status: 200, body: { received: true } };
+      }
+
+      await mainDb.addUserCredits(userId, amountUsd, {
+        stripePaymentIntentId: intent.id,
+        description: `Top-up $${amountUsd.toFixed(2)} via Stripe`,
+      });
+      await mainDb.updateStripePaymentStatus(intent.id, 'succeeded');
+
+      fastify.log.info(
+        { intentId: intent.id, userId, amountUsd, mode },
+        '[Billing] Credits added to user account'
+      );
+    } catch (err) {
+      fastify.log.error(err, '[Billing] Failed to credit user account');
+      return { status: 500, body: { error: 'Failed to process payment' } };
+    }
+  }
+
+  if (event.type === 'payment_intent.payment_failed') {
+    const intent = event.data.object as { id: string };
+    try {
+      const mainDb = await getMainDatabase(config.storage.root);
+      await mainDb.updateStripePaymentStatus(intent.id, 'failed');
+    } catch (err) {
+      fastify.log.warn(err, '[Billing] Failed to mark payment as failed');
+    }
+  }
+
+  return { status: 200, body: { received: true } };
 }
 
 /**
@@ -159,8 +242,6 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
  */
 export async function billingWebhookRoute(fastify: FastifyInstance): Promise<void> {
   // Override the JSON parser for this plugin scope to also capture the raw buffer.
-  // request.body will still be parsed JSON for any non-webhook routes added here,
-  // but the webhook handler reads (request as any).rawBody directly.
   fastify.addContentTypeParser(
     'application/json',
     { parseAs: 'buffer' },
@@ -176,8 +257,7 @@ export async function billingWebhookRoute(fastify: FastifyInstance): Promise<voi
 
   // ----------------------------------------------------------------
   // POST /api/billing/webhook
-  // Stripe sends events here.  We verify the signature then act on
-  // payment_intent.succeeded to credit the user's balance.
+  // Live Stripe webhook endpoint.
   // ----------------------------------------------------------------
   fastify.post('/billing/webhook', async (request, reply) => {
     const signature = request.headers['stripe-signature'];
@@ -190,67 +270,26 @@ export async function billingWebhookRoute(fastify: FastifyInstance): Promise<voi
       return reply.code(400).send({ error: 'Missing raw body' });
     }
 
-    let event;
-    try {
-      event = await constructWebhookEvent(rawBody, signature);
-    } catch (err) {
-      fastify.log.warn(err, '[Billing] Webhook signature verification failed');
-      return reply.code(400).send({ error: 'Webhook signature verification failed' });
+    const result = await handleWebhookEvent(fastify, rawBody, signature, 'live');
+    return reply.code(result.status).send(result.body);
+  });
+
+  // ----------------------------------------------------------------
+  // POST /api/billing/webhook/test
+  // Test/sandbox Stripe webhook endpoint (for users with sandboxUser=true).
+  // ----------------------------------------------------------------
+  fastify.post('/billing/webhook/test', async (request, reply) => {
+    const signature = request.headers['stripe-signature'];
+    if (!signature || typeof signature !== 'string') {
+      return reply.code(400).send({ error: 'Missing stripe-signature header' });
     }
 
-    if (event.type === 'payment_intent.succeeded') {
-      const intent = event.data.object as {
-        id: string;
-        metadata: { userId?: string; amountCents?: string };
-      };
-
-      const userId = intent.metadata?.userId;
-      const amountCents = parseInt(intent.metadata?.amountCents ?? '0', 10);
-
-      if (!userId || !amountCents) {
-        fastify.log.warn({ intentId: intent.id }, '[Billing] Webhook: missing userId or amountCents in metadata');
-        return reply.send({ received: true });
-      }
-
-      const amountUsd = centsToUsd(amountCents);
-
-      try {
-        const mainDb = await getMainDatabase(config.storage.root);
-
-        // Guard against double-crediting (idempotency)
-        const existing = await mainDb.getStripePaymentByIntentId(intent.id);
-        if (existing?.status === 'succeeded') {
-          fastify.log.info({ intentId: intent.id }, '[Billing] Webhook: already processed, skipping');
-          return reply.send({ received: true });
-        }
-
-        await mainDb.addUserCredits(userId, amountUsd, {
-          stripePaymentIntentId: intent.id,
-          description: `Top-up $${amountUsd.toFixed(2)} via Stripe`,
-        });
-        await mainDb.updateStripePaymentStatus(intent.id, 'succeeded');
-
-        fastify.log.info(
-          { intentId: intent.id, userId, amountUsd },
-          '[Billing] Credits added to user account'
-        );
-      } catch (err) {
-        fastify.log.error(err, '[Billing] Failed to credit user account');
-        // Return 500 so Stripe retries
-        return reply.code(500).send({ error: 'Failed to process payment' });
-      }
+    const rawBody = (request as unknown as { rawBody: Buffer }).rawBody;
+    if (!rawBody) {
+      return reply.code(400).send({ error: 'Missing raw body' });
     }
 
-    if (event.type === 'payment_intent.payment_failed') {
-      const intent = event.data.object as { id: string };
-      try {
-        const mainDb = await getMainDatabase(config.storage.root);
-        await mainDb.updateStripePaymentStatus(intent.id, 'failed');
-      } catch (err) {
-        fastify.log.warn(err, '[Billing] Failed to mark payment as failed');
-      }
-    }
-
-    return reply.send({ received: true });
+    const result = await handleWebhookEvent(fastify, rawBody, signature, 'test');
+    return reply.code(result.status).send(result.body);
   });
 }

@@ -417,6 +417,9 @@ export class MainDatabase implements IMainDatabase {
 
     // Migrate users table to add primaryRoleId column if needed
     this.migratePrimaryRoleIdSchema();
+
+    // Migrate users table to add sandboxUser column if needed
+    this.migrateUseTestStripeSchema();
   }
 
   /**
@@ -631,6 +634,20 @@ export class MainDatabase implements IMainDatabase {
     }
   }
 
+  private migrateUseTestStripeSchema(): void {
+    try {
+      const tableInfo = this.db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+      const hasCol = tableInfo.some(col => col.name === 'sandboxUser');
+      if (!hasCol) {
+        console.log('[MainDatabase] Adding sandboxUser column to users table...');
+        this.db.exec(`ALTER TABLE users ADD COLUMN sandboxUser INTEGER NOT NULL DEFAULT 0;`);
+        console.log('[MainDatabase] sandboxUser column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during sandboxUser schema migration:', error);
+    }
+  }
+
   private migratePrimaryRoleIdSchema(): void {
     try {
       const tableInfo = this.db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
@@ -704,6 +721,7 @@ export class MainDatabase implements IMainDatabase {
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       primaryRoleId: row.primaryRoleId || undefined,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
+      sandboxUser: Boolean((row as any).sandboxUser) || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -739,6 +757,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: row.timezone || undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
+      sandboxUser: Boolean((row as any).sandboxUser) || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -774,6 +793,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: row.timezone || undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
+      sandboxUser: Boolean((row as any).sandboxUser) || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -809,6 +829,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: row.timezone || undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
+      sandboxUser: Boolean((row as any).sandboxUser) || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -844,6 +865,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: row.timezone || undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
+      sandboxUser: Boolean((row as any).sandboxUser) || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     };
@@ -897,6 +919,10 @@ export class MainDatabase implements IMainDatabase {
       fields.push('primaryRoleId = ?');
       values.push(updates.primaryRoleId || null);
     }
+    if ((updates as any).sandboxUser !== undefined) {
+      fields.push('sandboxUser = ?');
+      values.push((updates as any).sandboxUser ? 1 : 0);
+    }
 
     values.push(id);
 
@@ -943,6 +969,7 @@ export class MainDatabase implements IMainDatabase {
       timezone: row.timezone || undefined,
       creditBalanceUsd: row.creditBalanceUsd ?? 0,
       emailDisabled: (row.emailDisabled as 'bounce' | 'complaint' | null) || undefined,
+      sandboxUser: Boolean((row as any).sandboxUser) || undefined,
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     }));

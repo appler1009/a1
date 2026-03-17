@@ -15,6 +15,8 @@ export const UserSchema = z.object({
   primaryRoleId: z.string().optional(),
   /** Set when SES reports a hard bounce or spam complaint for this address. */
   emailDisabled: z.enum(['bounce', 'complaint']).optional(),
+  /** When true, this user uses the Stripe test/sandbox configuration instead of live. */
+  sandboxUser: z.boolean().optional(),
   createdAt: z.string().or(z.date()),
   updatedAt: z.string().or(z.date()).optional(),
 });
