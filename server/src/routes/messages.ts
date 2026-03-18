@@ -317,6 +317,36 @@ export async function messageRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send({ success: true, data: { migrated } });
   });
 
+  fastify.post('/messages/mark-read', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const body = request.body as { roleId: string };
+    if (!body.roleId) {
+      return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
+    }
+
+    const mainDb = await getMainDatabase(config.storage.root);
+    const role = await mainDb.getRole(body.roleId);
+    if (!role || role.userId !== request.user.id) {
+      return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
+    }
+
+    await mainDb.markMessagesRead(request.user.id, body.roleId);
+    return reply.send({ success: true });
+  });
+
+  fastify.get('/messages/unread-counts', async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+
+    const mainDb = await getMainDatabase(config.storage.root);
+    const counts = await mainDb.getUnreadCountsByUser(request.user.id);
+    return reply.send({ success: true, data: counts });
+  });
+
   // SSE endpoint — subscribe to new messages for a role (cross-device sync)
   fastify.get('/messages/stream', async (request, reply) => {
     if (!request.user) {

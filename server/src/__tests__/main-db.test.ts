@@ -484,6 +484,142 @@ describe('Messages', () => {
     expect(msgs).toHaveLength(1);
     expect(msgs[0].content).toBe('First'); // original preserved
   });
+
+  it('user messages default to isRead=true, non-user messages default to isRead=false', async () => {
+    const user = await db.createUser('readflag@example.com');
+    const role = await db.createRole(user.id, 'Read Flag Role');
+
+    await db.saveMessage({ id: 'rf-user', userId: user.id, roleId: role.id, groupId: null, from: 'user', content: 'I said this', createdAt: '2024-01-01T00:00:00.000Z' });
+    await db.saveMessage({ id: 'rf-asst', userId: user.id, roleId: role.id, groupId: null, from: 'assistant', content: 'Response', createdAt: '2024-01-01T00:00:01.000Z' });
+    await db.saveMessage({ id: 'rf-tool', userId: user.id, roleId: role.id, groupId: null, from: 'tool', content: 'Tool output', createdAt: '2024-01-01T00:00:02.000Z' });
+
+    const msgs = await db.listMessages(user.id, role.id);
+    const byId = Object.fromEntries(msgs.map(m => [m.id, m]));
+
+    expect(byId['rf-user'].isRead).toBe(true);
+    expect(byId['rf-asst'].isRead).toBe(false);
+    expect(byId['rf-tool'].isRead).toBe(false);
+  });
+
+  it('saveMessage respects an explicit isRead override', async () => {
+    const user = await db.createUser('readoverride@example.com');
+    const role = await db.createRole(user.id, 'Override Role');
+
+    // Explicitly mark an assistant message as already read
+    await db.saveMessage({ id: 'ro-1', userId: user.id, roleId: role.id, groupId: null, from: 'assistant', content: 'Already seen', createdAt: '2024-01-01T00:00:00.000Z', isRead: true });
+    // Explicitly mark a user message as unread (unusual but allowed)
+    await db.saveMessage({ id: 'ro-2', userId: user.id, roleId: role.id, groupId: null, from: 'user', content: 'Force unread', createdAt: '2024-01-01T00:00:01.000Z', isRead: false });
+
+    const msgs = await db.listMessages(user.id, role.id);
+    const byId = Object.fromEntries(msgs.map(m => [m.id, m]));
+
+    expect(byId['ro-1'].isRead).toBe(true);
+    expect(byId['ro-2'].isRead).toBe(false);
+  });
+
+  it('markMessagesRead marks all unread messages for a role as read', async () => {
+    const user = await db.createUser('markread@example.com');
+    const role = await db.createRole(user.id, 'Mark Read Role');
+
+    await db.saveMessage({ id: 'mr-1', userId: user.id, roleId: role.id, groupId: null, from: 'assistant', content: 'Unread 1', createdAt: '2024-01-01T00:00:00.000Z' });
+    await db.saveMessage({ id: 'mr-2', userId: user.id, roleId: role.id, groupId: null, from: 'assistant', content: 'Unread 2', createdAt: '2024-01-01T00:00:01.000Z' });
+
+    // Verify they start as unread
+    let msgs = await db.listMessages(user.id, role.id);
+    expect(msgs.every(m => m.isRead === false)).toBe(true);
+
+    await db.markMessagesRead(user.id, role.id);
+
+    msgs = await db.listMessages(user.id, role.id);
+    expect(msgs.every(m => m.isRead === true)).toBe(true);
+  });
+
+  it('markMessagesRead only affects the specified role', async () => {
+    const user = await db.createUser('markread2@example.com');
+    const roleA = await db.createRole(user.id, 'Role A');
+    const roleB = await db.createRole(user.id, 'Role B');
+
+    await db.saveMessage({ id: 'mra-1', userId: user.id, roleId: roleA.id, groupId: null, from: 'assistant', content: 'A msg', createdAt: '2024-01-01T00:00:00.000Z' });
+    await db.saveMessage({ id: 'mrb-1', userId: user.id, roleId: roleB.id, groupId: null, from: 'assistant', content: 'B msg', createdAt: '2024-01-01T00:00:00.000Z' });
+
+    await db.markMessagesRead(user.id, roleA.id);
+
+    const msgsA = await db.listMessages(user.id, roleA.id);
+    const msgsB = await db.listMessages(user.id, roleB.id);
+
+    expect(msgsA[0].isRead).toBe(true);
+    expect(msgsB[0].isRead).toBe(false); // untouched
+  });
+
+  it('getUnreadCountsByUser returns per-role unread counts', async () => {
+    const user = await db.createUser('unreadcounts@example.com');
+    const roleA = await db.createRole(user.id, 'Count Role A');
+    const roleB = await db.createRole(user.id, 'Count Role B');
+
+    // 2 unread in role A, 1 unread in role B
+    await db.saveMessage({ id: 'uc-a1', userId: user.id, roleId: roleA.id, groupId: null, from: 'assistant', content: 'A1', createdAt: '2024-01-01T00:00:00.000Z' });
+    await db.saveMessage({ id: 'uc-a2', userId: user.id, roleId: roleA.id, groupId: null, from: 'assistant', content: 'A2', createdAt: '2024-01-01T00:00:01.000Z' });
+    await db.saveMessage({ id: 'uc-b1', userId: user.id, roleId: roleB.id, groupId: null, from: 'assistant', content: 'B1', createdAt: '2024-01-01T00:00:00.000Z' });
+    // User messages are read and should not count
+    await db.saveMessage({ id: 'uc-a3', userId: user.id, roleId: roleA.id, groupId: null, from: 'user', content: 'My message', createdAt: '2024-01-01T00:00:02.000Z' });
+
+    const counts = await db.getUnreadCountsByUser(user.id);
+    expect(counts[roleA.id]).toBe(2);
+    expect(counts[roleB.id]).toBe(1);
+  });
+
+  it('getUnreadCountsByUser omits roles with zero unread messages', async () => {
+    const user = await db.createUser('zerocounts@example.com');
+    const role = await db.createRole(user.id, 'Zero Role');
+
+    await db.saveMessage({ id: 'zc-1', userId: user.id, roleId: role.id, groupId: null, from: 'user', content: 'User msg', createdAt: '2024-01-01T00:00:00.000Z' });
+
+    const counts = await db.getUnreadCountsByUser(user.id);
+    expect(counts[role.id]).toBeUndefined();
+  });
+
+  it('getUnreadCountsByUser returns empty object for user with no messages', async () => {
+    const user = await db.createUser('nomessages@example.com');
+    const counts = await db.getUnreadCountsByUser(user.id);
+    expect(counts).toEqual({});
+  });
+
+  it('getUnreadCountsByUser reflects zero after markMessagesRead', async () => {
+    const user = await db.createUser('aftermark@example.com');
+    const role = await db.createRole(user.id, 'After Mark Role');
+
+    await db.saveMessage({ id: 'am-1', userId: user.id, roleId: role.id, groupId: null, from: 'assistant', content: 'Unread', createdAt: '2024-01-01T00:00:00.000Z' });
+
+    const before = await db.getUnreadCountsByUser(user.id);
+    expect(before[role.id]).toBe(1);
+
+    await db.markMessagesRead(user.id, role.id);
+
+    const after = await db.getUnreadCountsByUser(user.id);
+    expect(after[role.id]).toBeUndefined();
+  });
+
+  it('listMessages includes isRead field', async () => {
+    const user = await db.createUser('listread@example.com');
+    const role = await db.createRole(user.id, 'List Read Role');
+
+    await db.saveMessage({ id: 'lr-1', userId: user.id, roleId: role.id, groupId: null, from: 'assistant', content: 'Check me', createdAt: '2024-01-01T00:00:00.000Z' });
+
+    const msgs = await db.listMessages(user.id, role.id);
+    expect(msgs[0]).toHaveProperty('isRead');
+    expect(typeof msgs[0].isRead).toBe('boolean');
+  });
+
+  it('searchMessages includes isRead field', async () => {
+    const user = await db.createUser('searchread@example.com');
+    const role = await db.createRole(user.id, 'Search Read Role');
+
+    await db.saveMessage({ id: 'sr-1', userId: user.id, roleId: role.id, groupId: null, from: 'assistant', content: 'findme keyword', createdAt: '2024-01-01T00:00:00.000Z' });
+
+    const results = await db.searchMessages(user.id, role.id, 'keyword');
+    expect(results[0]).toHaveProperty('isRead');
+    expect(typeof results[0].isRead).toBe('boolean');
+  });
 });
 
 // ---------------------------------------------------------------------------

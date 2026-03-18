@@ -27,6 +27,7 @@ export type MessageRow = {
   from: MessageFrom;
   content: string;
   createdAt: string;
+  isRead: boolean;
 };
 
 /**
@@ -131,6 +132,7 @@ export interface IMainDatabase {
     from: MessageFrom;
     content: string;
     createdAt: string | Date;
+    isRead?: boolean;
   }): Promise<void>;
   listMessages(
     userId: string,
@@ -144,6 +146,8 @@ export interface IMainDatabase {
     options?: { limit?: number }
   ): Promise<MessageRow[]>;
   clearMessages(userId: string, roleId: string): Promise<void>;
+  markMessagesRead(userId: string, roleId: string): Promise<void>;
+  getUnreadCountsByUser(userId: string): Promise<Record<string, number>>;
 
   // ---- Settings ----
   getSetting<T = unknown>(key: string): Promise<T | null>;

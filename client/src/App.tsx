@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
-import { useAuthStore, useEnvironmentStore, useUIStore, useRolesStore } from './store';
+import { useAuthStore, useEnvironmentStore, useUIStore, useRolesStore, useChatStore } from './store';
 import { initializePreviewAdapters } from './lib/adapters';
 import { Sidebar } from './components/Sidebar';
 import { ChatPane } from './components/panes/ChatPane';
@@ -141,6 +141,7 @@ function App() {
   const fetchRoles = useRolesStore((state) => state.fetchRoles);
   const fetchUser = useAuthStore((state) => state.fetchUser);
   const user = useAuthStore((state) => state.user);
+  const fetchUnreadCounts = useChatStore((state) => state.fetchUnreadCounts);
 
   useEffect(() => {
     initializePreviewAdapters();
@@ -152,8 +153,9 @@ function App() {
       console.log('[App] User authenticated, fetching roles...');
       fetchUser();
       fetchRoles();
+      fetchUnreadCounts();
     }
-  }, [user?.id, fetchUser, fetchRoles]);
+  }, [user?.id, fetchUser, fetchRoles, fetchUnreadCounts]);
 
   return (
     <BrowserRouter>

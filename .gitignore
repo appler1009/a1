@@ -25,6 +25,7 @@ plans/
 # IDE
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 *.sublime-workspace

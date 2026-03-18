@@ -17,6 +17,7 @@ A self-hosted, multi-user AI agent platform with first-class MCP (Model Context 
 - **Telegram Bot**: Expose any agent role to Telegram; responds to private messages and @mentions in group chats
 - **WhatsApp Bot**: Expose any agent role to WhatsApp via Meta Business Cloud API; responds to incoming messages from linked phone numbers
 - **Split-pane UI**: Chat on the left, file/email/document viewer on the right; responsive mobile layout with cross-device message sync
+- **Unread message badges**: Roles with new messages from scheduled jobs or background tasks show a dot badge in the sidebar; messages are marked read when the user focuses the chat pane
 - **Token Usage Tracking**: Per-user cost accounting across all LLM providers, with configurable monthly spend limits
 - **OAuth Token Security**: AES-256 encryption via AWS KMS; can be disabled for local dev without AWS
 

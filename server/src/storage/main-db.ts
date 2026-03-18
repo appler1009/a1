@@ -420,6 +420,9 @@ export class MainDatabase implements IMainDatabase {
 
     // Migrate users table to add sandboxUser column if needed
     this.migrateUseTestStripeSchema();
+
+    // Migrate messages table to add isRead column if needed
+    this.migrateMessagesIsReadSchema();
   }
 
   /**
@@ -659,6 +662,21 @@ export class MainDatabase implements IMainDatabase {
       }
     } catch (error) {
       console.warn('[MainDatabase] Error during primaryRoleId schema migration:', error);
+    }
+  }
+
+  private migrateMessagesIsReadSchema(): void {
+    try {
+      const tableInfo = this.db.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>;
+      const hasCol = tableInfo.some(col => col.name === 'isRead');
+      if (!hasCol) {
+        console.log('[MainDatabase] Adding isRead column to messages table...');
+        // Default existing messages to 1 (read) since they were already seen
+        this.db.exec(`ALTER TABLE messages ADD COLUMN isRead INTEGER NOT NULL DEFAULT 1;`);
+        console.log('[MainDatabase] isRead column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during messages isRead schema migration:', error);
     }
   }
 
@@ -1826,15 +1844,38 @@ export class MainDatabase implements IMainDatabase {
     from: import('./main-db-interface.js').MessageFrom;
     content: string;
     createdAt: string | Date;
+    isRead?: boolean;
   }): Promise<void> {
     const createdAt = entry.createdAt instanceof Date
       ? entry.createdAt.toISOString()
       : entry.createdAt;
+    // User-sent messages are always read; others default to unread
+    const isRead = entry.isRead ?? (entry.from === 'user' ? 1 : 0);
 
     this.db.prepare(`
-      INSERT OR IGNORE INTO messages (id, userId, roleId, groupId, role, content, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(entry.id, entry.userId, entry.roleId, entry.groupId ?? null, entry.from, entry.content, createdAt);
+      INSERT OR IGNORE INTO messages (id, userId, roleId, groupId, role, content, createdAt, isRead)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(entry.id, entry.userId, entry.roleId, entry.groupId ?? null, entry.from, entry.content, createdAt, isRead);
+  }
+
+  async markMessagesRead(userId: string, roleId: string): Promise<void> {
+    this.db.prepare(`
+      UPDATE messages SET isRead = 1 WHERE userId = ? AND roleId = ? AND isRead = 0
+    `).run(userId, roleId);
+  }
+
+  async getUnreadCountsByUser(userId: string): Promise<Record<string, number>> {
+    const rows = this.db.prepare(`
+      SELECT roleId, COUNT(*) as count FROM messages
+      WHERE userId = ? AND isRead = 0
+      GROUP BY roleId
+    `).all(userId) as Array<{ roleId: string; count: number }>;
+
+    const result: Record<string, number> = {};
+    for (const row of rows) {
+      result[row.roleId] = row.count;
+    }
+    return result;
   }
 
   async listMessages(
@@ -1863,12 +1904,14 @@ export class MainDatabase implements IMainDatabase {
       role: string;
       content: string;
       createdAt: string;
+      isRead: number;
     }>;
 
     // Return in ascending order (oldest first)
     return rows.reverse().map(row => ({
       ...row,
       from: row.role as import('./main-db-interface.js').MessageFrom,
+      isRead: row.isRead === 1,
     }));
   }
 
@@ -1893,9 +1936,10 @@ export class MainDatabase implements IMainDatabase {
       role: string;
       content: string;
       createdAt: string;
+      isRead: number;
     }>;
 
-    return rows.map(row => ({ ...row, from: row.role as import('./main-db-interface.js').MessageFrom }));
+    return rows.map(row => ({ ...row, from: row.role as import('./main-db-interface.js').MessageFrom, isRead: row.isRead === 1 }));
   }
 
   async clearMessages(userId: string, roleId: string): Promise<void> {

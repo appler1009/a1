@@ -183,6 +183,7 @@ function toMessageRow(item: Record<string, unknown>): import('./main-db-interfac
     from: item.from as import('./main-db-interface.js').MessageFrom,
     content: item.content as string,
     createdAt: item.createdAt as string,
+    isRead: item.isRead === true || item.isRead === 1,
   };
 }
 
@@ -1019,8 +1020,10 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     from: import('./main-db-interface.js').MessageFrom;
     content: string;
     createdAt: string | Date;
+    isRead?: boolean;
   }): Promise<void> {
     const createdAt = entry.createdAt instanceof Date ? entry.createdAt.toISOString() : entry.createdAt;
+    const isRead = entry.isRead ?? (entry.from === 'user');
     const item: Record<string, unknown> = {
       roleKey: `${entry.userId}#${entry.roleId}`,
       sortKey: `${createdAt}#${entry.id}`,
@@ -1030,6 +1033,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       from: entry.from,
       content: entry.content,
       createdAt,
+      isRead,
     };
     if (entry.groupId) item.groupId = entry.groupId;
 
@@ -1116,6 +1120,16 @@ export class DynamoDBMainDatabase implements IMainDatabase {
 
       lastKey = LastEvaluatedKey as Record<string, unknown> | undefined;
     } while (lastKey);
+  }
+
+  async markMessagesRead(_userId: string, _roleId: string): Promise<void> {
+    // DynamoDB: full scan-and-update would be expensive; unread tracking is best-effort
+    // For now this is a no-op — the badge will clear on the client side
+  }
+
+  async getUnreadCountsByUser(_userId: string): Promise<Record<string, number>> {
+    // DynamoDB: returning empty counts for now (no isRead GSI)
+    return {};
   }
 
   // ============================================================

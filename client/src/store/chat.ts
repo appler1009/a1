@@ -29,6 +29,7 @@ interface ChatState {
   loading: boolean;
   migrated: boolean;
   lastFetchTime: Record<string, number>;
+  unreadCounts: Record<string, number>;
   addMessage: (message: Message) => Promise<void>;
   receiveMessage: (message: Message) => void;
   prependMessages: (messages: Message[]) => void;
@@ -43,6 +44,9 @@ interface ChatState {
   fetchMessages: (roleId: string, options?: { before?: string; limit?: number }) => Promise<void>;
   migrateFromLocalStorage: () => Promise<void>;
   clearServerMessages: (roleId: string) => Promise<void>;
+  fetchUnreadCounts: () => Promise<void>;
+  markRoleRead: (roleId: string) => Promise<void>;
+  incrementUnreadCount: (roleId: string) => void;
 }
 
 export const useChatStore = create<ChatState>()((set, get) => ({
@@ -53,6 +57,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   loading: false,
   migrated: false,
   lastFetchTime: {},
+  unreadCounts: {},
 
   addMessage: async (message) => {
     set((state) => ({ messages: [...state.messages, message] }));
@@ -199,6 +204,47 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     } catch (error) {
       console.error('Failed to clear messages:', error);
     }
+  },
+
+  fetchUnreadCounts: async () => {
+    try {
+      const response = await apiFetch('/api/messages/unread-counts');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          set({ unreadCounts: data.data as Record<string, number> });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch unread counts:', error);
+    }
+  },
+
+  markRoleRead: async (roleId) => {
+    const { unreadCounts } = get();
+    if (!unreadCounts[roleId]) return;
+    try {
+      await apiFetch('/api/messages/mark-read', {
+        method: 'POST',
+        body: JSON.stringify({ roleId }),
+      });
+      set((state) => {
+        const updated = { ...state.unreadCounts };
+        delete updated[roleId];
+        return { unreadCounts: updated };
+      });
+    } catch (error) {
+      console.error('Failed to mark messages as read:', error);
+    }
+  },
+
+  incrementUnreadCount: (roleId) => {
+    set((state) => ({
+      unreadCounts: {
+        ...state.unreadCounts,
+        [roleId]: (state.unreadCounts[roleId] || 0) + 1,
+      },
+    }));
   },
 }));
 

@@ -139,6 +139,7 @@ export function ChatPane() {
   const [memorySaved, setMemorySaved] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const isPaneFocused = useRef(false);
   const isLoadingOlderRef = useRef(false);
   const loadMoreTriggeredRef = useRef(false);
   const prevScrollHeightRef = useRef(0);
@@ -165,6 +166,7 @@ export function ChatPane() {
     migrateFromLocalStorage,
     clearServerMessages,
     trimMessages,
+    markRoleRead,
   } = useChatStore();
   const { setViewerFile, setViewerTab, viewerFile, setMobileSidebarOpen } = useUIStore();
 
@@ -199,14 +201,17 @@ export function ChatPane() {
       console.log('[ChatPane] Waiting for roles to load...');
       return;
     }
-    
+
     // Only fetch if we have a valid currentRole (not 'default')
     if (currentRole?.id) {
       console.log('[ChatPane] Roles loaded, fetching messages for role:', currentRole.id);
       fetchMessages(currentRole.id, { limit: 50 });
+      // Mark messages as read when switching to a role (user will see them)
+      markRoleRead(currentRole.id);
     } else {
       console.log('[ChatPane] No current role set, skipping message fetch');
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rolesLoaded, currentRole?.id, fetchMessages]);
 
   // Subscribe to new messages pushed from the server (cross-device sync)
@@ -254,6 +259,11 @@ export function ChatPane() {
           const message = JSON.parse(event.data) as Message;
           console.log('[ChatPane] Received message from stream:', message.id, message.from);
           receiveMessage(message);
+          // If pane is focused, mark as read immediately
+          if (isPaneFocused.current) {
+            const roleId = roleIdRef.current;
+            if (roleId) markRoleRead(roleId);
+          }
         } catch {
           // ignore malformed events
         }
@@ -791,8 +801,21 @@ export function ChatPane() {
     console.log('  - roleMessages.length:', roleMessages.length);
   }, [activeRoleId, currentRole, storedRoleId, rolesLoaded, roleMessages.length]);
 
+  const handlePaneFocus = useCallback(() => {
+    isPaneFocused.current = true;
+    markRoleRead(activeRoleId);
+  }, [activeRoleId, markRoleRead]);
+
+  const handlePaneBlur = useCallback(() => {
+    isPaneFocused.current = false;
+  }, []);
+
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden">
+    <div
+      className="flex flex-col h-full w-full overflow-hidden"
+      onFocus={handlePaneFocus}
+      onBlur={handlePaneBlur}
+    >
       {/* Top Banner */}
       <TopBanner
         roleId={activeRoleId}

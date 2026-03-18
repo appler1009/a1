@@ -22,7 +22,7 @@ import type { AddressInfo } from 'net';
 const mockUser = { id: 'user-1' };
 const mockRole = { id: 'role-1', userId: 'user-1', name: 'Test Role' };
 const mockMessages = [
-  { id: 'msg-1', roleId: 'role-1', userId: 'user-1', groupId: null, from: 'user', content: 'Hello', createdAt: '2024-01-01T00:00:00.000Z' },
+  { id: 'msg-1', roleId: 'role-1', userId: 'user-1', groupId: null, from: 'user', content: 'Hello', createdAt: '2024-01-01T00:00:00.000Z', isRead: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -121,5 +121,187 @@ describe('GET /messages - limit query param is parsed as a number', () => {
     const res = await fetch(`${baseUrl}/messages?limit=50`);
     expect(res.status).toBe(400);
     expect(listMessagesMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /messages/mark-read
+// ---------------------------------------------------------------------------
+
+function buildMarkReadApp(opts: {
+  authenticated?: boolean;
+  markMessagesReadMock?: ReturnType<typeof mock>;
+  getRoleMock?: ReturnType<typeof mock>;
+} = {}) {
+  const { authenticated = true, markMessagesReadMock = mock().mockResolvedValue(undefined), getRoleMock } = opts;
+  const app = Fastify({ logger: false });
+
+  app.addHook('preHandler', async (request) => {
+    if (authenticated) (request as any).user = mockUser;
+  });
+
+  app.post('/messages/mark-read', async (request, reply) => {
+    if (!(request as any).user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+    const body = request.body as { roleId?: string };
+    if (!body.roleId) {
+      return reply.code(400).send({ success: false, error: { message: 'roleId is required' } });
+    }
+    const role = getRoleMock ? await getRoleMock(body.roleId) : mockRole;
+    if (!role || role.userId !== (request as any).user.id) {
+      return reply.code(403).send({ success: false, error: { message: 'Access denied to this role' } });
+    }
+    await markMessagesReadMock((request as any).user.id, body.roleId);
+    return reply.send({ success: true });
+  });
+
+  return app;
+}
+
+describe('POST /messages/mark-read', () => {
+  let server: ReturnType<typeof Fastify>;
+  let baseUrl: string;
+
+  afterEach(async () => {
+    await server?.close();
+  });
+
+  it('calls markMessagesRead and returns 200 for a valid role', async () => {
+    const markMock = mock().mockResolvedValue(undefined);
+    server = buildMarkReadApp({ markMessagesReadMock: markMock });
+    await server.listen({ port: 0, host: '127.0.0.1' });
+    baseUrl = `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`;
+
+    const res = await fetch(`${baseUrl}/messages/mark-read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roleId: 'role-1' }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(markMock).toHaveBeenCalledTimes(1);
+    const [userId, roleId] = markMock.mock.calls[0] as [string, string];
+    expect(userId).toBe('user-1');
+    expect(roleId).toBe('role-1');
+  });
+
+  it('returns 400 when roleId is missing', async () => {
+    server = buildMarkReadApp();
+    await server.listen({ port: 0, host: '127.0.0.1' });
+    baseUrl = `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`;
+
+    const res = await fetch(`${baseUrl}/messages/mark-read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 401 when not authenticated', async () => {
+    server = buildMarkReadApp({ authenticated: false });
+    await server.listen({ port: 0, host: '127.0.0.1' });
+    baseUrl = `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`;
+
+    const res = await fetch(`${baseUrl}/messages/mark-read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roleId: 'role-1' }),
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 when role belongs to a different user', async () => {
+    const otherRole = { id: 'role-1', userId: 'other-user', name: 'Other Role' };
+    const getRoleMock = mock().mockResolvedValue(otherRole);
+    server = buildMarkReadApp({ getRoleMock });
+    await server.listen({ port: 0, host: '127.0.0.1' });
+    baseUrl = `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`;
+
+    const res = await fetch(`${baseUrl}/messages/mark-read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roleId: 'role-1' }),
+    });
+
+    expect(res.status).toBe(403);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /messages/unread-counts
+// ---------------------------------------------------------------------------
+
+function buildUnreadCountsApp(opts: {
+  authenticated?: boolean;
+  getUnreadCountsMock?: ReturnType<typeof mock>;
+} = {}) {
+  const { authenticated = true, getUnreadCountsMock = mock().mockResolvedValue({}) } = opts;
+  const app = Fastify({ logger: false });
+
+  app.addHook('preHandler', async (request) => {
+    if (authenticated) (request as any).user = mockUser;
+  });
+
+  app.get('/messages/unread-counts', async (request, reply) => {
+    if (!(request as any).user) {
+      return reply.code(401).send({ success: false, error: { message: 'Not authenticated' } });
+    }
+    const counts = await getUnreadCountsMock((request as any).user.id);
+    return reply.send({ success: true, data: counts });
+  });
+
+  return app;
+}
+
+describe('GET /messages/unread-counts', () => {
+  let server: ReturnType<typeof Fastify>;
+  let baseUrl: string;
+
+  afterEach(async () => {
+    await server?.close();
+  });
+
+  it('returns unread counts for the authenticated user', async () => {
+    const countsMock = mock().mockResolvedValue({ 'role-1': 3, 'role-2': 1 });
+    server = buildUnreadCountsApp({ getUnreadCountsMock: countsMock });
+    await server.listen({ port: 0, host: '127.0.0.1' });
+    baseUrl = `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`;
+
+    const res = await fetch(`${baseUrl}/messages/unread-counts`);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.data).toEqual({ 'role-1': 3, 'role-2': 1 });
+
+    expect(countsMock).toHaveBeenCalledTimes(1);
+    const [userId] = countsMock.mock.calls[0] as [string];
+    expect(userId).toBe('user-1');
+  });
+
+  it('returns empty object when no unread messages', async () => {
+    const countsMock = mock().mockResolvedValue({});
+    server = buildUnreadCountsApp({ getUnreadCountsMock: countsMock });
+    await server.listen({ port: 0, host: '127.0.0.1' });
+    baseUrl = `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`;
+
+    const res = await fetch(`${baseUrl}/messages/unread-counts`);
+    const body = await res.json();
+    expect(body.data).toEqual({});
+  });
+
+  it('returns 401 when not authenticated', async () => {
+    server = buildUnreadCountsApp({ authenticated: false });
+    await server.listen({ port: 0, host: '127.0.0.1' });
+    baseUrl = `http://127.0.0.1:${(server.server.address() as AddressInfo).port}`;
+
+    const res = await fetch(`${baseUrl}/messages/unread-counts`);
+    expect(res.status).toBe(401);
   });
 });
