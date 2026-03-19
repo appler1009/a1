@@ -145,12 +145,17 @@ export function LoginPage() {
               </button>
             </div>
 
-            <div className="mt-6 pt-6 border-t border-border">
+            <div className="mt-6 pt-6 border-t border-border space-y-3">
               <p className="text-sm text-muted-foreground text-center">
                 Have an invitation code?{' '}
                 <a href="/join" className="text-primary hover:underline">
                   Join a group
                 </a>
+              </p>
+              <p className="text-xs text-muted-foreground/70 text-center">
+                By signing in, you agree that we store your email to manage your account.
+                We use a session cookie to keep you logged in — no tracking, no third parties.{' '}
+                <a href="/privacy" className="hover:underline">Privacy Policy</a>.
               </p>
             </div>
           </div>
@@ -312,6 +317,10 @@ export function LoginPage() {
               className="hover:text-muted-foreground transition-colors"
             >
               GitHub
+            </a>
+            <span>·</span>
+            <a href="/privacy" className="hover:text-muted-foreground transition-colors">
+              Privacy Policy
             </a>
           </p>
         </div>

@@ -21,6 +21,7 @@ const LoginVerifyPage = lazy(() => import('./pages/LoginVerifyPage').then(m => (
 const OnboardingPage = lazy(() => import('./pages/OnboardingPage').then(m => ({ default: m.OnboardingPage })));
 const JoinPage = lazy(() => import('./pages/JoinPage').then(m => ({ default: m.JoinPage })));
 const OAuthCallbackPage = lazy(() => import('./pages/OAuthCallbackPage').then(m => ({ default: m.OAuthCallbackPage })));
+const PrivacyPage = lazy(() => import('./pages/PrivacyPage').then(m => ({ default: m.PrivacyPage })));
 
 function MainApp() {
   const isMobile = useIsMobile();
@@ -167,6 +168,7 @@ function App() {
           <Route path="/join" element={<JoinPage />} />
           <Route path="/auth/google/callback" element={<OAuthCallbackPage />} />
           <Route path="/oauth/callback" element={<OAuthCallbackPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
           <Route path="/*" element={<MainApp />} />
         </Routes>
       </Suspense>
