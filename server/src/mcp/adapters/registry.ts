@@ -16,6 +16,7 @@ import { TwelveDataInProcess } from '../in-process/twelve-data.js';
 import { SchedulerInProcess } from '../in-process/scheduler.js';
 import { FetchUrlInProcess } from '../in-process/fetch-url.js';
 import { SmtpImapInProcess, type SmtpImapCredentials } from '../in-process/smtp-imap.js';
+import { LiteParseInProcess } from '../in-process/liteparse.js';
 import { getMainDatabaseSync } from '../../storage/index.js';
 
 /**
@@ -87,7 +88,7 @@ class AdapterRegistry {
       return new GoogleDriveInProcess(tokenData as GoogleTokenData);
     }, ['Google Drive']);
 
-    this.registerStdio('markitdown', StdioAdapter, ['MarkItDown']);
+    this.registerInProcess('liteparse', () => new LiteParseInProcess(), ['MarkItDown', 'LiteParse']);
 
     this.registerInProcess('memory', (userId, tokenData) => {
       const roleData = tokenData as RoleScopedTokenData | undefined;

@@ -142,6 +142,7 @@ export function parseGmailMessage(gmailMessage: any): Record<string, any> {
     mimeType: string;
     size: number;
     url?: string;
+    contentId?: string;
   }> = [];
 
   const extractAttachments = (part: any) => {
@@ -153,17 +154,23 @@ export function parseGmailMessage(gmailMessage: any): Record<string, any> {
     const cdFilename = cdHeader.match(/filename\*?=(?:UTF-8'')?(?:"([^"]+)"|([^\s;]+))/i);
     const filename = part.filename || cdFilename?.[1] || cdFilename?.[2];
 
-    if (filename && !isMultipart) {
+    // Content-ID for inline CID images (strip surrounding angle brackets)
+    const rawCid = part.headers?.find((h: any) => h.name?.toLowerCase() === 'content-id')?.value || '';
+    const contentId = rawCid ? rawCid.replace(/^<|>$/g, '') : undefined;
+
+    if ((filename || contentId) && !isMultipart) {
       const attachMimeType = partMimeType || 'application/octet-stream';
       const size = part.body?.size || 0;
+      const effectiveFilename = filename || contentId || 'inline';
 
       if (part.body?.data) {
         // Small inline attachment — serve as data URL directly
         attachments.push({
-          filename,
+          filename: effectiveFilename,
           mimeType: attachMimeType,
           size,
           url: `data:${attachMimeType};base64,${part.body.data}`,
+          contentId,
         });
       } else if (part.body?.attachmentId) {
         // Large attachment — download via server proxy endpoint.
@@ -172,14 +179,15 @@ export function parseGmailMessage(gmailMessage: any): Record<string, any> {
         const qs = new URLSearchParams({
           messageId,
           attachmentId: part.body.attachmentId,
-          filename,
+          filename: effectiveFilename,
           mimeType: attachMimeType,
         }).toString();
         attachments.push({
-          filename,
+          filename: effectiveFilename,
           mimeType: attachMimeType,
           size,
           url: `/api/gmail/attachment?${qs}`,
+          contentId,
         });
       }
     }
@@ -280,18 +288,30 @@ export class GmailInProcess implements InProcessMCPModule {
   }
 
   getSystemPrompt(): string {
-    return `## GMAIL EMAIL SEARCH RESULTS
-When showing email search results from gmailSearchMessages:
-- **NEVER** just list message IDs - they are useless to the user
-- **ALWAYS** fetch each message using gmailGetMessage() to get human-readable details
-- **MUST SHOW** for each email at minimum:
-  - Subject (as a [preview-file:...] link for direct viewing)
-  - Sender (From address and display name)
-  - Date (human-readable format)
-  - Brief preview/snippet if available
-- **IMPORTANT**: Any emails shown as links in your response MUST be downloaded using gmailGetMessage - never show raw email data or message IDs as links. Always use the cache-id from gmailGetMessage responses.
-- **NEVER** mention message IDs, thread IDs, or any internal Gmail IDs in your responses - useless to users
-- When retrieving emails with gmailGetMessage or gmailGetThread: NEVER include email bodies in your response text. The email will be displayed in the preview pane automatically. Format cached emails as: [preview-file:Email Subject.json](cache-id-from-response). Include .json extension so preview pane correctly detects it as email. Just acknowledge that you retrieved it and provide a brief summary (subject, sender, key details).
+    return `## GMAIL: SEARCH AND SYNTHESIS WORKFLOW
+When the user asks to find, read, or summarise emails:
+1. **Search first**: call gmailSearchMessages with a targeted query. If 0 results, immediately retry with 2–3 broader or alternative phrasings — do not ask the user until alternatives are exhausted.
+2. **Fetch in parallel — prefer threads for context**:
+   - Each search result contains a \`threadId\`. When the user asks about a topic, incident, or conversation (anything where back-and-forth context matters), call **gmailGetThread** with the threadId instead of gmailGetMessage — you get the full conversation in one call.
+   - Use gmailGetMessage only when you need a single isolated message (e.g. a newsletter, a notification, or when the user asks for a specific message).
+   - Fetch up to ~8 threads/messages simultaneously — never one at a time, never ask "shall I continue?".
+3. **Synthesise**: write a single structured response with:
+   - A concise paragraph summary
+   - ## Key Topics section with bullet points
+   - ## Action Items section (if any)
+   - ## Contacts table (Name | Email | Role) when multiple senders appear
+   - Numbered citations [1][2][3]... mapping to specific emails so the user can trace claims
+4. Include [preview-file:Subject.json](cache-id) links for each email so the user can open them.
+
+**NEVER**:
+- List raw message IDs, thread IDs, attachment IDs, or cache IDs in responses
+- Quote full email bodies in the response text (the preview pane shows them)
+- Ask "Ready to retrieve the next one?" — fetch all, then respond once
+- Show emails as numbered standalone sections; distil into a synthesis
+
+## GMAIL: DISPLAY-ONLY REQUESTS
+When the user explicitly asks to "show" or "open" each email (not summarise):
+- Retrieve all in parallel, then list them with [preview-file:Subject.json](cache-id) links and one-line subject/sender/date descriptions.
 
 ## GMAIL EMAIL DRAFT CREATION
 **CRITICAL RULES for gmailCreateDraft:**
@@ -301,7 +321,6 @@ When showing email search results from gmailSearchMessages:
    - Never paraphrase or summarize the draft content
 2. **When replying to an email:**
    - ONLY create the draft to the same email account that received the original email
-   - If the original email was sent to user@example.com, create the draft replying to that address
    - Do NOT create drafts to different accounts unless explicitly requested
 3. **Draft content verification:**
    - Format the draft display clearly with labeled sections
@@ -602,6 +621,28 @@ Always include \`newer_than:90d\` in Gmail search queries unless the user specif
           required: ['threadId'],
         },
       },
+      {
+        name: 'gmailDownloadAttachment',
+        description: 'Download a Gmail message attachment to temporary storage and return a cache ID that can be passed to convert_to_markdown to read its content. Use this when the user wants to read or summarize a PDF or document attached to an email.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            messageId: {
+              type: 'string',
+              description: 'The Gmail message ID that contains the attachment',
+            },
+            attachmentId: {
+              type: 'string',
+              description: 'The attachment ID (from the message\'s attachments list)',
+            },
+            filename: {
+              type: 'string',
+              description: 'The attachment filename (e.g. "report.pdf") — used to set the file extension',
+            },
+          },
+          required: ['messageId', 'attachmentId', 'filename'],
+        },
+      },
     ];
   }
 
@@ -709,6 +750,7 @@ Always include \`newer_than:90d\` in Gmail search queries unless the user specif
       mimeType: string;
       size: number;
       url?: string;
+      contentId?: string;
     }> = [];
 
     const extractAttachments = (part: any) => {
@@ -720,17 +762,23 @@ Always include \`newer_than:90d\` in Gmail search queries unless the user specif
       const cdFilename = cdHeader.match(/filename\*?=(?:UTF-8'')?(?:"([^"]+)"|([^\s;]+))/i);
       const filename = part.filename || cdFilename?.[1] || cdFilename?.[2];
 
-      if (filename && !isMultipart) {
+      // Content-ID for inline CID images (strip surrounding angle brackets)
+      const rawCid = part.headers?.find((h: any) => h.name?.toLowerCase() === 'content-id')?.value || '';
+      const contentId = rawCid ? rawCid.replace(/^<|>$/g, '') : undefined;
+
+      if ((filename || contentId) && !isMultipart) {
         const attachMimeType = partMimeType || 'application/octet-stream';
         const size = part.body?.size || 0;
+        const effectiveFilename = filename || contentId || 'inline';
 
         if (part.body?.data) {
           // Small inline attachment — serve as data URL directly
           attachments.push({
-            filename,
+            filename: effectiveFilename,
             mimeType: attachMimeType,
             size,
             url: `data:${attachMimeType};base64,${part.body.data}`,
+            contentId,
           });
         } else if (part.body?.attachmentId) {
           // Large attachment — download via server proxy endpoint.
@@ -739,14 +787,15 @@ Always include \`newer_than:90d\` in Gmail search queries unless the user specif
           const qs = new URLSearchParams({
             messageId,
             attachmentId: part.body.attachmentId,
-            filename,
+            filename: effectiveFilename,
             mimeType: attachMimeType,
           }).toString();
           attachments.push({
-            filename,
+            filename: effectiveFilename,
             mimeType: attachMimeType,
             size,
             url: `/api/gmail/attachment?${qs}`,
+            contentId,
           });
         }
       }
@@ -1105,6 +1154,64 @@ Always include \`newer_than:90d\` in Gmail search queries unless the user specif
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error('[GmailInProcess:gmailGetThread] Error:', errorMsg);
+      throw error;
+    }
+  }
+
+  /**
+   * Download a Gmail attachment to temp storage and return a cache ID for convert_to_markdown
+   */
+  async gmailDownloadAttachment(args: any): Promise<unknown> {
+    const { messageId, attachmentId, filename } = args;
+
+    if (!messageId || !attachmentId || !filename) {
+      throw new Error('messageId, attachmentId, and filename are all required');
+    }
+
+    try {
+      const { google } = await import('googleapis');
+      const { OAuth2Client } = await import('google-auth-library');
+
+      const oauth2Client = new OAuth2Client();
+      oauth2Client.setCredentials({
+        access_token: this.tokens.access_token,
+        refresh_token: this.tokens.refresh_token,
+        expiry_date: this.tokens.expiry_date,
+        token_type: this.tokens.token_type || 'Bearer',
+      });
+
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+      const response = await gmail.users.messages.attachments.get({
+        userId: 'me',
+        messageId,
+        id: attachmentId,
+      });
+
+      if (!response.data.data) {
+        throw new Error('Attachment data not found in Gmail response');
+      }
+
+      const buffer = Buffer.from(response.data.data, 'base64');
+      const ext = filename.includes('.') ? filename.split('.').pop()! : 'bin';
+      // Build a stable cache ID from message + filename (no attachment ID — too long for path)
+      const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const cacheId = `gmail_att_${messageId}_${safeFilename}`;
+      const cacheFileName = `${cacheId}.${ext}`;
+
+      if (!tempStorage) {
+        throw new Error('TempStorage not initialized');
+      }
+
+      await tempStorage.writeTempFile(cacheFileName, buffer);
+      console.log(`[GmailInProcess:gmailDownloadAttachment] Saved attachment to temp storage: ${cacheFileName}`);
+
+      return {
+        type: 'text',
+        text: `Attachment "${filename}" downloaded successfully.\nCache ID: ${cacheId}\n\nYou can now call convert_to_markdown with uri="${cacheId}" to read its content.`,
+      };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('[GmailInProcess:gmailDownloadAttachment] Error:', errorMsg);
       throw error;
     }
   }

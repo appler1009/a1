@@ -19,11 +19,11 @@ import { ViewerFile } from '../../store';
 import { EmailMessage, EmailThread } from './types';
 import { stripHtml } from '@local-agent/shared';
 
-// Configure the PDF.js worker (required by react-pdf)
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+// Configure the PDF.js worker — must match the loaded pdfjs-dist version.
+// Using unpkg CDN avoids the bare-specifier resolution issue where
+// new URL('pdfjs-dist/...', import.meta.url) resolves relative to the module
+// file path rather than node_modules, causing a 404 and silent worker failure.
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 /**
  * Email message header display
@@ -167,7 +167,7 @@ function EmailBody({ email }: { email: EmailMessage }) {
   if (email.isHtml && isFullHtmlDocument(email.body)) {
     // Patch all links to open in a new tab (the iframe sandbox's allow-popups
     // makes this work without needing allow-scripts).
-    const processedHtml = email.body.replace(
+    let processedHtml = email.body.replace(
       /<a\s+([^>]*?)href\s*=\s*['"]([^'"]+)['"](.*?)>/gi,
       (match, before, href, after) => {
         if (!/\btarget\s*=/i.test(match)) {
@@ -179,6 +179,29 @@ function EmailBody({ email }: { email: EmailMessage }) {
         return match;
       }
     );
+
+    // Replace cid: references with actual attachment URLs so inline images render.
+    if (email.attachments) {
+      for (const att of email.attachments) {
+        if (att.contentId && att.url) {
+          // Escape special regex chars in the content-id (dots, @, etc.)
+          const escaped = att.contentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          processedHtml = processedHtml.replace(new RegExp(`cid:${escaped}`, 'gi'), att.url);
+        }
+      }
+    }
+
+    // Force light-mode rendering inside the iframe so email text is always
+    // readable regardless of the app's dark/light theme.
+    // - color-scheme: light  → browser uses light defaults (scrollbars, form controls)
+    // - background/color     → cover emails that rely on transparent/inherited backgrounds
+    const lightStyle =
+      '<style>:root{color-scheme:light}html,body{background-color:#ffffff!important;color:#111111!important}</style>';
+    if (/<head[\s>]/i.test(processedHtml)) {
+      processedHtml = processedHtml.replace(/(<head[^>]*>)/i, `$1${lightStyle}`);
+    } else {
+      processedHtml = lightStyle + processedHtml;
+    }
 
     return (
       <div className="p-2">

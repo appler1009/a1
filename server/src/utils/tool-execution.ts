@@ -159,7 +159,7 @@ export async function downloadGoogleDriveFile(
 // Tools that require local filesystem access (external STDIO processes)
 // These tools cannot read S3 URIs directly
 const TOOLS_REQUIRING_LOCAL_FILES = new Set([
-  'convert_to_markdown', // markitdown MCP tool
+  'convert_to_markdown', // liteparse in-process tool (handles S3 download itself, but kept here for safety)
 ]);
 
 /**
@@ -261,7 +261,7 @@ export async function resolveUriForMcp(uri: string, userId?: string, toolName?: 
       let fileUri = await tempStorage.getFileUri(matchingFile);
       console.log(`[UriResolver] Resolved cache ID "${cacheId}" to temp file: ${fileUri}`);
 
-      // For tools that require local filesystem (like markitdown),
+      // For tools that require local filesystem (like liteparse),
       // download S3 files to local temp directory
       if (toolName && TOOLS_REQUIRING_LOCAL_FILES.has(toolName) && fileUri.startsWith('s3://')) {
         // Ensure local temp directory exists before writing
@@ -274,7 +274,7 @@ export async function resolveUriForMcp(uri: string, userId?: string, toolName?: 
         const localData = await tempStorage.readTempFile(filename);
         if (localData) {
           // Write to a local temp file that external tools can access
-          const localFilename = `markitdown-${Date.now()}-${filename}`;
+          const localFilename = `liteparse-${Date.now()}-${filename}`;
           const localPath = path.join(localTempDir, localFilename);
           await fsPromises.writeFile(localPath, localData);
           fileUri = `file://${localPath}`;

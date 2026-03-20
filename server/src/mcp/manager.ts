@@ -53,7 +53,7 @@ export class MCPManager {
   async initialize(): Promise<void> {
     this.db = await getMainDatabase();
 
-    // Start global hidden servers first (markitdown, weather, etc.)
+    // Start global hidden servers first (liteparse, weather, etc.)
     await this.startHiddenServers();
 
     // Load persisted server configs from main database
@@ -64,7 +64,7 @@ export class MCPManager {
   }
 
   /**
-   * Start always-on hidden infrastructure servers (weather, meta-mcp-search, markitdown, etc.).
+   * Start always-on hidden infrastructure servers (weather, meta-mcp-search, liteparse, etc.).
    * These run for the lifetime of the process and are never exposed in the UI server list.
    * The memory server is excluded here — it is created lazily per-role via getMcpAdapter().
    */

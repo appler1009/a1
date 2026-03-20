@@ -12,6 +12,7 @@ import {
   activeStreams,
   messageSubscribers,
   llmRouter,
+  tempStorage,
 } from '../shared-state.js';
 import { getByokRouter } from '../utils/byok.js';
 import { executeToolWithAdapters } from '../utils/tool-execution.js';
@@ -663,6 +664,59 @@ After calling this tool, you'll receive tool names and their server information.
           console.log(`[ChatStream] File available at: ${fileUriForMcp}`);
         }
 
+        // Try to detect if the viewer file is a cached email by reading its JSON
+        let emailAttachmentContext = '';
+        try {
+          const emailJson = await tempStorage.readTempFileAsString(`${cacheId}.json`);
+          if (emailJson) {
+            const emailObj = JSON.parse(emailJson);
+            // Check for email shape: has from + subject fields
+            if (emailObj.from && emailObj.subject) {
+              // Gather attachments that are document/PDF types the AI can convert
+              const CONVERTIBLE_MIME = [
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'application/vnd.ms-excel',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'application/vnd.ms-powerpoint',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+              ];
+              const attachments: Array<{ filename: string; mimeType: string; size: number; url?: string }> =
+                emailObj.attachments || [];
+              const convertible = attachments.filter(a => CONVERTIBLE_MIME.includes(a.mimeType));
+
+              if (convertible.length > 0) {
+                const lines = convertible.map(att => {
+                  let ids = '';
+                  if (att.url?.startsWith('/api/gmail/attachment?')) {
+                    const qs = new URLSearchParams(att.url.slice('/api/gmail/attachment?'.length));
+                    const msgId = qs.get('messageId');
+                    const attId = qs.get('attachmentId');
+                    if (msgId && attId) {
+                      ids = ` → gmailDownloadAttachment(messageId="${msgId}", attachmentId="${attId}", filename="${att.filename}")`;
+                    }
+                  }
+                  return `  - **${att.filename}** (${att.mimeType})${ids}`;
+                });
+                emailAttachmentContext = `
+## EMAIL ATTACHMENTS AVAILABLE FOR READING
+This email has the following document attachment(s) you can read:
+${lines.join('\n')}
+
+**To read/summarize a PDF or document attachment:**
+1. Call \`gmailDownloadAttachment\` with the messageId, attachmentId, and filename shown above — it returns a Cache ID.
+2. Call \`convert_to_markdown\` with \`uri="<Cache ID>"\` to extract the text.
+3. Use the extracted text to answer the user's question.
+
+**IMPORTANT**: Do NOT call \`convert_to_markdown\` on the email cache ID (\`${cacheId}\`) — that is the email JSON, not the PDF. Use the steps above for attachments.`;
+              }
+            }
+          }
+        } catch {
+          // Not a readable email JSON — ignore and fall through to generic context
+        }
+
         // Always show the Cache ID in the system prompt if we have a viewerFile
         // The resolver will look up the temp file by cache ID when MCP tools are called
         documentContext = `
@@ -685,7 +739,7 @@ This document is immediately available for the user to ask questions about or re
 - **NEVER mention the Cache ID in your responses to the user** - only use it internally for MCP tool calls
 - Refer to the document by its filename ("${body.viewerFile.name}") when talking to the user
 
-If the user asks about "this document" or "the file" without specifying, they are referring to this previewed document.`;
+If the user asks about "this document" or "the file" without specifying, they are referring to this previewed document.${emailAttachmentContext}`;
       }
 
       // Load role and available Google accounts for dynamic system prompt injection
@@ -787,12 +841,18 @@ ${accountList}
 - Do not rely on your training knowledge for anything that is likely to change over time or that a tool can supply more accurately.
 
 ## PROCESSING MULTIPLE ITEMS
-**IMPORTANT**: When the user asks you to process multiple items (emails, files, documents, etc.):
-- Process **ONE item at a time**, not all at once
-- For each item: retrieve it, analyze it, show the result to the user
-- Move to the next item only after completing the current one
-- This prevents hitting token limits and ensures each item receives proper attention
-- Example: If user asks "summarize 10 emails", handle them sequentially—retrieve email 1, summarize it, then email 2, etc.`,
+When the user asks you to retrieve, summarize, or analyse multiple items (emails, files, documents, etc.):
+
+**Synthesis tasks** ("find emails about X", "summarise recent emails from Y", "what are the action items?"):
+- Fetch up to 10 items **in parallel** using simultaneous tool calls — do NOT retrieve one at a time or ask "shall I continue?"
+- After fetching, write a **single structured response**: headers for key topics, bullet action items, a contacts/reference table if relevant, and numbered citations [1][2][3] mapping to specific source items.
+- Do not repeat each email as a standalone section; distil the information into a coherent summary.
+
+**Display tasks** ("show me all 10 emails", "open each email one by one"):
+- Retrieve items in parallel, then present them as a list with [preview-file:...] links so the user can open each one.
+- Still do not ask permission between items.
+
+**Search retries**: If a search returns 0 results, automatically try 2–3 alternative phrasings or broader terms before asking the user. Only surface the "no results" message once you have exhausted reasonable alternatives.`,
           roleSection ? roleSection.trim() : '',
           accountsSection ? accountsSection.trim() : '',
           memorySystemPrompt,

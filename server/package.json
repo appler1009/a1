@@ -30,6 +30,7 @@
     "@fastify/static": "^6.12.0",
     "@fastify/websocket": "^10.0.1",
     "@googleapis/gmail": "^8.0.0",
+    "@llamaindex/liteparse": "^1.0.0",
     "@local-agent/shared": "*",
     "discord.js": "^14.15.0",
     "dotenv": "^17.3.1",

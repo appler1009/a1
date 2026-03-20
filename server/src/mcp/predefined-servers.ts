@@ -5,7 +5,7 @@
  */
 
 export interface PredefinedMCPServer {
-  id: string; // Internal ID: 'google-drive-mcp-lib', 'gmail-mcp-lib', 'markitdown', etc.
+  id: string; // Internal ID: 'google-drive-mcp-lib', 'gmail-mcp-lib', 'liteparse', etc.
   name: string; // Display name
   description: string;
   command: string;
@@ -51,16 +51,17 @@ export const PREDEFINED_MCP_SERVERS: PredefinedMCPServer[] = [
   },
 
   {
-    id: 'markitdown',
-    name: 'MarkItDown',
+    id: 'liteparse',
+    name: 'LiteParse',
     description: 'Convert PDF files and other documents to markdown format for AI processing. Supports PDF, DOCX, XLSX, PPTX, images, and more.',
-    command: 'markitdown-mcp',
+    command: '', // in-process — no subprocess needed
     args: [],
     auth: {
       provider: 'none',
     },
     icon: 'file-text',
     hidden: true, // Hidden from UI - automatically available for PDF processing
+    inProcess: true,
   },
 
   {

@@ -117,6 +117,12 @@ export interface EmailAttachment {
    * Base64 encoded content
    */
   data?: string;
+
+  /**
+   * RFC 2392 Content-ID (without angle brackets) for inline CID images.
+   * e.g. "image001.png@01DCAD7B.5FD9E390"
+   */
+  contentId?: string;
 }
 
 /**
