@@ -31,7 +31,10 @@ export function PrivacyPage() {
               <li><strong className="text-foreground">Email address</strong> — to identify your account and send login links</li>
               <li><strong className="text-foreground">Session cookie</strong> — a single <code>session_id</code> cookie to keep you logged in</li>
               <li><strong className="text-foreground">Conversation content</strong> — messages and AI responses you create while using the service</li>
+              <li><strong className="text-foreground">Role descriptions</strong> — the custom instructions you write for your AI agents</li>
+              <li><strong className="text-foreground">Scheduled tasks</strong> — the tasks and schedules you configure for automated jobs</li>
               <li><strong className="text-foreground">API keys (optional)</strong> — if you provide your own AI service keys (BYOK), they are stored encrypted</li>
+              <li><strong className="text-foreground">OAuth tokens (optional)</strong> — if you connect third-party services (e.g. Google), access tokens are stored encrypted</li>
             </ul>
           </section>
 
@@ -60,8 +63,9 @@ export function PrivacyPage() {
           <section>
             <h2 className="text-lg font-semibold mb-2">Third parties</h2>
             <p className="text-muted-foreground">
-              Your conversation content may be sent to AI providers (such as Anthropic or xAI)
-              to generate responses. This happens only when you actively use the chat feature.
+              Your conversation content, role descriptions, and scheduled task content may be
+              sent to AI providers (such as Anthropic or xAI) to generate responses. This
+              happens only when you actively use the chat or scheduled jobs features.
               We do not share your data with any other third parties.
             </p>
           </section>
@@ -90,7 +94,7 @@ export function PrivacyPage() {
               <a href="mailto:info@assist1.me" className="text-primary hover:underline">
                 info@assist1.me
               </a>
-              . We will respond within 30 days.
+              . We will respond within 7 days.
             </p>
           </section>
 
