@@ -17,7 +17,41 @@ import './pdf-viewer.css';
 import { PreviewAdapter } from '../preview-adapters';
 import { ViewerFile } from '../../store';
 import { EmailMessage, EmailThread } from './types';
-import { stripHtml } from '@local-agent/shared';
+import remarkGfm from 'remark-gfm';
+import TurndownService from 'turndown';
+
+// Shared turndown instance configured for email HTML
+const turndown = new TurndownService({
+  headingStyle: 'atx',
+  bulletListMarker: '-',
+  codeBlockStyle: 'fenced',
+  hr: '---',
+  linkStyle: 'inlined',
+});
+// Strip non-content tags entirely
+turndown.remove(['style', 'script', 'meta', 'link', 'head']);
+// Convert <br> to a newline (turndown default converts to two spaces + \n, which collapses in markdown)
+turndown.addRule('lineBreak', {
+  filter: 'br',
+  replacement: () => '\n',
+});
+// Layout tables (no <th>) — extract cell text as plain paragraphs instead of
+// trying to produce GFM table syntax that would be unreadable for formatted emails.
+turndown.addRule('emailTable', {
+  filter: (node) => node.nodeName === 'TABLE' && node.querySelector('th') === null,
+  replacement: (_content, node) => {
+    const rows = Array.from((node as HTMLElement).querySelectorAll('tr'));
+    return rows
+      .map(row =>
+        Array.from(row.querySelectorAll('td'))
+          .map(td => td.textContent?.trim() ?? '')
+          .filter(Boolean)
+          .join('  ')
+      )
+      .filter(Boolean)
+      .join('\n\n') + '\n\n';
+  },
+});
 
 // Configure the PDF.js worker — must match the loaded pdfjs-dist version.
 // Using unpkg CDN avoids the bare-specifier resolution issue where
@@ -100,45 +134,34 @@ function EmailHeader({ email }: { email: EmailMessage }) {
 }
 
 /**
- * Sandboxed iframe renderer for HTML email bodies.
- *
- * Renders the email HTML inside an <iframe srcdoc> so that all styles,
- * fonts, and globals defined by the email are fully isolated from the
- * host page's DOM.  No scripts are allowed to run (no `allow-scripts`
- * in the sandbox attribute), but links open normally in a new tab via
- * `allow-popups`.
- *
- * Height is adjusted to match the iframe content after load so the
- * parent scroll container handles scrolling (no nested scrollbars).
+ * Sandboxed iframe for the HTML view — isolates email styles from the host page.
+ * Forces a white background so the email is readable in dark mode.
  */
 function HtmlEmailFrame({ html }: { html: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(300);
 
   const updateHeight = () => {
-    const iframe = iframeRef.current;
-    if (!iframe) return;
     try {
-      const doc = iframe.contentDocument;
+      const doc = iframeRef.current?.contentDocument;
       if (doc?.documentElement) {
-        const h = Math.max(
-          doc.documentElement.scrollHeight,
-          doc.body?.scrollHeight ?? 0,
-        );
+        const h = Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight ?? 0);
         if (h > 0) setHeight(h);
       }
-    } catch {
-      // Shouldn't happen with srcdoc + allow-same-origin, but ignore if it does.
-    }
+    } catch { /* cross-origin guard */ }
   };
+
+  // Inject light-mode CSS so email renders on white regardless of app theme
+  const lightStyle =
+    '<style>:root{color-scheme:light}html,body{background-color:#ffffff!important;color:#111111!important}</style>';
+  const srcDoc = /(<head[^>]*>)/i.test(html)
+    ? html.replace(/(<head[^>]*>)/i, `$1${lightStyle}`)
+    : lightStyle + html;
 
   return (
     <iframe
       ref={iframeRef}
-      srcDoc={html}
-      // allow-same-origin: lets us read scrollHeight after load.
-      // allow-popups + allow-popups-to-escape-sandbox: links open in new tab.
-      // No allow-scripts: email JS is never executed.
+      srcDoc={srcDoc}
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       onLoad={updateHeight}
       style={{ width: '100%', height: `${height}px`, border: 'none', display: 'block' }}
@@ -147,91 +170,103 @@ function HtmlEmailFrame({ html }: { html: string }) {
   );
 }
 
-/**
- * Returns true if the content is a full HTML document (has <html> or <!DOCTYPE>).
- * Emails where isHtml is true but the body is just a fragment (e.g. <p>hello</p>)
- * are rendered as plain text so the app's dark-mode theming applies.
- */
-function isFullHtmlDocument(body: string): boolean {
-  return /<html[\s>]/i.test(body) || /<!doctype\s+html/i.test(body);
+/** Convert HTML email body to markdown, resolving cid: attachment references first. */
+function htmlToEmailMarkdown(html: string, attachments?: EmailMessage['attachments']): string {
+  let resolved = html;
+  if (attachments) {
+    for (const att of attachments) {
+      if (att.contentId && att.url) {
+        const escaped = att.contentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        resolved = resolved.replace(new RegExp(`cid:${escaped}`, 'gi'), att.url);
+      }
+    }
+  }
+  return turndown.turndown(resolved);
 }
 
 /**
- * Email body display
+ * Email body with a Markdown / HTML toggle (HTML emails only).
+ * Markdown view: dark-mode-friendly, thread quotes as blockquotes.
+ * HTML view: sandboxed iframe, bright background, fully styled.
  */
 function EmailBody({ email }: { email: EmailMessage }) {
-  // Only use the sandboxed iframe for full HTML documents. Emails where the
-  // server returned isHtml=true but the body is just a lightweight fragment
-  // (e.g. Gmail's plain-text alternative wrapped in <p> tags) are rendered
-  // as plain text so the app's dark-mode CSS applies correctly.
-  if (email.isHtml && isFullHtmlDocument(email.body)) {
-    // Patch all links to open in a new tab (the iframe sandbox's allow-popups
-    // makes this work without needing allow-scripts).
-    let processedHtml = email.body.replace(
-      /<a\s+([^>]*?)href\s*=\s*['"]([^'"]+)['"](.*?)>/gi,
-      (match, before, href, after) => {
-        if (!/\btarget\s*=/i.test(match)) {
-          return `<a ${before}href="${href}" target="_blank" rel="noopener noreferrer"${after}>`;
-        }
-        if (!/\brel\s*=/i.test(match)) {
-          return `<a ${before}href="${href}"${after} rel="noopener noreferrer">`;
-        }
-        return match;
-      }
-    );
+  const [viewMode, setViewMode] = useState<'markdown' | 'html'>('markdown');
 
-    // Replace cid: references with actual attachment URLs so inline images render.
-    if (email.attachments) {
-      for (const att of email.attachments) {
-        if (att.contentId && att.url) {
-          // Escape special regex chars in the content-id (dots, @, etc.)
-          const escaped = att.contentId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          processedHtml = processedHtml.replace(new RegExp(`cid:${escaped}`, 'gi'), att.url);
-        }
-      }
-    }
+  const showToggle = !!email.isHtml;
 
-    // Force light-mode rendering inside the iframe so email text is always
-    // readable regardless of the app's dark/light theme.
-    // - color-scheme: light  → browser uses light defaults (scrollbars, form controls)
-    // - background/color     → cover emails that rely on transparent/inherited backgrounds
-    const lightStyle =
-      '<style>:root{color-scheme:light}html,body{background-color:#ffffff!important;color:#111111!important}</style>';
-    if (/<head[\s>]/i.test(processedHtml)) {
-      processedHtml = processedHtml.replace(/(<head[^>]*>)/i, `$1${lightStyle}`);
-    } else {
-      processedHtml = lightStyle + processedHtml;
-    }
-
-    return (
-      <div className="p-2">
-        <HtmlEmailFrame html={processedHtml} />
-      </div>
-    );
-  }
-
-  // Plain text (or HTML fragment) — strip any residual tags and render as markdown
-  const bodyText = email.isHtml ? stripHtml(email.body) : email.body;
+  const markdownBody = email.isHtml
+    ? htmlToEmailMarkdown(email.body, email.attachments)
+    : email.body;
 
   return (
-    <div className="max-w-none p-4 text-base leading-relaxed text-foreground">
-      <ReactMarkdown
-        components={{
-          p: ({ children }) => <p className="text-foreground">{children}</p>,
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
-            >
-              {children}
-            </a>
-          ),
-        }}
-      >
-        {bodyText}
-      </ReactMarkdown>
+    <div className="flex flex-col">
+      {showToggle && (
+        <div className="flex items-center gap-1 px-4 py-1.5 border-b bg-muted/30">
+          <span className="text-xs text-muted-foreground mr-1">View:</span>
+          <button
+            onClick={() => setViewMode('markdown')}
+            className={`px-2 py-0.5 text-xs rounded transition-colors ${
+              viewMode === 'markdown'
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+            }`}
+          >
+            Markdown
+          </button>
+          <button
+            onClick={() => setViewMode('html')}
+            className={`px-2 py-0.5 text-xs rounded transition-colors ${
+              viewMode === 'html'
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+            }`}
+          >
+            HTML
+          </button>
+        </div>
+      )}
+
+      {viewMode === 'html' && email.isHtml ? (
+        <div className="p-2">
+          <HtmlEmailFrame html={email.body} />
+        </div>
+      ) : (
+        <div className="max-w-none p-4 text-base leading-relaxed text-foreground">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              p: ({ children }) => <p className="mb-3 text-foreground">{children}</p>,
+              blockquote: ({ children }) => (
+                <blockquote className="border-l-4 border-muted-foreground/40 pl-3 my-2 text-muted-foreground text-sm">
+                  {children}
+                </blockquote>
+              ),
+              a: ({ href, children }) => (
+                <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                  {children}
+                </a>
+              ),
+              img: ({ src, alt }) => (
+                <img src={src} alt={alt ?? ''} className="max-w-full h-auto rounded" />
+              ),
+              hr: () => <hr className="my-4 border-border" />,
+              h1: ({ children }) => <h1 className="text-xl font-bold mt-4 mb-2 text-foreground">{children}</h1>,
+              h2: ({ children }) => <h2 className="text-lg font-semibold mt-3 mb-2 text-foreground">{children}</h2>,
+              h3: ({ children }) => <h3 className="text-base font-semibold mt-2 mb-1 text-foreground">{children}</h3>,
+              ul: ({ children }) => <ul className="list-disc pl-5 mb-3 space-y-1">{children}</ul>,
+              ol: ({ children }) => <ol className="list-decimal pl-5 mb-3 space-y-1">{children}</ol>,
+              li: ({ children }) => <li className="text-foreground">{children}</li>,
+              pre: ({ children }) => <pre className="bg-muted rounded p-3 overflow-x-auto text-sm mb-3">{children}</pre>,
+              code: ({ children, className }) =>
+                className
+                  ? <code className={`${className} text-sm`}>{children}</code>
+                  : <code className="bg-muted px-1 rounded text-sm font-mono">{children}</code>,
+            }}
+          >
+            {markdownBody}
+          </ReactMarkdown>
+        </div>
+      )}
     </div>
   );
 }
