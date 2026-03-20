@@ -658,6 +658,41 @@ export class MCPManager {
   }
 
   /**
+   * Get summaries with tool names for each server, for the system prompt.
+   * Returns lines like: "Gmail — search, read, draft emails. Tools: gmailSearchMessages, gmailGetMessage, ..."
+   */
+  async getToolCatalog(excludeIds: Set<string> = new Set()): Promise<string[]> {
+    const catalog: string[] = [];
+    const hiddenServerIds = new Set(['meta-mcp-search', 'memory', 'sqlite-memory', 'process-each', ...excludeIds]);
+
+    for (const [id, adapter] of this.inProcessAdapters) {
+      if (hiddenServerIds.has(id)) continue;
+      try {
+        const getSummary = (adapter as any).getSystemPromptSummary;
+        const summary: string = typeof getSummary === 'function' ? getSummary.call(adapter) : id;
+        const tools = await adapter.listTools();
+        if (tools.length > 0) {
+          const toolNames = tools.map(t => t.name).join(', ');
+          catalog.push(`${summary} Tools: ${toolNames}`);
+        }
+      } catch { /* skip unavailable servers */ }
+    }
+
+    for (const [id, client] of this.clients) {
+      if (hiddenServerIds.has(id)) continue;
+      try {
+        const tools = await client.listTools();
+        if (tools.length > 0) {
+          const toolNames = tools.map(t => t.name).join(', ');
+          catalog.push(`${id} — Tools: ${toolNames}`);
+        }
+      } catch { /* skip unavailable servers */ }
+    }
+
+    return catalog;
+  }
+
+  /**
    * Get list of connected server names (both stdio and in-process)
    */
   getConnectedServers(): string[] {

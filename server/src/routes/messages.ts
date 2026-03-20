@@ -500,7 +500,7 @@ export async function messageRoutes(fastify: FastifyInstance): Promise<void> {
       if (enableMetaMcpSearch && lastUserMessage) {
         try {
           const { searchTools } = await import('../mcp/in-process/meta-mcp-search.js');
-          const searchResults = await searchTools(lastUserMessage, 5);
+          const searchResults = await searchTools(lastUserMessage, 10);
           for (const { tool } of searchResults) {
             const fullTool = flattenedTools.find(t => t.name === tool.name);
             if (fullTool) {
@@ -811,6 +811,7 @@ ${accountList}
       ].map(id => mcpManager.getSystemPromptFor(id)).filter(Boolean) as string[];
 
       const serverSummaries = mcpManager.getSystemPromptSummaries(ALWAYS_FULL_PROMPT_SERVERS);
+      const toolCatalog = await mcpManager.getToolCatalog(ALWAYS_FULL_PROMPT_SERVERS);
 
       const systemMessage = {
         role: 'system' as const,
@@ -840,14 +841,33 @@ You have MCP tools available. You MUST use them. There is no situation where ans
 
 **The rule is absolute**: before writing any response that involves real-world information, call the appropriate tool. Not sometimes. Not when it seems necessary. Every time.
 
-- Emails, documents, files, calendar, contacts, tasks → use the Gmail / Google Drive / relevant MCP tool.
-- Web content, weather, stocks, news → use the fetch or search tool.
-- Anything you are uncertain about → call \`search_tool\` to find the right tool, then use it.
 - If a tool returns an error, say so. If no tool exists for the task, say so. Never silently fall back to training knowledge.
+- If you are not sure which tool to use → call \`search_tool\` to discover the right one, then use it.
 
 **During ongoing conversations**: every follow-up question about a topic that came from a tool source (emails, Drive files, etc.) MUST also use tools. Do not answer from conversation history or memory. Re-query the source for each new question — the data may have changed and your recall of earlier tool results is unreliable.
 
 **If you skip a tool call when one was available, you have made an error.** Always use tools.
+
+## TOOL DECISION PATTERNS
+Match the user's intent to tool calls. When in doubt, use more tools rather than fewer.
+
+| User mentions… | You MUST call… |
+|---|---|
+| Email, inbox, message, someone emailed me | Gmail search/read tools |
+| Calendar, schedule, meeting, free time, what's on | Google Calendar tools |
+| File, document, spreadsheet, presentation, Drive | Google Drive tools |
+| PDF, attachment, convert document | convert_to_markdown + download tools |
+| Weather, forecast, temperature | Weather tools |
+| Website, URL, link, article, fetch | Web fetch/search tools |
+| News, current events, what's happening | Web search tools |
+| A person's name (in context of communication) | Search email AND calendar for that person |
+| "This week", "today", "recently" | Search email AND calendar AND memory in parallel |
+| Remember, last time, previously, we discussed | memory_search_nodes first |
+
+**MULTI-SOURCE QUERIES**: When a question spans multiple domains (e.g. "what do I have going on today?", "summarize everything about Project X"), call tools from ALL relevant servers in parallel. Do not limit yourself to a single source.
+
+## PROACTIVE MEMORY
+At the start of every conversation, call \`memory_search_nodes\` with keywords from the user's first message. This retrieves prior context — preferences, past decisions, ongoing projects — that makes your response more relevant. Do this silently; do not tell the user you are checking memory.
 
 ## PROCESSING MULTIPLE ITEMS
 When the user asks you to retrieve, summarize, or analyse multiple items (emails, files, documents, etc.):
@@ -866,8 +886,8 @@ When the user asks you to retrieve, summarize, or analyse multiple items (emails
           accountsSection ? accountsSection.trim() : '',
           memorySystemPrompt,
           ...alwaysFullPrompts,
-          serverSummaries.length > 0
-            ? `## AVAILABLE TOOLS OVERVIEW\n${serverSummaries.map(s => `- ${s}`).join('\n')}`
+          toolCatalog.length > 0
+            ? `## AVAILABLE TOOLS — CALL THESE\nThe following tools are available. Use \`search_tool\` to activate any of them, then call the tool directly.\n${toolCatalog.map(s => `- ${s}`).join('\n')}`
             : '',
           documentContext,
         ].filter(Boolean).join('\n\n'),
