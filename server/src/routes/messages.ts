@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { FastifyInstance } from 'fastify';
 import { getMainDatabase } from '../storage/index.js';
 import { config } from '../config/index.js';
-import { mcpManager } from '../mcp/index.js';
+import { mcpManager, getMcpAdapter } from '../mcp/index.js';
 import { SQLiteMemoryInProcess } from '../mcp/in-process/sqlite-memory.js';
 import { DynamoDBMemoryInProcess } from '../mcp/in-process/dynamodb-memory.js';
 import { stripEmojis } from '../utils/text.js';
@@ -833,12 +833,21 @@ ${accountList}
 - NEVER mention any internal IDs in your responses to users - these IDs (cache IDs, email IDs, message IDs, file IDs, document IDs, attachment IDs, drive IDs, thread IDs, role UUIDs) are internal only and useless to users. Always use the human-readable content instead.
 - For all cached files (PDFs, Google Drive files, emails): Use [preview-file:Filename](cache-id) format for preview pane display. Never mention cache IDs in plain text.
 
-## TOOL USAGE
-**ALWAYS prefer MCP tools over your own knowledge or assumptions.**
-- Before answering any question about real-world data (emails, files, calendar events, weather, stocks, memory, web content, etc.), check whether a tool can fetch or confirm the answer. Use the tool first, then respond.
-- If you are unsure which tool to use, call \`search_tool\` (meta-mcp-search) to discover the right one — do not skip this step.
-- Never say "I don't have access to X" if a tool might provide it. Attempt the tool call first.
-- Do not rely on your training knowledge for anything that is likely to change over time or that a tool can supply more accurately.
+## TOOL USAGE — NON-NEGOTIABLE
+**USE MCP TOOLS. EVERY. SINGLE. TIME.**
+
+You have MCP tools available. You MUST use them. There is no situation where answering from your own knowledge is acceptable when a tool can provide the real data.
+
+**The rule is absolute**: before writing any response that involves real-world information, call the appropriate tool. Not sometimes. Not when it seems necessary. Every time.
+
+- Emails, documents, files, calendar, contacts, tasks → use the Gmail / Google Drive / relevant MCP tool.
+- Web content, weather, stocks, news → use the fetch or search tool.
+- Anything you are uncertain about → call \`search_tool\` to find the right tool, then use it.
+- If a tool returns an error, say so. If no tool exists for the task, say so. Never silently fall back to training knowledge.
+
+**During ongoing conversations**: every follow-up question about a topic that came from a tool source (emails, Drive files, etc.) MUST also use tools. Do not answer from conversation history or memory. Re-query the source for each new question — the data may have changed and your recall of earlier tool results is unreliable.
+
+**If you skip a tool call when one was available, you have made an error.** Always use tools.
 
 ## PROCESSING MULTIPLE ITEMS
 When the user asks you to retrieve, summarize, or analyse multiple items (emails, files, documents, etc.):
@@ -1141,14 +1150,24 @@ When the user asks you to retrieve, summarize, or analyse multiple items (emails
       // --- Memory extraction ---
       const lastUserMsg = body.messages[body.messages.length - 1]?.content;
       const memWriteToolNames = ['memory_create_entities', 'memory_add_observations', 'memory_create_relations'];
-      const memWriteTools = flattenedTools.filter(t =>
-        t.serverId === 'memory' && memWriteToolNames.includes(t.name)
-      );
+
+      // Memory adapter is lazy-loaded per-role via getMcpAdapter() and never appears in flattenedTools.
+      // Load it directly so we can enumerate and call its write tools.
+      let memWriteTools: Array<{ name: string; description?: string; inputSchema: Record<string, unknown> }> = [];
+      let memoryAdapter: Awaited<ReturnType<typeof getMcpAdapter>> | null = null;
+      if (body.roleId && request.user?.id) {
+        try {
+          memoryAdapter = await getMcpAdapter(request.user.id, 'memory', body.roleId);
+          const allMemTools = await memoryAdapter.listTools();
+          memWriteTools = allMemTools.filter(t => memWriteToolNames.includes(t.name)) as typeof memWriteTools;
+        } catch (e) {
+          console.warn('[ChatStream] Could not load memory adapter for extraction:', e);
+        }
+      }
 
       console.log(`[ChatStream] Memory extraction check: roleId=${!!body.roleId}, lastUserMsg=${!!lastUserMsg}, assistantContent.length=${assistantContent.length}, memWriteTools.length=${memWriteTools.length}`);
-      console.log(`[ChatStream] Available memory tools:`, flattenedTools.filter(t => t.serverId === 'memory' || t.serverId === 'sqlite-memory').map(t => t.name));
 
-      if (body.roleId && lastUserMsg && assistantContent.length > 100 && memWriteTools.length > 0) {
+      if (body.roleId && lastUserMsg && assistantContent.length > 100 && memWriteTools.length > 0 && memoryAdapter) {
         reply.raw.write(`data: ${JSON.stringify({ type: 'memory_task', status: 'started' })}\n\n`);
 
         const extractionMessages = [
@@ -1185,7 +1204,7 @@ When the user asks you to retrieve, summarize, or analyse multiple items (emails
               for (const toolCall of extractionToolCalls) {
                 if (memWriteToolNames.includes(toolCall.name)) {
                   console.log(`[ChatStream] Executing memory tool: ${toolCall.name}`);
-                  await executeToolWithAdapters(request.user!.id, toolCall.name, toolCall.arguments, body.roleId);
+                  await memoryAdapter!.callTool(toolCall.name, toolCall.arguments);
                   savedCount++;
                 }
               }
