@@ -1611,6 +1611,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
     totalTokens: number;
     cachedInputTokens?: number;
     cacheCreationTokens?: number;
+    systemPromptTokens?: number;
     source?: string;
   }): Promise<void> {
     const id = uuidv4();
@@ -1628,6 +1629,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
         totalTokens: record.totalTokens,
         cachedInputTokens: record.cachedInputTokens ?? 0,
         cacheCreationTokens: record.cacheCreationTokens ?? 0,
+        systemPromptTokens: record.systemPromptTokens ?? 0,
         source: record.source ?? 'chat',
         createdAt: now,
       },
@@ -1665,6 +1667,7 @@ export class DynamoDBMainDatabase implements IMainDatabase {
       totalTokens: item.totalTokens as number,
       cachedInputTokens: (item.cachedInputTokens as number) ?? 0,
       cacheCreationTokens: (item.cacheCreationTokens as number) ?? 0,
+      systemPromptTokens: (item.systemPromptTokens as number) ?? 0,
       source: item.source as string,
       createdAt: new Date(item.createdAt as string),
     }));

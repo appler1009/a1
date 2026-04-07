@@ -541,6 +541,7 @@ const start = async () => {
           totalTokens: event.totalTokens,
           cachedInputTokens: event.cachedInputTokens,
           cacheCreationTokens: event.cacheCreationTokens,
+          systemPromptTokens: event.systemPromptTokens,
           source: event.source,
         }).catch(err => {
           console.error('[TokenUsage] Failed to record token usage:', err);

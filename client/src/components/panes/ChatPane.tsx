@@ -134,6 +134,7 @@ export function ChatPane() {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [pendingRoleSwitch, setPendingRoleSwitch] = useState<{ roleId: string; roleName: string } | null>(null);
   const [memoryTask, setMemoryTask] = useState<{ status: 'extracting' | 'done'; count?: number } | null>(null);
+  const [lastTokenUsage, setLastTokenUsage] = useState<{ prompt: number; completion: number; total: number; cachedInput: number; cacheCreation: number } | null>(null);
   const [chatSelection, setChatSelection] = useState<{ text: string; rect: DOMRect } | null>(null);
   const [savingMemory, setSavingMemory] = useState(false);
   const [memorySaved, setMemorySaved] = useState(false);
@@ -457,6 +458,7 @@ export function ChatPane() {
     setInput('');
     setStreaming(true);
     setCurrentContent('');
+    setLastTokenUsage(null);
 
     // Declared outside try so saveAssistantMessage() is accessible in the catch block
     // when the connection drops mid-stream (e.g. server restart / 503).
@@ -655,6 +657,11 @@ export function ChatPane() {
                 if (parsed.type === 'info' && parsed.message) {
                   fullContent += `\n\n*${parsed.message}*`;
                   setCurrentContent(fullContent);
+                }
+
+                // Handle token usage summary
+                if (parsed.type === 'token_usage' && parsed.usage) {
+                  setLastTokenUsage(parsed.usage);
                 }
 
                 // Handle memory extraction status
@@ -948,6 +955,14 @@ export function ChatPane() {
           {memoryTask.status === 'extracting'
             ? '~ extracting insights...'
             : `~ saved ${memoryTask.count} insight${memoryTask.count !== 1 ? 's' : ''} to memory`}
+        </div>
+      )}
+
+      {/* Token usage indicator */}
+      {lastTokenUsage && !streaming && (
+        <div className="px-4 py-0.5 text-xs text-muted-foreground/40 select-none tabular-nums">
+          {lastTokenUsage.total.toLocaleString()} tokens
+          {lastTokenUsage.cachedInput > 0 && ` · ${lastTokenUsage.cachedInput.toLocaleString()} cached`}
         </div>
       )}
 

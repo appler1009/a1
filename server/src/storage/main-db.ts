@@ -678,6 +678,18 @@ export class MainDatabase implements IMainDatabase {
     } catch (error) {
       console.warn('[MainDatabase] Error during messages isRead schema migration:', error);
     }
+
+    // Migration: add systemPromptTokens to token_usage
+    try {
+      const tableInfo = this.db.prepare(`PRAGMA table_info(token_usage)`).all() as Array<{ name: string }>;
+      if (!tableInfo.some(col => col.name === 'systemPromptTokens')) {
+        console.log('[MainDatabase] Adding systemPromptTokens column to token_usage table...');
+        this.db.exec(`ALTER TABLE token_usage ADD COLUMN systemPromptTokens INTEGER NOT NULL DEFAULT 0;`);
+        console.log('[MainDatabase] systemPromptTokens column added successfully');
+      }
+    } catch (error) {
+      console.warn('[MainDatabase] Error during token_usage systemPromptTokens migration:', error);
+    }
   }
 
   close(): void {
@@ -2573,13 +2585,14 @@ export class MainDatabase implements IMainDatabase {
     totalTokens: number;
     cachedInputTokens?: number;
     cacheCreationTokens?: number;
+    systemPromptTokens?: number;
     source?: string;
   }): Promise<void> {
     const id = uuidv4();
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO token_usage (id, userId, model, provider, promptTokens, completionTokens, totalTokens, cachedInputTokens, cacheCreationTokens, source, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO token_usage (id, userId, model, provider, promptTokens, completionTokens, totalTokens, cachedInputTokens, cacheCreationTokens, systemPromptTokens, source, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       record.userId,
@@ -2590,6 +2603,7 @@ export class MainDatabase implements IMainDatabase {
       record.totalTokens,
       record.cachedInputTokens ?? 0,
       record.cacheCreationTokens ?? 0,
+      record.systemPromptTokens ?? 0,
       record.source ?? 'chat',
       now
     );
@@ -2625,6 +2639,7 @@ export class MainDatabase implements IMainDatabase {
       totalTokens: number;
       cachedInputTokens: number;
       cacheCreationTokens: number;
+      systemPromptTokens: number;
       source: string;
       createdAt: string;
     }>;
@@ -2639,6 +2654,7 @@ export class MainDatabase implements IMainDatabase {
       totalTokens: row.totalTokens,
       cachedInputTokens: row.cachedInputTokens,
       cacheCreationTokens: row.cacheCreationTokens,
+      systemPromptTokens: row.systemPromptTokens ?? 0,
       source: row.source,
       createdAt: new Date(row.createdAt),
     }));

@@ -773,7 +773,7 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     const records = await mainDb.getTokenUsageByUser(request.user.id, { from, to });
 
-    const zero = () => ({ promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedInputTokens: 0, cacheCreationTokens: 0 });
+    const zero = () => ({ promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedInputTokens: 0, cacheCreationTokens: 0, systemPromptTokens: 0 });
 
     const totals = records.reduce((acc, r) => ({
       promptTokens: acc.promptTokens + r.promptTokens,
@@ -781,6 +781,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       totalTokens: acc.totalTokens + r.totalTokens,
       cachedInputTokens: acc.cachedInputTokens + r.cachedInputTokens,
       cacheCreationTokens: acc.cacheCreationTokens + r.cacheCreationTokens,
+      systemPromptTokens: acc.systemPromptTokens + (r.systemPromptTokens ?? 0),
     }), zero());
 
     const byModel: Record<string, ReturnType<typeof zero>> = {};
@@ -792,6 +793,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       byModel[r.model].totalTokens += r.totalTokens;
       byModel[r.model].cachedInputTokens += r.cachedInputTokens;
       byModel[r.model].cacheCreationTokens += r.cacheCreationTokens;
+      byModel[r.model].systemPromptTokens += r.systemPromptTokens ?? 0;
 
       if (!byProvider[r.provider]) byProvider[r.provider] = zero();
       byProvider[r.provider].promptTokens += r.promptTokens;
@@ -799,6 +801,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       byProvider[r.provider].totalTokens += r.totalTokens;
       byProvider[r.provider].cachedInputTokens += r.cachedInputTokens;
       byProvider[r.provider].cacheCreationTokens += r.cacheCreationTokens;
+      byProvider[r.provider].systemPromptTokens += r.systemPromptTokens ?? 0;
     }
 
     return reply.send({

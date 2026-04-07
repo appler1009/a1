@@ -11,6 +11,7 @@ type UsageData = {
   totalTokens: number;
   cachedInputTokens: number;
   cacheCreationTokens: number;
+  systemPromptTokens: number;
   byModel: Record<string, ModelTokens>;
   byProvider: Record<string, ModelTokens & { totalTokens: number }>;
   margin: number;
@@ -120,9 +121,20 @@ export function TokenUsageSettings() {
               </div>
             </div>
 
-            {/* Cache stats — subdued boxes */}
-            {(tokenUsage.cachedInputTokens > 0 || tokenUsage.cacheCreationTokens > 0) && (
-              <div className="grid grid-cols-2 gap-2">
+            {/* System prompt + cache stats — subdued boxes */}
+            {(tokenUsage.systemPromptTokens > 0 || tokenUsage.cachedInputTokens > 0 || tokenUsage.cacheCreationTokens > 0) && (
+              <div className="grid grid-cols-3 gap-2">
+                {tokenUsage.systemPromptTokens > 0 && (
+                  <div className="bg-muted/30 rounded-lg p-2 text-center">
+                    <p className="text-xs text-muted-foreground">System Prompt</p>
+                    <p className="text-xs font-medium tabular-nums text-muted-foreground">{tokenUsage.systemPromptTokens.toLocaleString()}</p>
+                    {tokenUsage.promptTokens > 0 && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {Math.round(tokenUsage.systemPromptTokens / tokenUsage.promptTokens * 100)}% of input
+                      </p>
+                    )}
+                  </div>
+                )}
                 {tokenUsage.cachedInputTokens > 0 && (
                   <div className="bg-muted/30 rounded-lg p-2 text-center">
                     <p className="text-xs text-muted-foreground">Cache Read</p>

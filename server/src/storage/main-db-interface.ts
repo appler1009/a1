@@ -13,6 +13,7 @@ export interface TokenUsageRecord {
   totalTokens: number;
   cachedInputTokens: number;
   cacheCreationTokens: number;
+  systemPromptTokens: number;
   source: string;
   createdAt: Date;
 }
@@ -223,6 +224,7 @@ export interface IMainDatabase {
     totalTokens: number;
     cachedInputTokens?: number;
     cacheCreationTokens?: number;
+    systemPromptTokens?: number;
     source?: string;
   }): Promise<void>;
   getTokenUsageByUser(userId: string, options?: { from?: Date; to?: Date; limit?: number }): Promise<TokenUsageRecord[]>;

@@ -86,6 +86,8 @@ export interface LLMRequest {
   tools?: MCPToolDefinition[];
   userId?: string;
   source?: string;
+  /** Character count of the system prompt, used to estimate system vs user token split */
+  systemPromptChars?: number;
 }
 
 export interface LLMResponse {

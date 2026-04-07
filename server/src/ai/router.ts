@@ -13,6 +13,7 @@ export interface TokenUsageEvent {
   totalTokens: number;
   cachedInputTokens: number;
   cacheCreationTokens: number;
+  systemPromptTokens: number;
   source?: string;
 }
 
@@ -105,6 +106,17 @@ export class LLMRouter {
   }
 
   /**
+   * Estimate how many prompt tokens belong to the system prompt, using character ratio.
+   */
+  private estimateSystemPromptTokens(request: LLMRequest, promptTokens: number): number {
+    if (!request.systemPromptChars || request.systemPromptChars <= 0) return 0;
+    const messageChars = request.messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+    const totalChars = messageChars + request.systemPromptChars;
+    if (totalChars <= 0) return 0;
+    return Math.round(promptTokens * (request.systemPromptChars / totalChars));
+  }
+
+  /**
    * Complete a chat request
    */
   async complete(request: LLMRequest): Promise<LLMResponse> {
@@ -120,6 +132,7 @@ export class LLMRouter {
         totalTokens: response.tokens.total,
         cachedInputTokens: response.tokens.cachedInput ?? 0,
         cacheCreationTokens: response.tokens.cacheCreation ?? 0,
+        systemPromptTokens: this.estimateSystemPromptTokens(request, response.tokens.prompt),
         source: request.source,
       });
     }
@@ -142,6 +155,7 @@ export class LLMRouter {
           totalTokens: chunk.tokens.total,
           cachedInputTokens: chunk.tokens.cachedInput ?? 0,
           cacheCreationTokens: chunk.tokens.cacheCreation ?? 0,
+          systemPromptTokens: this.estimateSystemPromptTokens(request, chunk.tokens.prompt),
           source: request.source,
         });
       }

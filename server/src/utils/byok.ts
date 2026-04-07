@@ -40,6 +40,7 @@ export async function getByokRouter(userId: string): Promise<ReturnType<typeof c
         totalTokens: event.totalTokens,
         cachedInputTokens: event.cachedInputTokens,
         cacheCreationTokens: event.cacheCreationTokens,
+        systemPromptTokens: event.systemPromptTokens,
         source: event.source,
       }).catch(err => console.error('[BYOK TokenUsage] Failed:', err));
     },

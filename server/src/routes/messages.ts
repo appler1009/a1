@@ -900,6 +900,9 @@ When the user asks you to retrieve, summarize, or analyse multiple items (emails
       console.log(systemMessage.content);
       console.log('='.repeat(80) + '\n');
 
+      // Accumulate token usage across all stream iterations
+      const cumulativeUsage = { prompt: 0, completion: 0, total: 0, cachedInput: 0, cacheCreation: 0 };
+
       const processStream = async (messages: typeof body.messages, allowTools: boolean = true) => {
         const stream = chatRouter.stream({
           messages,
@@ -907,6 +910,7 @@ When the user asks you to retrieve, summarize, or analyse multiple items (emails
           tools: allowTools && providerTools.length > 0 ? providerTools : undefined,
           userId: request.user?.id,
           source: 'chat',
+          systemPromptChars: systemMessage.content.length,
         });
 
         assistantContent = '';
@@ -926,6 +930,12 @@ When the user asks you to retrieve, summarize, or analyse multiple items (emails
             });
             toolCalls.push(toolCall);
             reply.raw.write(`data: ${JSON.stringify({ type: 'tool_call', toolCall })}\n\n`);
+          } else if (chunk.type === 'usage' && chunk.tokens) {
+            cumulativeUsage.prompt += chunk.tokens.prompt;
+            cumulativeUsage.completion += chunk.tokens.completion;
+            cumulativeUsage.total += chunk.tokens.total;
+            cumulativeUsage.cachedInput += chunk.tokens.cachedInput ?? 0;
+            cumulativeUsage.cacheCreation += chunk.tokens.cacheCreation ?? 0;
           }
         }
 
@@ -1155,6 +1165,17 @@ When the user asks you to retrieve, summarize, or analyse multiple items (emails
       if (toolIteration >= MAX_TOOL_ITERATIONS) {
         reply.raw.write(`data: ${JSON.stringify({ type: 'info', message: 'Tool execution limit reached' })}\n\n`);
       }
+
+      // --- Token usage logging & SSE ---
+      const systemPromptChars = systemMessage.content.length;
+      const userChars = body.messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+      console.log(`[ChatStream] Token usage — prompt: ${cumulativeUsage.prompt}, completion: ${cumulativeUsage.completion}, total: ${cumulativeUsage.total}, cached: ${cumulativeUsage.cachedInput}, cacheCreation: ${cumulativeUsage.cacheCreation}`);
+      console.log(`[ChatStream] Prompt breakdown — system: ~${systemPromptChars} chars, user: ~${userChars} chars, iterations: ${toolIteration + 1}`);
+      reply.raw.write(`data: ${JSON.stringify({
+        type: 'token_usage',
+        usage: cumulativeUsage,
+        breakdown: { systemPromptChars, userChars, iterations: toolIteration + 1 },
+      })}\n\n`);
 
       // --- Memory extraction ---
       const lastUserMsg = body.messages[body.messages.length - 1]?.content;
