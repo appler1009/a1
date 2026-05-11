@@ -1,11 +1,12 @@
 name: Deploy to AWS
 
-on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'lambda-scheduler/**'
-      - 'lambda-ses-bounce/**'
+# DISABLED — AWS resources destroyed. Re-enable when reviving the project.
+# on:
+#   push:
+#     branches: [main]
+#     paths-ignore:
+#       - 'lambda-scheduler/**'
+#       - 'lambda-ses-bounce/**'
 
 permissions:
   id-token: write   # required for OIDC

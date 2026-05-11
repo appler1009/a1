@@ -1,10 +1,11 @@
 name: Deploy Lambda Scheduler
 
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'lambda-scheduler/**'
+# DISABLED — AWS resources destroyed. Re-enable when reviving the project.
+# on:
+#   push:
+#     branches: [main]
+#     paths:
+#       - 'lambda-scheduler/**'
 
 permissions:
   id-token: write   # required for OIDC
