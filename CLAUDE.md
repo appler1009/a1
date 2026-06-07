@@ -1,13 +1,17 @@
 # Claude Instructions for This Project
 
-## Important: Read AGENTS.md First
+## Git Commits
+- **Do not create git commits.** The user will handle git commits themselves.
+- All code changes should be written and tested, but final commit decisions remain with the user.
 
-**Before working on any task, read and follow the instructions in [AGENTS.md](./AGENTS.md).**
+## Documentation
+- **Do not write documentation** unless explicitly requested by the user.
+- Focus on implementation only.
 
-Key points from AGENTS.md:
-- **Do not create git commits** - The user will handle all git commits
-- **Do not write documentation** unless explicitly requested
-- **Do not start the dev server** - The user has one running all the time
+## Dev Server
+- **Do not start the dev server** on your own.
+- The user has a dev server running all the time for testing.
+- Let the user handle server restarts and reloading.
 
 ## Project Context
 
@@ -25,7 +29,3 @@ npm run test           # Unit tests
 npm run test:e2e      # E2E tests
 npm run test:coverage # Coverage report
 ```
-
-## When Uncertain
-
-Always defer to AGENTS.md for project-specific instructions about git, documentation, and server management.
